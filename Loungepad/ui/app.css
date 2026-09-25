@@ -96,8 +96,13 @@ html, body {
    The library's own entrance (boot, or coming back from an overlay menu) is a touch of depth;
    everything over it fades, and it comes back from under them with no entrance at all
    (data-motion="none"), because it was never away. */
-.screen { position: absolute; inset: 0; display: none; flex-direction: column; }
+.screen { position: absolute; inset: 0; display: none; flex-direction: column; isolation: isolate; }
 .screen.active, .screen.closing, .screen.under { display: flex; }
+/* isolation: each screen keeps its z-indexes to itself, and the screens stack in document order --
+   library, detail, settings. Without it the focused tile's z-index 3 (the lift that keeps its glow
+   unclipped) competed with the detail page, which has none, and the tile you had just opened sat
+   on top of its own details page. Only from the first rows of the grid: once it scrolls, its
+   top-edge fade is a mask, and a mask happened to contain the tile. */
 .screen.active { animation: screenIn var(--t-screen) var(--ease) backwards; }
 .screen.active[data-motion="none"] { animation: none; }
 .screen.closing { animation: fadeOut var(--t-screen-out) linear forwards; pointer-events: none; }

@@ -1050,6 +1050,11 @@ Stop the scrolled grid from clipping through the All games header
   its backdrop rules on `#screen-library:is(.active, .closing, .under)`. On `.active` alone the
   sharp hero snapped to Classic's blurred wash the moment a page opened and transitioned back from
   it on return -- "the background goes up and settles back down".
+- **Every `.screen` is `isolation: isolate`**, because a library that stays drawn underneath needs
+  its z-indexes kept in. The focused tile lifts to z-index 3 and painted over the detail sheet,
+  which has none -- but only from the grid's first rows, since the scroller's top-edge fade is a
+  mask and turns on once it scrolls, and the mask was the one thing containing the tile. A fix that
+  only holds while some unrelated mask is on is not a fix; screens now stack in document order.
 - Settings is a box (`.settings-box`) over the blurred library: `body[data-view="settings"]` blurs
   `#screen-library` and `#backdrop`, transitioned. The detail page is an opaque sheet that fades
   with no scale, because its art sits exactly where the library's backdrop hangs the same picture.
