@@ -76,10 +76,17 @@ a menu remote:
   you type (from Windows' own dictionary; the right stick's click takes the first), and can add
   function keys, a number pad, navigation keys and Ctrl/Win/Alt — from Settings, or from the gear
   on the keyboard itself. The Windows touch keyboard is there too.
-- **The Power Wheel runs Windows.** One double-tap of View + Menu, from anywhere — including
-  mid-game — and you can switch to any open window (it gets dragged onto the TV with you), fire
+- **The Power Wheel runs Windows.** One tap of the Xbox button, from anywhere — including
+  mid-game; hold it instead to bring Loungepad back — and you can switch to any open window (it gets dragged onto the TV with you), fire
   a saved shortcut, summon the keyboard, re-centre a lost pointer, close the window in front of
   you, or blank the TV and park the pad until you press a button again.
+- **Actions put an app's shortcuts on the pad.** The wheel's first spoke opens a second wheel
+  with the shortcuts of whatever was in front: new tab, close tab, back, reload and full screen
+  in a browser; play, pause and subtitles in VLC; save and load state in RetroArch; volume, media
+  keys and Alt+Tab everywhere. Point at one and press A, or give an action a button of its own —
+  **Y** for a new tab, say — and it works in that app whenever Loungepad is out of the way,
+  without the wheel. Settings → Actions is where the packs live, where any shortcut, name or
+  button can be changed, and where a program we have no pack for gets one of its own.
 - **The pointer knows when to disappear.** Touch the D-pad and the cursor hides and stops
   stealing focus; nudge the stick or a real mouse and it comes straight back. Optionally
   system-wide, so it stays hidden out on the desktop too.
@@ -269,7 +276,7 @@ and choose **Mods**:
   wants more than a button, such as a folder, still needs Vortex's window.
 - **Open Vortex.** For load order, conflicts, mod options and anything else the list does not
   do, Vortex's own window is brought to the TV. Come back to the launcher the way you do after a
-  game (the minimize combo, Guide by default).
+  game (hold the menu combo, Guide by default).
 
 The first time, two one-off steps happen in Vortex's own window: Vortex has to be restarted
 once so it loads the small extension Loungepad installs into it (the screen says so and offers
@@ -503,6 +510,21 @@ Loungepad/
   categorised **multi-select Filter** (platform / status / favorites) and a single-select
   **Sort** (A–Z, Z–A, recently played, most played, largest, smallest); **Y** resets both.
   LB/RB switches between Library, Collections and Settings.
+- **Actions** — Settings → Actions is a grid of the programs on this PC that we ship a pack of
+  shortcuts for (the six big browsers, VLC, Spotify, Discord, File Explorer, RetroArch, PCSX2,
+  Dolphin), plus **Everywhere** (volume, media keys, Show desktop, Alt+Tab, snapping, a
+  screenshot, Enter, Escape, Close window) and anything added by hand from the list of open
+  windows or by browsing for an .exe. An action is a keyboard shortcut the program itself
+  understands, a name, an optional pad button or chord, and whether it sits on the wheel. The
+  button is recorded by pressing it (hold several for a chord); the shortcut is picked on an
+  on-screen keyboard, or pressed on a real one. Bindings fire only while that program is in
+  front and Loungepad is not — never inside the launcher, never inside a focused game unless
+  "Stay active while a game is focused" is on — and an app's binding beats Everywhere's for
+  the same button. The keyboard button, the menu combo and the screenshot button always win
+  over a binding, and the row says so. Everywhere's arrow keys are bound to the D-pad out of
+  the box, so the D-pad is arrow keys on the desktop. A pack's defaults are never overwritten:
+  `actions.json` holds only what differs, so a new default arrives with the next build and
+  **Reset to defaults** puts one app back.
 - **Adding games** — a **+ Add game** tile sits at the end of the library grid, and the same
   action lives under Settings → Library. File dialogs drop always-on-top while open, otherwise
   they open *behind* the full-screen launcher and appear to do nothing.
@@ -550,8 +572,22 @@ Loungepad/
     buttons (defaults: A = left click, B = right click) send real mouse clicks.
   - Game running → the whole service idles so games with native controller support never see
     phantom input (opt back in with Settings → "Stay active while a game runs").
-  - **View + Menu (Back + Start) together** minimizes the launcher to use the desktop, and
-    restores it when pressed again.
+  - **The menu combo** (the Xbox button by default; Settings → Controller) opens the Power Wheel
+    on a tap and shows or hides the launcher on a half-second hold, which is the in-game menu
+    while a game runs. The old tap-for-launcher, double-tap-for-wheel shape is still there as
+    **Combo gesture → Double tap**.
+  - **Settings → Controller → Windows and Steam** shows, and switches, the three other things
+    that react to the Xbox button, with **Give Loungepad the Xbox button** to turn all of them
+    off in one press:
+    - **Xbox Game Bar on the controller**: Game Bar opening on the Xbox button, and View + Menu
+      standing in for the Xbox button in apps. Win + G still opens Game Bar.
+    - **Windows Xbox mode**: while it is on, holding the Xbox button opens Task View. Win + Tab
+      still does.
+    - **Steam on the Xbox button**: "Guide Button Focuses Steam" and Steam's Guide button
+      shortcuts. Steam rewrites its settings when it closes, so changing this closes Steam,
+      edits them, and starts it again in the tray; it is refused while a game is running.
+    The two Windows ones are per-user registry values and may need a sign-out to reach a
+    running Game Bar. Turning one back on restores Windows' own default.
   - Deadzone, sensitivity and the acceleration exponent (slow near center, fast at full
     deflection) are sliders in Settings.
   - The header shows a controller **battery gauge** — only for wireless pads that actually
@@ -576,7 +612,7 @@ Loungepad/
 - **Focus guarding** — no taskbar button; if the desktop steals focus while no game runs, the
   launcher re-activates itself (Settings → "Keep launcher focused"). Alt-Tab still works.
 
-Data lives in `%APPDATA%\Loungepad\` (`settings.json`, `library.json`, `covers\`,
+Data lives in `%APPDATA%\Loungepad\` (`settings.json`, `library.json`, `actions.json`, `covers\`,
 `loungepad.log`). Delete `library.json` to force a clean rescan. Trailers are kept apart, under
 `%LOCALAPPDATA%\Loungepad\trailers\`, and that folder can be deleted at any time.
 

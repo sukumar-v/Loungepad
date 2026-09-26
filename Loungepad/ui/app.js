@@ -26,6 +26,8 @@ let S = {
   stores: null,                          // { epic|gog|xbox: { signedIn, user, count, fetchedAt, error }, gamePass: { count, fetchedAt, error } }
   emulation: null,                       // { emulators: [...], romFolders: [...], platforms: [{ id, name, shortName, extensions, hasCores }] }
   update: null,                          // { state, current, latest, progress, message, checkedAt, userAsked } -- see UpdateService
+  actions: null,                         // { apps: [{ id, name, exes, icon, installed, custom, pinned, modified, actions: [...] }] } -- see actions.js
+  xboxButton: null,                      // { gameBar, xboxMode, steam, steamRunning, steamBusy } -- who else reacts to the Xbox button; xboxMode/steam null where there is none
   padConnected: false,
 };
 
@@ -175,7 +177,10 @@ function repaintFocus() {
   // Ordered like handleInput: whatever owns the input owns the highlight. The radial submenu
   // comes first for the same reason it does there -- it sits on top of everything else, and
   // repainting the library underneath it would leave the visible menu unhighlighted.
-  if (radialSub) renderRadialSub();
+  if (actionWheelOpen) renderActionWheel();
+  else if (keyPick) renderKeyPick();
+  else if (captureState) renderCapture();
+  else if (radialSub) renderRadialSub();
   else if (mediaView) renderMediaViewFoot();   // nothing to highlight; the pad is the only thing drawn
   else if (filterOpen) renderFilter();
   else if (gameMenu) renderGameMenu();
@@ -1223,6 +1228,12 @@ let collectOpen = false, collectIdx = 0;
 let confirmState = null, confirmIdx = 0; // { title, onYes }
 let inputOpen = false, inputConfirm = null;
 let guideOpen = false;
+/* The action wheel and its two pickers (actions.js). Declared here because this file reads them
+   while it boots, before actions.js has run. */
+let actionWheelOpen = false;
+let captureState = null;                 // { app, action, onDone, timer, note }
+let keyPick = null;                      // { onDone, mods: Set }
+let overlayTargetProcess = "";           // the exe behind the window a menu opened over; "" for none
 
 let settingsIdx = 0;
 let saveTimer = null;
@@ -2427,7 +2438,8 @@ function updateContinueScroll(follow) {
 let hWheelAccum = 0;
 
 function overlayOpen() {
-  return inputOpen || filterOpen || !!gameMenu || collectOpen || manageOpen || !!choiceState || !!modsState || !!confirmState || guideOpen || !!mediaView;
+  return inputOpen || filterOpen || !!gameMenu || collectOpen || manageOpen || !!choiceState || !!modsState || !!confirmState || guideOpen || !!mediaView
+    || !!captureState || !!keyPick;
 }
 
 window.addEventListener("wheel", (e) => {
@@ -3401,22 +3413,38 @@ function allSettingsRows() {
       v => set(() => s.touchpadScrollSpeed = v), v => v.toFixed(2) + "×",
       "How far two fingers scroll. A quick flick keeps the page coasting after they lift"));
   }
+  /* Who else acts on the Xbox button: Windows' Game Bar and Xbox mode, and Steam. The host reads
+     all three (see WindowsGuide and SteamGuide). Their switches are the WINDOWS AND STEAM rows at
+     the end of this category; the warning here only names what is still on. */
+  const tapHold = s.menuComboMode !== "DoubleTap";
+  const xb = S.xboxButton || {};
+  const usesGuide = /\bGuide\b/.test(s.minimizeCombo || "");
+  const takers = [];
+  if (usesGuide && xb.gameBar === true) takers.push("Xbox Game Bar");
+  if (usesGuide && tapHold && xb.xboxMode === true) takers.push("Windows' Xbox mode");
+  if (usesGuide && xb.steam === true) takers.push("Steam");
+  const listed = takers.length < 2 ? takers.join("") : takers.slice(0, -1).join(", ") + " and " + takers[takers.length - 1];
   const comboWarn =
-    s.minimizeCombo === "Guide" ?
-      "Windows and Steam both grab this button. Disable BOTH: (1) Windows — Settings > Gaming > " +
-      "Xbox Game Bar, turn off \u201COpen Xbox Game Bar using this button on a controller\u201D. " +
-      "(2) Steam — Settings > Controller > uncheck \u201CEnable Steam Input\u201D for the pad, or in " +
-      "Big Picture go to Settings > Controller > Guide Button Chord Layout and clear it. Steam must " +
-      "be fully restarted afterwards."
+    takers.length ?
+      `${listed} also ${takers.length === 1 ? "takes" : "take"} this button` +
+      (takers.includes("Windows' Xbox mode") ? ", and Xbox mode opens Task View when it is held" : "") +
+      `. Turn ${takers.length === 1 ? "it" : "them"} off under Windows and Steam, at the end of this list.`
     : s.minimizeCombo === "View + Menu" ?
+      (xb.gameBar === true ? "Game Bar treats View + Menu as the Xbox button in apps; turn that off under Windows and Steam, at the end of this list. " : "") +
       "Steam binds View + Menu (Back + Start) to open Big Picture. Disable it in Steam: Settings > " +
       "Controller > Guide Button Chord Layout, or turn off Steam Input for this controller. Restart " +
       "Steam afterwards."
     : null;
 
   rows.push(buttonRow("Menu combo", MINIMIZE_COMBOS, () => s.minimizeCombo, v => set(() => s.minimizeCombo = v),
-    "Tap to hide or bring back the launcher (in-game menu while a game runs); double tap to open the Power Wheel",
+    "Opens the Power Wheel and brings Loungepad back, from anywhere, a game included",
     comboWarn));
+  rows.push(cycleRow("Combo gesture", ["TapHold", "DoubleTap"], () => (s.menuComboMode === "DoubleTap" ? "DoubleTap" : "TapHold"),
+    v => set(() => s.menuComboMode = v),
+    tapHold
+      ? "A tap opens the Power Wheel, and another tap closes it. Hold for half a second to show or hide Loungepad, or for the in-game menu while a game runs"
+      : "A tap shows or hides Loungepad once it is sure no second tap is coming; a quick double tap opens the Power Wheel",
+    null, { TapHold: "Tap: Power Wheel · Hold: Loungepad", DoubleTap: "Tap: Loungepad · Double tap: Power Wheel" }));
 
   rows.push(buttonRow("Screenshot button", SCREENSHOT_COMBOS, () => s.screenshotCombo, v => set(() => s.screenshotCombo = v),
     "Taps F12, Steam's screenshot key. Works while a game is focused, which the Xbox Share button cannot manage, " +
@@ -3424,6 +3452,46 @@ function allSettingsRows() {
     s.screenshotCombo !== "Off" && s.screenshotCombo === s.minimizeCombo
       ? "Same as the menu combo above, so one press does both. Pick a different one."
       : null));
+
+  /* WINDOWS AND STEAM: the three other things that react to the Xbox button, each a switch that
+     shows what is set right now and changes it on the spot, plus one press for all of them. The
+     host writes Windows' two in the registry and Steam's in its own settings file, which means
+     closing and reopening Steam; see xboxButtonSet on the host. */
+  rows.push({ section: "WINDOWS AND STEAM", cat: "input" });
+  const hasXboxMode = xb.xboxMode === true || xb.xboxMode === false;
+  const hasSteam = xb.steam === true || xb.steam === false;
+  const stillOn = [
+    xb.gameBar === true ? "Xbox Game Bar stops opening on the Xbox button, and stops treating View + Menu as one" : null,
+    xb.xboxMode === true ? "Windows' Xbox mode is turned off, so a hold no longer opens Task View" : null,
+    xb.steam === true ? `Steam stops opening on the Xbox button and drops its Guide button shortcuts${xb.steamRunning ? "; Steam closes and reopens for this" : ""}` : null,
+  ].filter(Boolean);
+  if (stillOn.length) rows.push({
+    name: "Give Loungepad the Xbox button",
+    hint: "Turns off everything below that still reacts to it, in one go",
+    type: "action", label: "Turn all off",
+    action: () => {
+      if (xb.steam === true && xb.steamRunning && S.gameRunning) { toast("Close the game first: Steam has to restart for this"); return; }
+      askConfirm({
+        title: "Give Loungepad the Xbox button?",
+        body: stillOn.join(". ") + ". Each can be turned back on here.",
+        yesLabel: "Turn all off", icon: "controller", danger: false,
+        onYes: () => send({ cmd: "xboxButtonAllOff" }),
+      });
+    },
+  });
+  rows.push(toggleRow("Xbox Game Bar on the controller",
+    "The Xbox button opens Game Bar, and View + Menu stands in for the Xbox button in apps. Win + G opens Game Bar either way",
+    () => xb.gameBar === true, v => setXboxButton("gameBar", v)));
+  if (hasXboxMode) rows.push(toggleRow("Windows Xbox mode",
+    "Windows' own full-screen gaming home. While it is on, holding the Xbox button opens Task View, on top of the hold that brings Loungepad back",
+    () => xb.xboxMode === true, v => setXboxButton("xboxMode", v)));
+  if (hasSteam) {
+    const steamHint = "Steam's “Guide Button Focuses Steam” and its Guide button shortcuts, such as Guide + a button for Big Picture or the keyboard" +
+      (xb.steamRunning ? ". Steam closes and reopens to change this" : "");
+    rows.push(xb.steamBusy
+      ? { name: "Steam on the Xbox button", hint: steamHint, type: "action", label: "Restarting Steam…", action: () => {} }
+      : toggleRow("Steam on the Xbox button", steamHint, () => xb.steam === true, v => setXboxButton("steam", v)));
+  }
 
   rows.push({ section: "KEYBOARD", cat: "keyboard" });
   rows.push(cycleRow("Keyboard app", ["Builtin", "TabTip", "Osk"], () => s.keyboardApp, v => set(() => s.keyboardApp = v),
@@ -3910,6 +3978,7 @@ const SETTINGS_TABS = [
   { id: "appearance", label: "Appearance" },
   { id: "input",      label: "Controller" },
   { id: "keyboard",   label: "Keyboard" },
+  { id: "actions",    label: "Actions" },
   { id: "library",    label: "Library" },
 ];
 let settingsTab = "general";
@@ -3919,6 +3988,9 @@ let settingsTab = "general";
 let settingsPane = "nav";
 
 function settingsRows() {
+  // Actions is not a list of settings but a grid of apps that drills into lists; actions.js
+  // builds whatever level is showing, in the same row shape.
+  if (settingsTab === "actions") return actionsSettingsRows();
   let cat = null;
   return allSettingsRows().filter(r => {
     if (r.section) cat = r.cat;
@@ -3929,6 +4001,8 @@ function settingsRows() {
 function setSettingsTab(id) {
   const changed = settingsTab !== id;
   if (changed) { settingsTab = id; settingsIdx = 0; }
+  // Always the grid on the way in, never a list left open from last time.
+  if (changed && id === "actions") actionsTabReset();
   renderSettings();
   // Only when the rows are a different category's, never on the re-render every move costs.
   if (changed) pulse($("settingsScroll"));
@@ -3959,6 +4033,7 @@ function renderSettingsNav() {
     if (r.section) { cat = r.cat; return; }
     counts[cat] = (counts[cat] || 0) + 1;
   });
+  counts.actions = shownApps().length;
 
   // Built once; from then on only the active mark and the counts change, so the tab's own
   // transition runs and a node is never destroyed under a click.
@@ -3998,9 +4073,14 @@ function renderSettings() {
   // that names a button which does not respond is worse than a shorter legend.
   if (footEl) footEl.innerHTML = settingsPane === "nav"
     ? foot(["A", "Open"], ["B", "Back"], ["DpadV", "Category"])
-    : foot(["A", "Select"], ["B", "Categories"], ["DpadH", "Adjust"]);
+    : settingsTab !== "actions" ? foot(["A", "Select"], ["B", "Categories"], ["DpadH", "Adjust"])
+    : actionsUi.level === "apps" ? foot(["A", "Open"], ["B", "Categories"])
+    : actionsUi.level === "app" ? foot(["A", "Edit"], ["B", "Back"])
+    : foot(["A", "Select"], ["B", "Back"], ["DpadH", "Adjust"]);
   const rows = settingsRows();
   const scroll = $("settingsScroll");
+  // The Actions grid is the same scroller laid out as tiles; everything else is rows.
+  scroll.classList.toggle("apps-grid", actionsGridMode());
 
   const focusables = rows.filter(r => !r.section);
   settingsIdx = Math.max(0, Math.min(settingsIdx, focusables.length - 1));
@@ -4016,13 +4096,16 @@ function renderSettings() {
   rows.forEach(r => {
     if (r.section) { nodes.push({ section: r.section }); return; }
     fi++;
-    nodes.push({ row: r, idx: fi, html: settingsRowHtml(r) });
+    nodes.push({ row: r, idx: fi, html: r.tile ? actionsTileHtml(r) : settingsRowHtml(r) });
   });
-  const shape = settingsTab + "|" + nodes.map(n => n.section !== undefined ? "s:" + n.section : "r").join("|");
+  // The Actions category's level is part of the shape: its list and its editor are different
+  // rows under one tab, and the level tag is what makes the drill-down rebuild.
+  const levelTag = settingsTab === "actions" ? `|${actionsUi.level}:${actionsUi.appId}:${actionsUi.actionId}` : "";
+  const shape = settingsTab + levelTag + "|" + nodes.map(n => n.section !== undefined ? "s:" + n.section : n.row.tile ? "t" : "r").join("|");
   if (scroll.__shape !== shape) {
     const keepTop = scroll.scrollTop;
     scroll.innerHTML = "";
-    nodes.forEach(n => scroll.appendChild(n.section !== undefined ? settingsSectionEl(n.section) : settingsRowEl(n.idx)));
+    nodes.forEach(n => scroll.appendChild(n.section !== undefined ? settingsSectionEl(n.section) : n.row.tile ? actionsTileEl(n.idx) : settingsRowEl(n.idx)));
     scroll.scrollTop = keepTop;
     scroll.__shape = shape;
   }
@@ -4032,6 +4115,7 @@ function renderSettings() {
     el.dataset.focusKey = "setrow:" + settingsTab + ":" + n.idx;
     // Left/Right adjust the value here instead of moving; settingsInput reads this.
     if (n.row.adjust) el.dataset.navLock = "horizontal"; else delete el.dataset.navLock;
+    el.classList.toggle("muted", !!n.row.muted);
     if (el.__html !== n.html) { el.innerHTML = n.html; el.__html = n.html; }
   });
 
@@ -4100,6 +4184,9 @@ function settingsRowHtml(r) {
     right = `<div class="slider">${left}<div class="slider-track"><div class="slider-fill" style="width:${pct}%"></div></div>${rightArrow}<span class="slider-val">${esc(r.fmt(r.value))}</span></div>`;
   } else if (r.type === "action") {
     right = `<span class="set-action-label${r.danger ? " danger" : ""}">${esc(r.label)}</span>`;
+  } else if (r.type === "html") {
+    // The row draws its own value: key caps and a button glyph, for an action.
+    right = r.valueHtml || "";
   }
   return `<div class="set-left"><div class="set-name">${esc(r.name)}</div>${r.hint ? `<div class="set-hint">${hintHtml(r.hint)}</div>` : ""}${r.warn ? `<div class="set-warn">${hintHtml(r.warn)}</div>` : ""}</div><div class="set-value">${right}</div>`;
 }
@@ -4138,9 +4225,11 @@ function settingsInput(btn) {
       if (row) { if (row.action) row.action(); else if (row.adjust) row.adjust(1); }
       break;
 
-    // Back steps out to the categories first, and only leaves Settings from there.
+    // Back steps out to the categories first, and only leaves Settings from there. Inside the
+    // Actions category it first climbs back out of an app's list or an action's editor.
     case "B":
       if (onTab) switchView("library");
+      else if (settingsTab === "actions" && actionsBack()) break;
       else enterSettingsPane("nav");
       break;
   }
@@ -4159,6 +4248,27 @@ function syncSettingsPane() {
     settingsIdx = parseInt(el.dataset.rowIndex, 10);
     renderSettings();
   }
+}
+
+/* One of the WINDOWS AND STEAM switches. Windows' two change on the spot and are shown at once;
+   Steam has to close and reopen, which is said first, and cannot happen under a running game --
+   closing Steam would end a Steam game with it. The host's state push confirms each one. */
+function setXboxButton(what, on) {
+  const xb = S.xboxButton || (S.xboxButton = {});
+  if (what === "steam") {
+    if (!xb.steamRunning) { send({ cmd: "xboxButtonSet", what, on }); return; }
+    if (S.gameRunning) { toast("Close the game first: Steam has to restart for this"); return; }
+    askConfirm({
+      title: "Restart Steam?",
+      body: "Steam rewrites its settings when it closes, so it has to close for this to stick. It opens again in the tray straight away, signed in as before.",
+      yesLabel: "Restart Steam", icon: "refresh", danger: false,
+      onYes: () => send({ cmd: "xboxButtonSet", what, on }),
+    });
+    return;
+  }
+  xb[what] = on;
+  send({ cmd: "xboxButtonSet", what, on });
+  renderSettings();
 }
 
 function scheduleSave() {
@@ -5135,7 +5245,7 @@ $("inputField").addEventListener("keydown", (e) => {
  */
 let claimedButtons = "";
 function publishClaims() {
-  const overlayUp = overlayOpen() || radialOpen || !!radialSub || ingameOpen
+  const overlayUp = overlayOpen() || radialOpen || !!radialSub || actionWheelOpen || ingameOpen
     || document.body.classList.contains("overlay-mode");
   const want = view === "library" && !overlayUp && !searchOpen ? "View" : "";
   if (want === claimedButtons) return;
@@ -5333,7 +5443,10 @@ function handleInput(btn, src) {
   if (DIRECTIONS.has(btn)) setInputMode("pad");
   if (mediaView) { mediaViewInput(btn); return; }
   if (confirmState) { confirmInput(btn); return; }
+  if (captureState) { captureInput(btn); return; }
+  if (keyPick) { keyPickInput(btn); return; }
   if (searchOpen) { searchInput(btn); return; }
+  if (actionWheelOpen) { actionWheelInput(btn); return; }
   if (radialSub) { radialSubInput(btn); return; }
   if (radialOpen) { radialInput(btn); return; }
   if (ingameOpen) { ingameInput(btn); return; }
@@ -5474,6 +5587,10 @@ function handleHostMessage(m) {
       S.stores = m.stores || null;
       S.emulation = m.emulation || null;
       S.mods = m.mods || null;
+      // A state push carries the apps without their icons (see ActionsPayload on the host); the
+      // icons that came with the last actions message are carried over by app id.
+      S.actions = withActionIcons(m.actions, S.actions);
+      S.xboxButton = m.xboxButton || null;
       S.update = m.update || S.update;
       if (S.settings) S.settings.launchOnStartup = m.startupRegistered;
       applyTheme();
@@ -5524,6 +5641,7 @@ function handleHostMessage(m) {
       break;
     case "overlay":
       overlayTargetTitle = m.targetTitle || "";
+      overlayTargetProcess = m.targetProcess || "";
       setOverlayShot(m.shot);
       setOverlayMode(true);
       hostWindows = m.windows || [];
@@ -5550,10 +5668,30 @@ function handleHostMessage(m) {
       dismissOverlays();
       break;
     case "stick":
-      if (radialOpen && !radialSub) {
+      if (actionWheelOpen) actionWheelStick(m.x, m.y);
+      else if (radialOpen && !radialSub) {
         const i = stickToSpoke(m.x, m.y, RADIAL_ITEMS.length);
         if (i !== radialIdx) { radialIdx = i; renderRadial(); }
       }
+      break;
+    // The actions list changed: an edit answered, or detection finished with icons. Only the
+    // places that draw it are repainted; the library is never touched for this.
+    case "actions":
+      S.actions = withActionIcons(m.actions, S.actions);
+      if (view === "settings" && settingsTab === "actions") renderSettings();
+      refreshActionWheel();
+      break;
+    case "actionCaptured":
+      onActionCaptured(m.combo || null);
+      break;
+    case "actionCaptureRejected":
+      onActionCaptureRejected(m.button || "");
+      break;
+    case "actionApps":
+      onActionApps(m);
+      break;
+    case "actionAppAdded":
+      onActionAppAdded(m);
       break;
     // A theme file changed on disk. The list carries a fresh cache-busting stamp, so
     // re-applying reloads the stylesheet without a restart.
@@ -5653,6 +5791,67 @@ const mockWindows = [
 const mockCollections = [
   { id: "c1", name: "Cozy evenings", gameIds: ["gog:salttide", "manual:foundrynine"] },
 ];
+
+/* A slice of the host's packs, so the wheel, the grid and the editor can be walked in the browser:
+   two browsers (one of them not "installed", to check it stays out of the grid), a player, the
+   Explorer, and an app the user added. Everywhere carries the bound-but-hidden arrows. */
+const mockActions = (() => {
+  const A = (id, name, keys, button = null, hidden = false, danger = false) => ({ id, name, keys, button, hidden, custom: false, danger });
+  const browser = (downloads, priv) => [
+    A("new-tab", "New tab", "Ctrl+T", "Y"), A("close-tab", "Close tab", "Ctrl+W"), A("reopen-tab", "Reopen closed tab", "Ctrl+Shift+T"),
+    A("next-tab", "Next tab", "Ctrl+Tab"), A("prev-tab", "Previous tab", "Ctrl+Shift+Tab"), A("back", "Back", "Alt+Left", "X"),
+    A("forward", "Forward", "Alt+Right"), A("reload", "Reload", "F5"), A("address", "Address bar", "Ctrl+L"), A("find", "Find in page", "Ctrl+F"),
+    A("fullscreen", "Full screen", "F11"), A("zoom-in", "Zoom in", "Ctrl+="), A("zoom-out", "Zoom out", "Ctrl+-"),
+    A("zoom-reset", "Reset zoom", "Ctrl+0", null, true), A("bookmark", "Bookmark this page", "Ctrl+D", null, true), A("history", "History", "Ctrl+H", null, true),
+    A("downloads", "Downloads", downloads, null, true), A("new-window", "New window", "Ctrl+N", null, true), A("private", "Private window", priv, null, true),
+    A("home", "Home page", "Alt+Home", null, true),
+  ];
+  const icon = (hue) => "data:image/svg+xml," + encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="28" fill="hsl(${hue} 70% 50%)"/><circle cx="32" cy="32" r="12" fill="white" fill-opacity="0.85"/></svg>`);
+  const app = (id, name, exes, actions, extra = {}) => ({ id, name, exes, custom: false, pinned: false, installed: true, modified: false, icon: null, actions, ...extra });
+  return { apps: [
+    app("everywhere", "Everywhere", [], [
+      A("vol-up", "Volume up", "VolumeUp"), A("vol-down", "Volume down", "VolumeDown"), A("mute", "Mute", "VolumeMute"),
+      A("play-pause", "Play / pause", "MediaPlayPause"), A("next-track", "Next track", "MediaNext"), A("prev-track", "Previous track", "MediaPrev"),
+      A("show-desktop", "Show desktop", "Win+D"), A("last-window", "Last window", "Alt+Tab"), A("task-view", "Task view", "Win+Tab"),
+      A("maximize", "Maximize window", "Win+Up"), A("snap-left", "Snap left", "Win+Left"), A("snap-right", "Snap right", "Win+Right"),
+      A("screenshot", "Save a screenshot", "Win+PrintScreen"), A("enter", "Enter", "Enter"), A("escape", "Escape", "Esc"),
+      A("close-window", "Close window", "Alt+F4", null, false, true),
+      A("arrow-up", "Arrow up", "Up", "Up", true), A("arrow-down", "Arrow down", "Down", "Down", true),
+      A("arrow-left", "Arrow left", "Left", "Left", true), A("arrow-right", "Arrow right", "Right", "Right", true),
+      A("copy", "Copy", "Ctrl+C", null, true), A("paste", "Paste", "Ctrl+V", null, true), A("undo", "Undo", "Ctrl+Z", null, true), A("select-all", "Select all", "Ctrl+A", null, true),
+    ]),
+    app("firefox", "Firefox", ["firefox"], browser("Ctrl+Shift+Y", "Ctrl+Shift+P"), { icon: icon(25) }),
+    app("chrome", "Google Chrome", ["chrome"], browser("Ctrl+J", "Ctrl+Shift+N"), { installed: false }),
+    app("vlc", "VLC", ["vlc"], [
+      A("play-pause", "Play / pause", "Space", "X"), A("fullscreen", "Full screen", "F", "Y"), A("mute", "Mute", "M"),
+      A("skip-fwd", "Skip forward 10 s", "Alt+Right"), A("skip-back", "Skip back 10 s", "Alt+Left"), A("next", "Next", "N"), A("prev", "Previous", "P"),
+      A("subtitles", "Subtitle track", "V"), A("audio", "Audio track", "B"), A("faster", "Faster", "]"), A("slower", "Slower", "["), A("stop", "Stop", "S"),
+      A("playlist", "Playlist", "Ctrl+L"), A("quit", "Quit VLC", "Ctrl+Q", null, true, true),
+    ], { icon: icon(30) }),
+    app("explorer", "File Explorer", ["explorer"], [
+      A("back", "Back", "Alt+Left", "X"), A("forward", "Forward", "Alt+Right"), A("up", "Up a folder", "Alt+Up", "Y"), A("open", "Open", "Enter"),
+      A("new-folder", "New folder", "Ctrl+Shift+N"), A("rename", "Rename", "F2"), A("delete", "Delete", "Delete"), A("copy", "Copy", "Ctrl+C"),
+      A("paste", "Paste", "Ctrl+V"), A("select-all", "Select all", "Ctrl+A"), A("address", "Address bar", "Alt+D"), A("search", "Search", "Ctrl+E"), A("refresh", "Refresh", "F5"),
+    ], { icon: icon(45) }),
+    app("spotify", "Spotify", ["spotify"], [A("play-pause", "Play / pause", "Space", "X"), A("next", "Next track", "Ctrl+Right", "Y")], { installed: false }),
+    app("plex", "Plex", ["plex"], [
+      { ...A("c1a2b3c4", "Play / pause", "Space", "X"), custom: true },
+      { ...A("c5d6e7f8", "Full screen", "F"), custom: true },
+    ], { custom: true }),
+  ] };
+})();
+const mockActionsPristine = JSON.parse(JSON.stringify(mockActions));
+/* Everything that reacts to the Xbox button still on, so Windows and Steam can be walked. */
+const mockXboxButton = { gameBar: true, xboxMode: true, steam: true, steamRunning: true, steamBusy: false };
+
+/* Preview only: P opens the Power Wheel over "Firefox", O over an app we have no actions for. */
+if (!HOST) window.addEventListener("keydown", (e) => {
+  if (inputOpen || overlayMode || keyPick || captureState || e.ctrlKey || e.altKey || e.metaKey) return;
+  const over = (title, exe) => handleHostMessage({ type: "overlay", mode: "radial", targetTitle: title, targetProcess: exe, shot: null, windows: mockWindows });
+  if (e.key === "p") over("Mozilla Firefox", "firefox");
+  if (e.key === "o") over("Untitled - Notepad", "notepad");
+});
 
 /* A slice of the host's catalogue, enough to walk the folder wizard and the options lists. */
 const mockEmulation = {
@@ -5859,6 +6058,8 @@ function mockHandle(msg) {
         gamePass: { count: 0, fetchedAt: null, error: null },
       },
       emulation: mockEmulation,
+      actions: mockActions,
+      xboxButton: { ...mockXboxButton },
       mods: { installed: true, path: "C:\\Users\\couch\\AppData\\Local\\Programs\\Vortex\\Vortex.exe", version: "1.13.7", running: true },
       update: mockUpdate,
       settings: S.settings || {
@@ -5870,7 +6071,7 @@ function mockHandle(msg) {
         boostButton: "RT", boostMultiplier: 2.5, hideLegend: false, igdbClientId: "", igdbClientSecret: "", steamGridDbKey: "", metadataEndpoint: "",
         steamShowOwned: true, steamApiKey: "", gamePassCatalog: false, xboxClientId: "", detectEmulators: true, autoUpdate: true,
         leftClickButton: "A", rightClickButton: "B",
-        minimizeCombo: "LS + RS",
+        minimizeCombo: "LS + RS", menuComboMode: "TapHold",
         keyboardToggleButton: "Start", keyboardToggleHoldMs: 600,
         keyboardApp: "Builtin", keyboardScale: 1.0, keyRepeatDelayMs: 350, keyRepeatIntervalMs: 90,
         keyboardSuggestions: true, keyboardFunctionKeys: false, keyboardNavKeys: false,
@@ -6033,6 +6234,79 @@ function mockHandle(msg) {
     mockHandle._titles = mockHandle._titles || {};
     mockHandle._titles[msg.id] = msg.title;
     pushState();
+  } else if (msg.cmd === "actionFire") {
+    const app = mockActions.apps.find(a => a.id === msg.appId);
+    const a = app && app.actions.find(x => x.id === msg.actionId);
+    toast(`(preview) would send ${a ? a.keys : "?"} to ${app ? app.name : "?"}`);
+  } else if (msg.cmd === "actionCapture") {
+    // What the pad "presses", in turn: a plain button, then the two the host refuses, a chord, a
+    // direction, and a stick click, so every path of the dialog gets walked.
+    mockHandle._captures = mockHandle._captures || ["Y", "A", "LB + X", "Up", "Guide", "RS"];
+    const next = mockHandle._captures.shift();
+    mockHandle._captures.push(next);
+    clearTimeout(mockHandle._captureTimer);
+    mockHandle._captureTimer = setTimeout(() => {
+      if (next === "A" || next === "Guide") {
+        handleHostMessage({ type: "actionCaptureRejected", button: next });
+        mockHandle._captureTimer = setTimeout(() => handleHostMessage({ type: "actionCaptured", combo: "X" }), 1400);
+      } else handleHostMessage({ type: "actionCaptured", combo: next });
+    }, 900);
+  } else if (msg.cmd === "actionCaptureCancel") {
+    clearTimeout(mockHandle._captureTimer);
+  } else if (msg.cmd === "actionUpdate") {
+    const app = mockActions.apps.find(a => a.id === msg.appId);
+    if (app) {
+      const i = app.actions.findIndex(x => x.id === msg.action.id);
+      if (i >= 0) app.actions[i] = { ...app.actions[i], ...msg.action };
+      else app.actions.push({ ...msg.action, custom: true });
+      if (!app.custom) app.modified = true;
+    }
+    handleHostMessage({ type: "actions", actions: mockActions });
+  } else if (msg.cmd === "actionRemove") {
+    const app = mockActions.apps.find(a => a.id === msg.appId);
+    if (app) { const i = app.actions.findIndex(x => x.id === msg.actionId); if (i >= 0) app.actions.splice(i, 1); }
+    handleHostMessage({ type: "actions", actions: mockActions });
+  } else if (msg.cmd === "actionAppReset") {
+    const app = mockActions.apps.find(a => a.id === msg.appId);
+    const was = mockActionsPristine.apps.find(a => a.id === msg.appId);
+    if (app && was) { app.actions = JSON.parse(JSON.stringify(was.actions)); app.modified = false; }
+    handleHostMessage({ type: "actions", actions: mockActions });
+  } else if (msg.cmd === "actionAppRemove") {
+    const i = mockActions.apps.findIndex(a => a.id === msg.appId);
+    if (i >= 0) { if (mockActions.apps[i].custom) mockActions.apps.splice(i, 1); else { mockActions.apps[i].installed = false; mockActions.apps[i].pinned = false; } }
+    handleHostMessage({ type: "actions", actions: mockActions });
+  } else if (msg.cmd === "actionAppRename") {
+    const app = mockActions.apps.find(a => a.id === msg.appId);
+    if (app) app.name = msg.name;
+    handleHostMessage({ type: "actions", actions: mockActions });
+  } else if (msg.cmd === "actionAppAdd" || msg.cmd === "actionAppBrowse") {
+    const exe = msg.cmd === "actionAppBrowse" ? "notepad" : msg.exe;
+    const name = msg.cmd === "actionAppBrowse" ? "Notepad" : (msg.name || exe);
+    let app = mockActions.apps.find(a => a.exes.includes(exe));
+    const existed = !!(app && app.installed);
+    if (app) { app.installed = true; app.pinned = !app.custom; }
+    else { app = { id: exe, name, exes: [exe], custom: true, pinned: false, installed: true, modified: false, icon: null, actions: [] }; mockActions.apps.push(app); }
+    handleHostMessage({ type: "actions", actions: mockActions });
+    setTimeout(() => handleHostMessage({ type: "actionAppAdded", id: app.id, existed }), 150);
+  } else if (msg.cmd === "actionListApps") {
+    handleHostMessage({ type: "actionApps", open: [
+      { title: "Cyberpunk 2077", exe: "cyberpunk2077", listed: false },
+      { title: "Mozilla Firefox", exe: "firefox", listed: true, appId: "firefox" },
+      { title: "Google Chrome", exe: "chrome", listed: false },
+      { title: "Netflix", exe: "netflix", listed: false },
+    ] });
+  } else if (msg.cmd === "xboxButtonSet" || msg.cmd === "xboxButtonAllOff") {
+    // Windows' two switch at once; Steam takes a moment, as its restart does on the host.
+    const all = msg.cmd === "xboxButtonAllOff";
+    if (all || msg.what === "gameBar") mockXboxButton.gameBar = all ? false : !!msg.on;
+    if (all || msg.what === "xboxMode") mockXboxButton.xboxMode = all ? false : !!msg.on;
+    if (all || msg.what === "steam") {
+      mockXboxButton.steamBusy = true;
+      setTimeout(() => { mockXboxButton.steam = all ? false : !!msg.on; mockXboxButton.steamBusy = false; pushState(); toast("(preview) Steam restarted"); }, 1200);
+    }
+    pushState();
+  } else if (msg.cmd === "actionsRefresh") {
+    /* detection is the host's; the preview's list is what it is */
   }
 }
 

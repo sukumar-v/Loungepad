@@ -146,6 +146,13 @@ public class AppSettings
     /// it. Guide is the button a console player already reaches for, so that is the default --
     /// Windows and Steam both grab it, and the Settings row says so and how to free it.</summary>
     public string MinimizeCombo { get; set; } = "Guide";
+    /// <summary>
+    /// What the menu combo does. "TapHold": a tap opens the Power Wheel and a hold shows or hides
+    /// Loungepad (the in-game menu while a game runs). "DoubleTap": a tap shows or hides Loungepad
+    /// and a double tap opens the Power Wheel -- the original, kept for anyone whose Windows still
+    /// takes a long press of the Xbox button. See ComboGesture.
+    /// </summary>
+    public string MenuComboMode { get; set; } = "TapHold";
     /// <summary>Gamepad button or combo that taps the screenshot key. "Off" disables it.
     /// Evaluated even inside a focused game, which is the only place it is any use.</summary>
     public string ScreenshotCombo { get; set; } = "Off";

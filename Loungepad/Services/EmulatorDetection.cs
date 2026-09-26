@@ -169,7 +169,7 @@ public static class EmulatorDetection
 
     /// <summary>Installed emulators, from the uninstall entries: the icon usually IS the exe, and
     /// the install folder holds it otherwise.</summary>
-    private static IEnumerable<string> RegistryExes()
+    internal static IEnumerable<string> RegistryExes()
     {
         var exes = new List<string>();
         var roots = new (RegistryKey Hive, string Path)[]

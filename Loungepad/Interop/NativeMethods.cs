@@ -423,6 +423,13 @@ internal static class NativeMethods
     public const ushort VK_SNAPSHOT = 0x2C, VK_INSERT = 0x2D, VK_LWIN = 0x5B;
     public const ushort VK_NUMPAD0 = 0x60, VK_MULTIPLY = 0x6A, VK_ADD = 0x6B, VK_SUBTRACT = 0x6D;
     public const ushort VK_DECIMAL = 0x6E, VK_DIVIDE = 0x6F, VK_F1 = 0x70, VK_NUMLOCK = 0x90, VK_SCROLL = 0x91;
+    // The keys an action's shortcut can name beyond the keyboard's own (see ShortcutKeys): the
+    // application key, and the volume, media and browser keys, which are all extended keys.
+    public const ushort VK_CAPITAL = 0x14, VK_APPS = 0x5D;
+    public const ushort VK_BROWSER_BACK = 0xA6, VK_BROWSER_FORWARD = 0xA7, VK_BROWSER_REFRESH = 0xA8;
+    public const ushort VK_BROWSER_SEARCH = 0xAA, VK_BROWSER_FAVORITES = 0xAB, VK_BROWSER_HOME = 0xAC;
+    public const ushort VK_VOLUME_MUTE = 0xAD, VK_VOLUME_DOWN = 0xAE, VK_VOLUME_UP = 0xAF;
+    public const ushort VK_MEDIA_NEXT_TRACK = 0xB0, VK_MEDIA_PREV_TRACK = 0xB1, VK_MEDIA_STOP = 0xB2, VK_MEDIA_PLAY_PAUSE = 0xB3;
 
     [DllImport("user32.dll")]
     public static extern uint MapVirtualKeyW(uint uCode, uint uMapType);
@@ -742,6 +749,20 @@ internal static class NativeMethods
 
     [DllImport("user32.dll")]
     public static extern bool DestroyIcon(IntPtr hIcon);
+
+    /// <summary>
+    /// The icon in an exe, at a size of our choosing: the frame nearest cx by cy is picked from
+    /// the icon group, so a 96px request gets the 96 or 128 frame most programs ship rather than
+    /// the 32px one ExtractAssociatedIcon stops at. Returns how many icons were extracted.
+    /// </summary>
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern uint PrivateExtractIcons(string lpszFile, int nIconIndex, int cxIcon, int cyIcon,
+        IntPtr[] phicon, uint[] piconid, uint nIcons, uint flags);
+
+    /// <summary>The children of a window. A Store app's real window is a child of the frame
+    /// host's, and the frame host is the process that owns the top-level one.</summary>
+    [DllImport("user32.dll")]
+    public static extern bool EnumChildWindows(IntPtr hWndParent, EnumWindowsProc lpEnumFunc, IntPtr lParam);
 
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]

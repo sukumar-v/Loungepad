@@ -1145,8 +1145,11 @@ body.pad-mode, body.pad-mode * { cursor: none !important; }
   font-size: 16px; letter-spacing: 0.1em; color: color-mix(in srgb, var(--ink) 42%, transparent);
   height: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+/* Below the wrap rather than inside it: the action wheel's pager takes the strip under the bottom
+   spoke, and both wheels keep their legend at the same height so stepping from one into the other
+   does not move it. The wrap is centred on the 1080 stage, so this still ends 56px clear of it. */
 .radial-foot {
-  position: absolute; bottom: 0; left: 50%; transform: translateX(-50%);
+  position: absolute; bottom: -46px; left: 50%; transform: translateX(-50%);
   border-top: none; padding-top: 0; margin-top: 0; white-space: nowrap;
 }
 
@@ -1400,3 +1403,153 @@ body.overlay-mode #overlay-ingame { background: color-mix(in srgb, var(--bg) 34%
   -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 28px, #000 calc(100% - 28px), transparent);
   mask-image: linear-gradient(180deg, transparent 0, #000 28px, #000 calc(100% - 28px), transparent);
 }
+
+/* ---- the action wheel ----
+   The Power Wheel's second ring (actions.js): the same spokes, each carrying an action's name,
+   its keys as caps and, in the corner, the pad button it is bound to. */
+#overlay-actions { background: color-mix(in srgb, var(--bg) 90%, transparent); }
+body.overlay-mode #overlay-actions { background: color-mix(in srgb, var(--bg) 74%, transparent); }
+.action-spoke { gap: 7px; padding: 0 12px; }
+.spoke-name {
+  font-size: 18px; font-weight: 500; color: color-mix(in srgb, var(--ink) 85%, transparent);
+  max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.action-spoke.danger .spoke-name { color: var(--danger); }
+.spoke-keys .btn-icon { height: 24px; }
+.spoke-keys .combo-plus { margin: 0 4px; font-size: 14px; }
+.spoke-keys .keys-none { font-size: 14px; }
+.spoke-btn { position: absolute; top: -13px; right: -10px; }
+.spoke-btn .btn-icon { height: 30px; filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.55)); }
+.action-spoke.no-keys { opacity: 0.55; }
+/* The centre: which app's page this is, the highlighted action, its keys and button, the window. */
+.actions-app {
+  display: flex; align-items: center; justify-content: center; gap: 10px; height: 24px;
+  font-size: 15px; letter-spacing: 0.16em; color: color-mix(in srgb, var(--ink) 50%, transparent);
+}
+.actions-app .ov-icon { width: 20px; height: 20px; color: var(--accent); }
+.app-icon-sm { width: 22px; height: 22px; background-size: contain; background-position: center; background-repeat: no-repeat; }
+.actions-keys { display: flex; align-items: center; justify-content: center; gap: 18px; height: 56px; }
+.keys { display: inline-flex; align-items: center; }
+.keys .combo-plus { margin: 0 6px; }
+.keys.big .btn-icon { height: 36px; }
+.keys-none { font-size: 17px; color: color-mix(in srgb, var(--ink) 40%, transparent); }
+.actions-btn {
+  display: inline-flex; align-items: center; padding-left: 18px;
+  border-left: 1px solid color-mix(in srgb, var(--ink) 16%, transparent);
+}
+.actions-btn .btn-icon { height: 36px; }
+.actions-hint { font-size: 18px; color: color-mix(in srgb, var(--ink) 55%, transparent); }
+/* The pager: LB, one dot per page, RB, in a row of its own under the ring. The bottom spoke ends
+   at 806px of the 880px wrap (812 when it is lifted and ringed), so the row starts at 828 and the
+   legend is moved below the wrap to make the room. A square dot is an Everywhere page, so the eye
+   knows where the app's own end. */
+.actions-pager {
+  position: absolute; top: 828px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 16px;
+}
+.actions-pager[hidden] { display: none; }
+.actions-pager .btn-icon { height: 30px; }
+.actions-pages { display: flex; align-items: center; gap: 9px; }
+.actions-pages i { width: 9px; height: 9px; border-radius: 50%; background: color-mix(in srgb, var(--ink) 22%, transparent); }
+.actions-pages i.ev { border-radius: 2px; }
+.actions-pages i.on { background: var(--accent); }
+.overlay.active .actions-pager { animation: fadeIn var(--t-menu) linear backwards; animation-delay: calc(80ms * var(--motion)); }
+
+/* ---- Settings → Actions: the app grid ----
+   The settings scroller laid out as tiles while the category is on its first level. */
+.settings-scroll.apps-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(236px, 1fr));
+  gap: 18px; align-content: start;
+}
+.app-tile {
+  position: relative; height: 176px; padding: 12px; border-radius: 16px;
+  background: var(--card); border: 1px solid color-mix(in srgb, var(--edge) 7%, transparent);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+  cursor: pointer;
+  transition: transform var(--t-focus) var(--ease), background var(--t-focus) linear, box-shadow var(--t-focus) linear;
+}
+.app-tile.focused {
+  transform: scale(1.03); background: var(--surface); z-index: 2;
+  box-shadow: 0 0 0 3px var(--accent), 0 0 44px 6px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.app-icon {
+  width: 64px; height: 64px; margin-bottom: 4px;
+  background-size: contain; background-position: center; background-repeat: no-repeat;
+  display: flex; align-items: center; justify-content: center;
+}
+.app-icon.app-mono, .app-icon.app-glyph { border-radius: 18px; background: color-mix(in srgb, var(--ink) 8%, transparent); }
+.app-icon.app-mono span { font-size: 30px; font-weight: 700; color: color-mix(in srgb, var(--ink) 70%, transparent); }
+.app-icon .ov-icon { width: 34px; height: 34px; color: color-mix(in srgb, var(--ink) 70%, transparent); }
+.app-tile.focused .app-icon .ov-icon { color: var(--accent); }
+.app-icon.app-add { border-radius: 18px; border: 1.5px dashed color-mix(in srgb, var(--ink) 30%, transparent); }
+.app-name { max-width: 100%; font-size: 20px; font-weight: 600; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.app-sub { font-size: 15px; color: color-mix(in srgb, var(--ink) 45%, transparent); text-align: center; }
+
+/* An action's row: its keys as caps, its button beside them. */
+.set-value .keys .btn-icon { height: 32px; }
+.set-value .keys .combo-plus { margin: 0 5px; font-size: 18px; }
+.set-value .set-btn {
+  display: inline-flex; align-items: center; margin-left: 4px; padding-left: 16px;
+  border-left: 1px solid color-mix(in srgb, var(--ink) 16%, transparent);
+}
+.set-value .set-btn .btn-icon { height: 34px; }
+.set-none { color: color-mix(in srgb, var(--ink) 45%, transparent); }
+.set-text { max-width: 520px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.set-row.muted .set-name, .set-row.muted .set-value { opacity: 0.55; }
+
+/* ---- record a button ---- */
+.capture-icon { animation: capturePulse calc(1.6s * var(--motion)) ease-in-out infinite; }
+body.no-motion .capture-icon { animation: none; }
+@keyframes capturePulse { 50% { box-shadow: 0 0 0 12px color-mix(in srgb, var(--accent) 16%, transparent); } }
+.capture-dialog .dialog-body .btn-icon { height: 28px; }
+.capture-dialog .dialog-body .btn-slot { margin: 0 3px; }
+.capture-note {
+  padding: 14px 18px; border-left: 3px solid var(--danger); border-radius: 6px;
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+  font-size: 18px; line-height: 1.5; color: color-mix(in srgb, var(--ink) 80%, transparent); max-width: 640px;
+}
+.capture-note[hidden] { display: none; }
+.capture-note .btn-icon { height: 26px; }
+.capture-note .btn-slot { margin: 0 2px; }
+
+/* ---- pick a shortcut ----
+   A keyboard to point at. Widths are in key units so the rows line up the way a keyboard's do;
+   the nav engine walks it by geometry, so nothing here knows what a row is. */
+.keypick-card { width: auto; max-width: 1780px; gap: 22px; padding-bottom: 24px; }
+.keypick-head { display: flex; align-items: center; justify-content: space-between; gap: 30px; min-height: 44px; }
+.keypick-preview .keys.big .btn-icon { height: 38px; }
+.kp-slot {
+  display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 38px;
+  border-radius: 8px; border: 1.5px dashed color-mix(in srgb, var(--ink) 40%, transparent);
+  color: color-mix(in srgb, var(--ink) 50%, transparent); font-family: "IBM Plex Mono", monospace; font-size: 17px;
+}
+.kp-slot-hint { font-size: 17px; color: color-mix(in srgb, var(--ink) 45%, transparent); }
+.keypick-mods { display: flex; gap: 12px; }
+.kp-chip {
+  display: flex; align-items: center; gap: 10px; padding: 10px 18px; border-radius: 12px;
+  background: color-mix(in srgb, var(--ink) 5%, transparent); border: 1px solid color-mix(in srgb, var(--edge) 10%, transparent);
+  font-size: 18px; font-weight: 600; color: color-mix(in srgb, var(--ink) 70%, transparent); cursor: pointer;
+  transition: background var(--t-focus) linear, box-shadow var(--t-focus) linear, color var(--t-focus) linear;
+}
+.kp-chip-check { width: 18px; height: 18px; border-radius: 5px; border: 1.5px solid color-mix(in srgb, var(--ink) 40%, transparent); }
+.kp-chip.on { color: var(--ink); background: color-mix(in srgb, var(--accent) 14%, transparent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+.kp-chip.on .kp-chip-check { background: var(--accent); border-color: var(--accent); }
+.kp-chip.focused { color: var(--ink); box-shadow: 0 0 0 3px var(--accent), 0 0 30px 4px color-mix(in srgb, var(--accent) 24%, transparent); }
+.keypick-board { --kp-u: 56px; --kp-gap: 7px; display: flex; flex-direction: column; gap: var(--kp-gap); }
+.kp-row { display: flex; gap: var(--kp-gap); }
+.kp-row:last-child { margin-top: 12px; }
+.kp-key, .kp-gap { width: calc(var(--u, 1) * var(--kp-u) + (var(--u, 1) - 1) * var(--kp-gap)); height: 50px; flex: 0 0 auto; }
+.kp-block-gap { width: 22px; flex: 0 0 auto; }
+.kp-key {
+  display: flex; align-items: center; justify-content: center; border-radius: 9px;
+  background: color-mix(in srgb, var(--ink) 7%, transparent); border: 1px solid color-mix(in srgb, var(--edge) 9%, transparent);
+  font-family: "IBM Plex Mono", monospace; font-size: 15px; font-weight: 600;
+  color: color-mix(in srgb, var(--ink) 80%, transparent); cursor: pointer; white-space: nowrap; overflow: hidden;
+  transition: transform var(--t-focus) var(--ease), background var(--t-focus) linear, box-shadow var(--t-focus) linear;
+}
+.kp-key:hover { background: color-mix(in srgb, var(--ink) 12%, transparent); }
+.kp-key.focused {
+  background: var(--surface); color: var(--ink); transform: scale(1.08); z-index: 2;
+  box-shadow: 0 0 0 3px var(--accent), 0 0 30px 4px color-mix(in srgb, var(--accent) 26%, transparent);
+}
+.kp-tip { margin-left: auto; font-size: 17px; color: color-mix(in srgb, var(--ink) 42%, transparent); }

@@ -42,10 +42,14 @@ internal class GamepadService : IDisposable
     public event Action<string, string>? PadUsed;
     /// <summary>Raised when the keyboard-toggle chord is held.</summary>
     public event Action? KeyboardToggleRequested;
-    /// <summary>Combo tapped: minimize/restore, or the in-game menu while a game runs.</summary>
+    /// <summary>Show or hide Loungepad, or the in-game menu while a game runs: the combo held
+    /// (tap and hold) or tapped once (double tap).</summary>
     public event Action? MinimizeToggleRequested;
-    /// <summary>Combo double-tapped: open the Power Wheel.</summary>
+    /// <summary>Combo double-tapped, in the double-tap mode: open the Power Wheel.</summary>
     public event Action? RadialRequested;
+    /// <summary>Combo tapped, in the tap-and-hold mode: open the Power Wheel, or close whatever
+    /// menu is up.</summary>
+    public event Action? WheelTapRequested;
     /// <summary>"pad" when the D-pad/buttons drive navigation, "pointer" when the stick moves the cursor.</summary>
     public event Action<string>? InputModeChanged;
     /// <summary>Charge level of the attached pad; see BatteryState.</summary>
@@ -110,6 +114,31 @@ internal class GamepadService : IDisposable
     /// </summary>
     public volatile Func<string, bool>? ModalButtonHandler;
 
+    /// <summary>
+    /// The per-app button bindings (see ActionService). Asked on every poll in which the pad is a
+    /// desktop device -- the launcher not in front, no focused game, the on-screen keyboard not
+    /// driving -- and a button it spends is not also a mouse click.
+    /// </summary>
+    public ActionService? Actions;
+
+    /// <summary>
+    /// A binding is being recorded: the next press, or chord, is reported through
+    /// <see cref="Captured"/> and nothing else on the pad fires meanwhile. Whatever was already
+    /// held when recording began is ignored until it is let go -- the A that chose "record" is
+    /// usually still down.
+    /// </summary>
+    private volatile bool _capturing;
+    private ushort _captureMask, _captureIgnore;
+    private bool _captureLT, _captureRT, _captureIgnoreLT, _captureIgnoreRT;
+    private bool _captureStart;
+    /// <summary>The recorded combo, in the launcher's own names -- "LB + Y" -- or null for B alone, which cancels.</summary>
+    public event Action<string?>? Captured;
+    /// <summary>A press that cannot be a binding: A or Guide on their own. Recording carries on.</summary>
+    public event Action<string>? CaptureRejected;
+
+    public void BeginCapture() { _captureStart = true; _capturing = true; }
+    public void CancelCapture() => _capturing = false;
+
     public bool Connected { get; private set; }
 
     /// <summary>The family of the pad that last produced input: xbox, playstation, switch or generic.</summary>
@@ -126,11 +155,6 @@ internal class GamepadService : IDisposable
     private const double MaxSpeedPxPerSec = 1400;
     private const double MaxScrollNotchesPerSec = 18;
     private const int RepeatDelayMs = 380, RepeatIntervalMs = 115;
-    // Second combo tap within this window opens the radial. Measured from the first press, and
-    // the combo is two buttons (LS+RS by default), so the budget has to cover holding the first
-    // tap, releasing BOTH buttons, and pressing again. 320ms did not: most double taps missed,
-    // and the deferred single tap then opened the launcher instead.
-    private const int DoubleTapMs = 550;
     private const byte TriggerThreshold = 40;  // analog triggers count as "pressed" past this
     /// <summary>A pad that has been quiet this long is "picked up again" on its next input.</summary>
     private const int PadQuietMs = 1500;
@@ -189,11 +213,11 @@ internal class GamepadService : IDisposable
         double fracX = 0, fracY = 0, scrollAccum = 0, hScrollAccum = 0;
         var repeat = new Dictionary<ushort, long>();      // button -> next repeat time (ms)
         long toggleDownAt = -1;
-        bool toggleFired = false, leftDown = false, rightDown = false, comboLatched = false, pendingTap = false;
+        bool toggleFired = false, leftDown = false, rightDown = false;
+        var combo = new ComboGesture();
         bool shotLatched = false;
         bool ltLatched = false;
         bool prevTrigger = false;                          // trigger edge, used only while suspended
-        long lastComboTapAt = -1;
         var sw = Stopwatch.StartNew();
         long lastTick = sw.ElapsedMilliseconds;
         long nextBatteryPoll = 0, nextStickPush = 0;
@@ -361,6 +385,43 @@ internal class GamepadService : IDisposable
                 continue;
             }
 
+            // ---- recording a binding ----
+            // Before everything else, the menu combo included: while a button is being recorded
+            // every press is the answer, whatever it would otherwise do. The chord is what was
+            // held between the first new press and everything being let go; B on its own cancels,
+            // and the click buttons and the Guide button on their own are refused, since they
+            // could never fire.
+            if (_capturing)
+            {
+                ushort held = state.Gamepad.wButtons;
+                bool lt = state.Gamepad.bLeftTrigger >= TriggerThreshold, rt = state.Gamepad.bRightTrigger >= TriggerThreshold;
+                if (_captureStart)
+                {
+                    _captureStart = false;
+                    _captureMask = 0; _captureLT = _captureRT = false;
+                    _captureIgnore = held; _captureIgnoreLT = lt; _captureIgnoreRT = rt;
+                }
+                _captureIgnore &= held;
+                _captureIgnoreLT &= lt; _captureIgnoreRT &= rt;
+                _captureMask |= (ushort)(held & ~_captureIgnore);
+                _captureLT |= lt && !_captureIgnoreLT;
+                _captureRT |= rt && !_captureIgnoreRT;
+                bool gotSomething = _captureMask != 0 || _captureLT || _captureRT;
+                if (gotSomething && held == 0 && !lt && !rt)
+                {
+                    var recorded = ComboName(_captureMask, _captureLT, _captureRT);
+                    _captureMask = 0; _captureLT = _captureRT = false;
+                    if (recorded == "B") { _capturing = false; Captured?.Invoke(null); }
+                    else if (recorded is "A" or "Guide") CaptureRejected?.Invoke(recorded);
+                    else { _capturing = false; Captured?.Invoke(recorded); }
+                }
+                prevButtons = held;
+                prevTrigger = lt || rt;
+                combo.Reset(); shotLatched = false; toggleDownAt = -1;
+                touch.Reset();
+                continue;
+            }
+
             var s = _settings.Settings;
             // Only a FOCUSED game silences the pad. While it runs in the background the gamepad
             // mouse and keyboard toggle stay available for the desktop.
@@ -379,40 +440,24 @@ internal class GamepadService : IDisposable
             // the pad is deliberately silent, but this combo is the only way back out, so it has
             // to keep working there.
             //
-            // Tap = minimize/restore (or the in-game menu), double tap = the Power Wheel. The single
-            // tap is held back until the double-tap window closes, otherwise a quick double tap
-            // would minimize and restore the launcher on the way to opening the radial.
+            // Tap and hold (default): tap = the Power Wheel, hold = show or hide Loungepad (the
+            // in-game menu while a game runs). Double tap: tap = Loungepad, double tap = the
+            // Power Wheel. See ComboGesture for why each fires when it does.
             bool comboNow = ComboPressed(state.Gamepad, s.MinimizeCombo);
-            if (comboNow && !comboLatched)
+            bool tapHold = !string.Equals(s.MenuComboMode, "DoubleTap", StringComparison.OrdinalIgnoreCase);
+            var gesture = combo.Update(comboNow, now, tapHold, out bool comboRising);
+            if (comboRising) { toggleDownAt = -1; toggleFired = true; }   // swallow any keyboard chord inside the combo
+            switch (gesture)
             {
-                comboLatched = true;
-                toggleDownAt = -1; toggleFired = true;   // swallow any keyboard chord inside the combo
-
-                if (lastComboTapAt >= 0 && now - lastComboTapAt <= DoubleTapMs)
-                {
-                    lastComboTapAt = -1;
-                    pendingTap = false;
+                case ComboGesture.Fire.Tap:
+                    if (tapHold) WheelTapRequested?.Invoke(); else MinimizeToggleRequested?.Invoke();
+                    break;
+                case ComboGesture.Fire.DoubleTap:
                     RadialRequested?.Invoke();
-                }
-                else
-                {
-                    lastComboTapAt = now;
-                    pendingTap = true;
-                }
-            }
-            else if (!comboNow)
-            {
-                comboLatched = false;
-            }
-
-            // Wait for the combo to be let go before acting on a single tap. Firing mid-hold
-            // meant that holding the buttons down past the window parked the launcher under
-            // your thumbs, and it also stole the press that was meant to be the second tap.
-            if (pendingTap && !comboNow && lastComboTapAt >= 0 && now - lastComboTapAt > DoubleTapMs)
-            {
-                pendingTap = false;
-                lastComboTapAt = -1;
-                MinimizeToggleRequested?.Invoke();
+                    break;
+                case ComboGesture.Fire.Hold:
+                    MinimizeToggleRequested?.Invoke();
+                    break;
             }
 
             // ---- screenshot key ----
@@ -525,6 +570,7 @@ internal class GamepadService : IDisposable
                 if (leftDown) { SendClick(NativeMethods.MOUSEEVENTF_LEFTUP); leftDown = false; }
                 if (rightDown) { SendClick(NativeMethods.MOUSEEVENTF_RIGHTUP); rightDown = false; }
                 touch.Reset();
+                Actions?.ResetBindings();
                 PushUiScroll(0, now);
                 continue;
             }
@@ -540,6 +586,7 @@ internal class GamepadService : IDisposable
             // Not while the keyboard is driving, or the D-pad would walk the library grid behind it.
             if (launcherFg && !keyboardDriving)
             {
+                Actions?.ResetBindings();
                 foreach (var (mask, name) in NavButtons)
                 {
                     if ((pressed & mask) != 0)
@@ -579,6 +626,21 @@ internal class GamepadService : IDisposable
                 if (ModalButtonHandler is { } modal && !keyboardDriving)
                     foreach (var (mask, name) in FaceButtons)
                         if ((pressed & mask) != 0 && modal(name)) modalTaken |= mask;
+
+                // ---- action bindings ----
+                // The app in front's shortcuts on its buttons, and Everywhere's on the rest. A
+                // press the keyboard toggle already spent, and the menu and screenshot combos,
+                // are never a binding: those are evaluated first and always win, and the
+                // Settings row says so beside a binding that collides with one. A button a
+                // binding takes is not also a click below.
+                ushort actionTaken = 0;
+                if (Actions is { } acts && !keyboardDriving)
+                {
+                    ushort spent = (ushort)(modalTaken | (toggleFired && (pressed & toggleMask) != 0 ? toggleMask : 0));
+                    actionTaken = acts.Evaluate(in state.Gamepad, spent, ReservedCombos(s));
+                }
+                else Actions?.ResetBindings();
+                modalTaken |= actionTaken;
 
                 // ---- desktop mouse clicks ----
                 // Not while a key is lit: A is that key's own press there, and a stray click would
@@ -805,6 +867,48 @@ internal class GamepadService : IDisposable
         return true;
     }
 
+    /// <summary>The menu and screenshot combos as masks, so a binding equal to one never fires.
+    /// Rebuilt only when the settings change: this is asked on every poll.</summary>
+    private (string? Min, string? Shot, ushort[] Masks) _reserved;
+    private ushort[] ReservedCombos(AppSettings s)
+    {
+        if (_reserved.Masks is null || _reserved.Min != s.MinimizeCombo || _reserved.Shot != s.ScreenshotCombo)
+            _reserved = (s.MinimizeCombo, s.ScreenshotCombo,
+                new[] { ComboMask(s.MinimizeCombo), ComboMask(s.ScreenshotCombo) }.Where(m => m != 0).ToArray());
+        return _reserved.Masks;
+    }
+
+    /// <summary>A pressed set as a combo string in the launcher's names and fixed order --
+    /// "LT + LB + Y" -- so the same chord is always written the same way.</summary>
+    internal static string ComboName(ushort mask, bool lt, bool rt)
+    {
+        var parts = new List<string>();
+        if (lt) parts.Add("LT");
+        if (rt) parts.Add("RT");
+        foreach (var (m, name) in ComboButtons)
+            if ((mask & m) != 0) parts.Add(name);
+        return string.Join(" + ", parts);
+    }
+
+    private static readonly (ushort mask, string name)[] ComboButtons =
+    {
+        (NativeMethods.XINPUT_GAMEPAD_LEFT_SHOULDER, "LB"),
+        (NativeMethods.XINPUT_GAMEPAD_RIGHT_SHOULDER, "RB"),
+        (NativeMethods.XINPUT_GAMEPAD_LEFT_THUMB, "LS"),
+        (NativeMethods.XINPUT_GAMEPAD_RIGHT_THUMB, "RS"),
+        (NativeMethods.XINPUT_GAMEPAD_BACK, "View"),
+        (NativeMethods.XINPUT_GAMEPAD_START, "Menu"),
+        (NativeMethods.XINPUT_GAMEPAD_GUIDE, "Guide"),
+        (NativeMethods.XINPUT_GAMEPAD_A, "A"),
+        (NativeMethods.XINPUT_GAMEPAD_B, "B"),
+        (NativeMethods.XINPUT_GAMEPAD_X, "X"),
+        (NativeMethods.XINPUT_GAMEPAD_Y, "Y"),
+        (NativeMethods.XINPUT_GAMEPAD_DPAD_UP, "Up"),
+        (NativeMethods.XINPUT_GAMEPAD_DPAD_DOWN, "Down"),
+        (NativeMethods.XINPUT_GAMEPAD_DPAD_LEFT, "Left"),
+        (NativeMethods.XINPUT_GAMEPAD_DPAD_RIGHT, "Right"),
+    };
+
     /// <summary>Mask for a "A + B" style combo string; 0 when disabled or unparseable.</summary>
     public static ushort ComboMask(string? combo)
     {
@@ -829,6 +933,11 @@ internal class GamepadService : IDisposable
         "LS" => NativeMethods.XINPUT_GAMEPAD_LEFT_THUMB,
         "RS" => NativeMethods.XINPUT_GAMEPAD_RIGHT_THUMB,
         "Guide" or "Xbox" or "PS" => NativeMethods.XINPUT_GAMEPAD_GUIDE,
+        // The D-pad, for action bindings only: nothing in the launcher binds a direction.
+        "Up" => NativeMethods.XINPUT_GAMEPAD_DPAD_UP,
+        "Down" => NativeMethods.XINPUT_GAMEPAD_DPAD_DOWN,
+        "Left" => NativeMethods.XINPUT_GAMEPAD_DPAD_LEFT,
+        "Right" => NativeMethods.XINPUT_GAMEPAD_DPAD_RIGHT,
         _ => 0    // unknown name matches nothing rather than silently meaning A
     };
 

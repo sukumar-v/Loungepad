@@ -121,6 +121,7 @@ public class UiBridge
                 // Settings to find out. The merge keeps playtime, favourites, manual entries and
                 // every per-game override, so re-running it costs nothing.
                 StartScan();
+                DetectApps();
                 break;
 
             case "launch":
@@ -354,6 +355,102 @@ public class UiBridge
                 _ = _window.Suspend();
                 break;
 
+            // ---- actions: the wheel and Settings → Actions ----
+
+            case "actionFire":
+            {
+                var app = _window.Actions.Find(msg["appId"]?.GetValue<string>() ?? "");
+                var action = app?.Actions.FirstOrDefault(a => a.Id == (msg["actionId"]?.GetValue<string>() ?? ""));
+                // The page has taken its menus down already; the host's overlay state has to follow
+                // whether or not there is anything to press.
+                if (app is null || action is null)
+                {
+                    _window.CloseOverlay(true);
+                    Push(new { type = "toast", message = "That action is gone" });
+                    break;
+                }
+                _window.FireAction(app, action);
+                break;
+            }
+
+            case "actionCapture":
+                _window.BeginActionCapture();
+                break;
+
+            case "actionCaptureCancel":
+                _window.CancelActionCapture();
+                break;
+
+            case "actionUpdate":
+            {
+                var appId = msg["appId"]?.GetValue<string>() ?? "";
+                var incoming = msg["action"].Deserialize<ActionDef>(JsonOpts);
+                if (incoming is null) break;
+                var stored = _window.Actions.Update(appId, incoming);
+                if (stored is null) Push(new { type = "toast", message = "That action could not be saved" });
+                PushActions();
+                break;
+            }
+
+            case "actionRemove":
+                _window.Actions.Remove(msg["appId"]?.GetValue<string>() ?? "", msg["actionId"]?.GetValue<string>() ?? "");
+                PushActions();
+                break;
+
+            case "actionAppReset":
+                _window.Actions.Reset(msg["appId"]?.GetValue<string>() ?? "");
+                PushActions();
+                break;
+
+            case "actionAppRemove":
+                _window.Actions.RemoveApp(msg["appId"]?.GetValue<string>() ?? "");
+                PushActions();
+                break;
+
+            case "actionAppRename":
+                _window.Actions.RenameApp(msg["appId"]?.GetValue<string>() ?? "", msg["name"]?.GetValue<string>() ?? "");
+                PushActions();
+                break;
+
+            // An app from the list of open windows: the exe name is enough, and the icon follows
+            // once detection has looked at the running process.
+            case "actionAppAdd":
+            {
+                var exe = msg["exe"]?.GetValue<string>() ?? "";
+                if (exe.Length == 0) break;
+                var (id, existed) = _window.Actions.AddApp(exe, msg["name"]?.GetValue<string>());
+                PushActions();
+                Push(new { type = "actionAppAdded", id, existed });
+                DetectApps();
+                break;
+            }
+
+            case "actionAppBrowse":
+                BrowseForApp();
+                break;
+
+            case "actionsRefresh":
+                DetectApps();
+                break;
+
+            // What "Add an app" offers: the windows open right now, by program. Store apps come
+            // through as their own exe, not the frame host's.
+            case "actionListApps":
+            {
+                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var open = new List<object>();
+                var ours = ActionService.ExeName(Environment.ProcessPath ?? "loungepad");
+                foreach (var w in _windows.ListWindows())
+                {
+                    var exe = ActionService.ExeOf(new IntPtr(w.Handle));
+                    if (exe.Length == 0 || exe == ours || !seen.Add(exe)) continue;
+                    var known = _window.Actions.ForExe(exe);
+                    open.Add(new { title = w.Title, exe, listed = known is not null && _window.Actions.Installed(known), appId = known?.Id });
+                }
+                Push(new { type = "actionApps", open });
+                break;
+            }
+
             case "closeOverlay":
                 _window.CloseOverlay(msg["refocus"]?.GetValue<bool>() ?? true);
                 break;
@@ -374,6 +471,38 @@ public class UiBridge
                 Push(new { type = "toast", message = st.GamepadMouseDuringGame
                     ? "Gamepad mouse forced on while a game runs"
                     : "Gamepad mouse off while a game runs" });
+                break;
+            }
+
+            // Settings → Controller → Windows and Steam: one of the things that also act on the
+            // Xbox button, switched on or off. See WindowsGuide and SteamGuide for what each writes.
+            case "xboxButtonSet":
+            {
+                var what = msg["what"]?.GetValue<string>();
+                var on = msg["on"]?.GetValue<bool>() ?? false;
+                if (what == "steam") { _ = SetSteamGuideAsync(on); break; }
+                bool ok = what switch
+                {
+                    "gameBar" => WindowsGuide.SetGameBar(on),
+                    "xboxMode" => WindowsGuide.SetXboxMode(on),
+                    _ => false,
+                };
+                PushState();
+                Push(new { type = "toast", message = !ok ? "Windows did not accept the change"
+                    : what == "gameBar" ? (on ? "Game Bar opens on the Xbox button again" : "Game Bar no longer takes the Xbox button")
+                    : on ? "Xbox mode is back on" : "Xbox mode is off. If a hold still opens Task View, sign out of Windows and back in" });
+                break;
+            }
+
+            // "Turn all off": everything that still takes the button, in one press.
+            case "xboxButtonAllOff":
+            {
+                var w = WindowsGuide.Read();
+                if (w.GameBar) WindowsGuide.SetGameBar(false);
+                if (w.XboxMode == true) WindowsGuide.SetXboxMode(false);
+                PushState();
+                if (SteamGuide.Read() == true) _ = SetSteamGuideAsync(false);
+                else Push(new { type = "toast", message = "The Xbox button is Loungepad's now. If Windows still reacts to it, sign out and back in" });
                 break;
             }
 
@@ -1019,6 +1148,71 @@ public class UiBridge
         }
     }
 
+    // ---- The Xbox button: who else takes it ----
+
+    /// <summary>Set while Steam is being closed, edited and reopened, so the row can say so and a
+    /// second press does not start a second restart.</summary>
+    private bool _steamGuideBusy;
+
+    private object XboxButtonState()
+    {
+        var w = WindowsGuide.Read();
+        return new
+        {
+            gameBar = w.GameBar,
+            xboxMode = w.XboxMode,
+            steam = SteamGuide.Read(),
+            steamRunning = SteamGuide.IsRunning(),
+            steamBusy = _steamGuideBusy,
+        };
+    }
+
+    private async Task SetSteamGuideAsync(bool on)
+    {
+        if (_steamGuideBusy) return;
+        // Closing Steam ends a Steam game with it, and this process is what tracks the session.
+        if (_launcher.GameRunning)
+        {
+            Push(new { type = "toast", message = "Close the game first: Steam has to restart for this" });
+            return;
+        }
+        bool running = SteamGuide.IsRunning();
+        _steamGuideBusy = true;
+        PushState();
+        if (running) Push(new { type = "toast", message = "Restarting Steam to change this…" });
+        string? error;
+        try { error = await Task.Run(() => SteamGuide.Set(on)); }
+        catch (Exception ex) { error = ex.Message; }
+        _steamGuideBusy = false;
+        PushState();
+        Push(new { type = "toast", message = error
+            ?? (on ? "Steam opens on the Xbox button again" : "Steam no longer takes the Xbox button") });
+    }
+
+    // ---- Actions: a program chosen from disk ----
+
+    private void BrowseForApp()
+    {
+        var dlg = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "Choose the program to add actions for",
+            Filter = "Programs (*.exe)|*.exe|All files (*.*)|*.*"
+        };
+        if (!ShowDialog(dlg)) { Push(new { type = "actionAppAdded", id = (string?)null, existed = false }); return; }
+        try
+        {
+            var (id, existed) = _window.Actions.AddApp(dlg.FileName, null);
+            PushActions();
+            Push(new { type = "actionAppAdded", id, existed });
+            DetectApps();
+        }
+        catch (Exception ex)
+        {
+            Push(new { type = "toast", message = $"Could not add that program: {ex.Message}" });
+            Push(new { type = "actionAppAdded", id = (string?)null, existed = false });
+        }
+    }
+
     // ---- Emulators and ROM folders ----
 
     private void AddEmulator()
@@ -1197,6 +1391,7 @@ public class UiBridge
         t.LeftClickButton = s.LeftClickButton;
         t.RightClickButton = s.RightClickButton;
         t.MinimizeCombo = s.MinimizeCombo;
+        t.MenuComboMode = s.MenuComboMode == "DoubleTap" ? "DoubleTap" : "TapHold";
         t.ScreenshotCombo = s.ScreenshotCombo;
         t.KeyRepeatDelayMs = Math.Clamp(s.KeyRepeatDelayMs, 120, 900);
         t.KeyRepeatIntervalMs = Math.Clamp(s.KeyRepeatIntervalMs, 20, 300);
@@ -1640,6 +1835,10 @@ public class UiBridge
             runningGameId = _launcher.RunningGameId,
             scanning = _scanning,
             steamAccount = _steam.Status,
+            actions = ActionsPayload(icons: false),
+            // Who else acts on the Xbox button, for Settings → Controller → Windows and Steam and
+            // the menu combo's warning. Two registry reads and one cached file read.
+            xboxButton = XboxButtonState(),
             stores = new
             {
                 epic = _accounts["epic"].Status,
@@ -1720,17 +1919,60 @@ public class UiBridge
         _ => "Done"
     };
 
-    public void PushOverlay(string mode, string targetTitle, string? shot) =>
+    public void PushOverlay(string mode, string targetTitle, string? shot, string targetProcess) =>
         Push(new
         {
             type = "overlay",
             mode,
             targetTitle,
+            // The exe name behind the window the menu opened over ("firefox"), which is what the
+            // action wheel matches its apps on; empty when the launcher itself was in front.
+            targetProcess,
             shot,
             windows = _windows.ListWindows(),
             displays = _displays.GetDisplays(),
             runningGameId = _launcher.RunningGameId
         });
+
+    // ---- actions ----
+
+    /// <summary>Every app and its actions, as the Settings grid and the wheel draw them. Pushed
+    /// on its own after an edit rather than as a state push, which would rebuild the library.</summary>
+    public void PushActions() => Push(new { type = "actions", actions = ActionsPayload(icons: true) });
+
+    /// <summary>The icons are a hundred kilobytes of PNG and only this message carries them; a
+    /// state push leaves them out and the page keeps the ones it has.</summary>
+    private object ActionsPayload(bool icons)
+    {
+        var acts = _window.Actions;
+        return new
+        {
+            apps = acts.Apps.Select(a => new
+            {
+                id = a.Id, name = a.Name, exes = a.Exes, custom = a.Custom, pinned = a.Pinned,
+                installed = acts.Installed(a), modified = acts.Modified(a.Id), icon = icons ? acts.Icon(a) : null,
+                actions = a.Actions.Select(x => new
+                {
+                    id = x.Id, name = x.Name, keys = x.Keys, button = x.Button,
+                    hidden = x.Hidden, custom = x.Custom, danger = x.Danger,
+                }),
+            }),
+        };
+    }
+
+    public void PushActionCaptured(string? combo) => Push(new { type = "actionCaptured", combo });
+    public void PushActionCaptureRejected(string button) => Push(new { type = "actionCaptureRejected", button });
+
+    /// <summary>Look for the packs' programs and their icons, off the UI thread, then tell the page.</summary>
+    private void DetectApps()
+    {
+        Task.Run(() =>
+        {
+            try { _window.Actions.Detect(); }
+            catch (Exception ex) { Log.Info($"Actions: detection failed: {ex.Message}"); }
+            _window.Dispatcher.BeginInvoke(PushActions);
+        });
+    }
 
     public void PushStick(double x, double y) => Push(new { type = "stick", x, y });
 

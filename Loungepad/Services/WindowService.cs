@@ -390,7 +390,12 @@ public class WindowService
         if (icon == IntPtr.Zero) icon = NativeMethods.GetClassLongPtr64(hwnd, NativeMethods.GCLP_HICON);
         if (icon == IntPtr.Zero) icon = NativeMethods.GetClassLongPtr64(hwnd, NativeMethods.GCLP_HICONSM);
         if (icon == IntPtr.Zero) return null;
+        return EncodeIcon(icon);
+    }
 
+    /// <summary>An HICON as a PNG data URI. The caller keeps ownership of the handle.</summary>
+    internal static string? EncodeIcon(IntPtr icon)
+    {
         try
         {
             var source = Imaging.CreateBitmapSourceFromHIcon(

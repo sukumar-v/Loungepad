@@ -296,6 +296,25 @@
     </div>
   </div>
 
+  <!-- ============ ACTION WHEEL ============
+       The Power Wheel's Actions spoke: the shortcuts of the app that was in front, as spokes of
+       a second wheel, paged eight at a time with the Everywhere set after the app's own. -->
+  <div class="overlay" id="overlay-actions">
+    <div class="radial-wrap actions-wrap">
+      <div class="radial-title mono" id="actionsTitle">ACTIONS</div>
+      <div class="radial" id="actionsRing"></div>
+      <div class="radial-center actions-center">
+        <div class="actions-app mono" id="actionsApp"></div>
+        <div class="radial-sel" id="actionsSelName">—</div>
+        <div class="actions-keys" id="actionsKeys"></div>
+        <div class="radial-target mono" id="actionsTarget"></div>
+      </div>
+      <!-- Its own row under the ring: the shoulders that turn the page, the dots between them. -->
+      <div class="actions-pager" id="actionsPager" hidden></div>
+      <div class="ov-foot radial-foot" id="actionsFoot"></div>
+    </div>
+  </div>
+
   <!-- ============ IN-GAME MENU ============
        A console-style bar along the bottom rather than a centred card, so as much of the
        paused game as possible stays visible above it. -->
@@ -328,6 +347,37 @@
     </div>
   </div>
 
+  <!-- ============ RECORD A BUTTON ============
+       Settings → Actions → an action → Controller button. The host takes the next press or chord
+       and nothing else on the pad fires meanwhile; the note under the text is where a press that
+       cannot be a binding is explained without the dialog going away. -->
+  <div class="overlay" id="overlay-capture">
+    <div class="dialog capture-dialog" role="alertdialog" aria-labelledby="captureTitle">
+      <div class="dialog-icon capture-icon" id="captureIcon"></div>
+      <div class="dialog-title" id="captureTitle">Press a button</div>
+      <div class="dialog-body" id="captureBody"></div>
+      <div class="capture-note" id="captureNote" hidden></div>
+      <div class="dialog-actions">
+        <div class="dialog-btn dialog-no" id="captureCancel"><span class="btn-slot" data-btn="B"></span><span>Cancel</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ PICK A SHORTCUT ============
+       A keyboard to point at: the modifiers as chips along the top, the keys laid out as they are
+       on a real one, and the media keys along the bottom. A real keyboard works here too. -->
+  <div class="overlay" id="overlay-keypick" data-focus-scope>
+    <div class="quick-card keypick-card">
+      <div class="keypick-head">
+        <div class="quick-title mono" id="keypickTitle">SHORTCUT</div>
+        <div class="keypick-preview" id="keypickPreview"></div>
+      </div>
+      <div class="keypick-mods" id="keypickMods"></div>
+      <div class="keypick-board" id="keypickBoard"></div>
+      <div class="ov-foot" id="keypickFoot"></div>
+    </div>
+  </div>
+
   <div id="toast" class="mono"></div>
 </div>
 
@@ -337,5 +387,6 @@
 <script src="glyphs.js"></script>
 <script src="app.js"></script>
 <script src="radial.js"></script>
+<script src="actions.js"></script>
 </body>
 </html>

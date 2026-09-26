@@ -18,6 +18,9 @@ let hostWindows = [];
 const RADIAL_ITEMS = [
   { id: "close",       label: "Close window",  icon: "x",        danger: true,   // top
     desc: "Ask the window behind this menu to quit" },
+  /* The home spoke: the shortcuts of whatever is behind the menu, on the pad. See actions.js. */
+  { id: "actions",     label: "Actions",       icon: "bolt",
+    desc: "Shortcuts for the app in front, and for everywhere" },
   { id: "windows",     label: "Switch window", icon: "viewBtn",
     desc: "Pick another open window and bring it to the TV" },
   { id: "shortcuts",   label: "Shortcuts",     icon: "apps",
@@ -35,7 +38,7 @@ const RADIAL_ITEMS = [
 
 /* Where the highlight sits before the stick has been pushed anywhere. Deliberately NOT spoke
    0: that one closes a window, and A on a menu you have only just opened should not be able
-   to destroy something by default. */
+   to destroy something by default. Spoke 1 is Actions, the one most worth a single press. */
 const RADIAL_HOME = 1;
 
 const SHORTCUTS = [
@@ -56,6 +59,9 @@ function closeAllMenus() {
   ["overlay-filter", "overlay-gamemenu", "overlay-collect",
    "overlay-manage", "overlay-confirm", "overlay-guide"]
     .forEach(hideOverlay);
+  // The Actions pickers too: a shortcut half-chosen under a Power Wheel is not a state.
+  closeKeyPick();
+  cancelCapture(null);
 }
 
 /* ============================== radial ============================== */
@@ -162,6 +168,7 @@ function radialActivate() {
       break;
     case "windows":   openRadialSub("windows"); break;
     case "shortcuts": openRadialSub("shortcuts"); break;
+    case "actions":   openActionWheel(); break;
   }
 }
 
@@ -298,8 +305,8 @@ function ingameInput(btn) {
 }
 /** Host asked us to tear down any overlay menu (e.g. the combo was tapped while one was open). */
 function dismissOverlays() {
-  radialOpen = false; radialSub = null; ingameOpen = false;
-  ["overlay-radial", "overlay-radialsub", "overlay-ingame"]
+  radialOpen = false; radialSub = null; ingameOpen = false; actionWheelOpen = false;
+  ["overlay-radial", "overlay-radialsub", "overlay-actions", "overlay-ingame"]
     .forEach(hideOverlay);
   closeAllMenus();
   setOverlayMode(false);

@@ -1269,6 +1269,121 @@ Stop the scrolled grid from clipping through the All games header
 - Bumped Polish to 3.5 for this. Anything that changes a bundled theme has to bump it or nobody
   gets the change (see `SyncBuiltIn` above).
 
+## The menu combo: tap and hold
+
+- **Tap opens the Power Wheel, hold (500 ms) shows or hides Loungepad** (`MenuComboMode`
+  "TapHold", the default since Sept 2026, at the user's request: the double tap was finicky and
+  opened the wrong thing). "DoubleTap" keeps the old shape. The tap fires on the release; the
+  hold fires while still held and its release does nothing. A tap with any overlay up dismisses
+  it (`OnWheelTap`); the hold is the old `OnComboTap`, so the in-game menu while a game runs.
+- The gesture is `ComboGesture`, fed once a poll, so the harness replays traces against it with
+  a fake clock. Its mode is learned on the first update: when it defaulted to tap-and-hold, a
+  double-tap user's first poll counted as a mode switch and ate a press already down. A real
+  switch mid-press still spends that press.
+- **Windows' long press of the Xbox button (Task View) belongs to Xbox mode**, not to Game Bar:
+  this PC had Game Bar's button setting (`HKCU\Software\Microsoft\GameBar`,
+  `UseNexusForGameBarEnabled` = 0) and `AppCaptureEnabled` already off and still got Task View.
+  Xbox mode is `HKCU\...\CurrentVersion\GamingConfiguration`, `GamingHomeApp`: absent or an app id
+  is on, `""` is off, and it only exists from builds 26100.8328 / 26200.8328 / 28000.2179. The
+  evidence that turning it off stops the long press is Microsoft's docs listing the long press
+  under Xbox mode plus one user report; it was not tested here (no pad to hold). Disabling
+  GameInputSvc also stops it but breaks Steam Input, so it is not offered.
+- **Settings → Controller → Windows and Steam** switches the three things that also react to the
+  Xbox button, each a toggle showing the live state, plus "Give Loungepad the Xbox button" for all
+  three (`xboxButtonSet`, `xboxButtonAllOff`). The state rides every push as `xboxButton`
+  { gameBar, xboxMode, steam, steamRunning, steamBusy }; xboxMode and steam are null where there is
+  no such thing, and their rows are left out.
+- `WindowsGuide`: Game Bar is ONE switch over two DWORDs under HKCU\Software\Microsoft\GameBar,
+  `UseNexusForGameBarEnabled` (the button opens Game Bar) and `GamepadNexusChordEnabled` (View +
+  Menu stands in for the Xbox button in apps, which fights a View + Menu combo); both default on when
+  absent. Xbox mode is `GamingHomeApp`, and "" as off is confirmed: it is what Windows' own Settings
+  toggle wrote on this PC. Turning either back ON deletes the values, so Windows' default comes back
+  rather than a guessed 1. The Controller Bar option lives inside Game Bar's app, not the registry,
+  and is covered by the button being off.
+- `SteamGuide`: `Controller_CheckGuideButton` ("Guide Button Focuses Steam") and
+  `SteamController_Enable_Chord` (Guide button chords), top level of the signed-in account's
+  `userdata\<id>\config\localconfig.vdf`, on when absent. Matched to their settings by the names in
+  SteamUI.dll's settings table (`controller_guide_button_focus_steam`, `controller_enable_chord`),
+  not by forum posts. **Steam rewrites that file when it exits**, so `Set` runs `steam.exe
+  -shutdown`, waits (30 s cap, and changes nothing if Steam will not close), edits, keeps
+  `.loungepad-bak`, and restarts with `-silent` if it had been running. Refused while a game runs:
+  closing Steam ends a Steam game. The editor only touches depth-1 value lines, adds missing ones
+  before the root's close, and leaves every other byte alone (the harness checks this on a copy of
+  the real file; the real one is never written by a test).
+- The combo's legend sits below the wheel's 880px wrap (`bottom: -46px`) for both wheels, so the
+  action wheel's pager can have the strip under the bottom spoke and the legend does not move
+  between the two.
+
+## Actions: an app's shortcuts on the pad
+
+- **The wheel acts on the window that was in front when the Power Wheel opened.** `ShowOverlay`
+  records `_overlayTargetLive` (the foreground was not the launcher) and `PushOverlay` carries
+  `targetProcess`, the exe name behind that window, which the page matches to an app in
+  `S.actions`. With the launcher itself in front there is no app: the wheel shows Everywhere only
+  and `FireAction` sends nothing but a system-wide shortcut (media keys, any Win chord) — an
+  Alt+F4 meant for a browser must never close Loungepad. The Power Wheel's `_overlayTarget` is
+  deliberately NOT cleared in that case (Close window has always named the last target); only the
+  live flag decides.
+- `FireAction` is `CloseOverlay(true)` (park, hand the foreground back), a wait of up to 500 ms for
+  the target to actually be foreground, 60 ms more to settle, then `SendKeyCombo`. If the
+  foreground is still ours and the shortcut is not system-wide, it is refused with a toast rather
+  than sent to the launcher.
+- **Bindings live in the pad loop's desktop branch** (`ActionService.Evaluate`, 125 Hz): launcher
+  not in front, service active, keyboard not driving. The loop resets them on every other path.
+  The foreground app is cached per hwnd; Store apps resolve through the `Windows.UI.Core.CoreWindow`
+  child because the frame host owns the top-level window. Chords: the longest newly satisfied
+  binding fires and every binding sharing a button with it is marked satisfied, so Y does not fire
+  on the press that completed LB + Y. A button a binding took is added to `modalTaken` so it is
+  not also a click.
+- **The system wins over a binding, always**: a press the keyboard toggle spent (`toggleFired` on
+  this press), the menu combo and the screenshot combo (`ReservedCombos`) never reach a binding,
+  and A, B and Guide on their own are never one (`IsReservedButton`; the page refuses them at
+  capture with a note). The Settings row explains each collision (`bindingIssues` on the page):
+  `block` is refused at capture, `warn` shows under the row, `note` goes in the hint.
+- **Recording a button is a capture mode in `GamepadService`** (`BeginCapture`), evaluated before
+  the menu combo so nothing else fires: the chord is the union of what was pressed between the
+  first NEW press and everything being let go. Whatever was held when recording began is
+  ignored until released — the A that chose the row is usually still down. B alone cancels
+  (`Captured(null)`); A and Guide alone are `CaptureRejected` and recording carries on. The page
+  times out after 15 s.
+- `ButtonMask` knows Up/Down/Left/Right now, for bindings only; `ComboName` writes a chord in one
+  fixed order (`ActionService.ButtonOrder`, LT RT LB RB LS RS View Menu Guide A B X Y then the
+  D-pad) and `CleanButton` normalises whatever the page sends to the same, so "Y + LB" and
+  "LB + Y" are one binding. The page's `normCombo` does the same.
+- **`actions.json` holds only what differs from the packs**: a pack app's entry lists the actions
+  the user touched (full copies, by id) and their own; untouched defaults come from
+  `ActionPacks.All` at every load, so a new default arrives on the next build. `Reset` deletes the
+  entry. A custom app is any entry whose id is not a pack's; a pack added by hand is `Pinned`,
+  so it shows whether or not detection finds the program. Ids are exe names, lower case, no
+  extension, so a hand-added chrome.exe IS the Chrome pack.
+- Detection (`Detect`, off the UI thread after `ready` and on every add) is App Paths, the uninstall
+  entries (`EmulatorDetection.RegistryExes`, made internal for it), a few known folders, the
+  Store's execution aliases, the library's emulators, and the running processes. Icons come from
+  `PrivateExtractIcons` at 96px (ExtractAssociatedIcon stops at 32) through
+  `WindowService.EncodeIcon`. They ride only on the `actions` message; a state push leaves them
+  out and the page carries them over by id (`withActionIcons`), or every favourite toggle would
+  cost 100 KB of PNG.
+- **Shortcuts are text** (`ShortcutKeys`): modifiers by name then one key. Letters and digits are
+  their own VKs; a single punctuation character goes through `VkKeyScanW` at send time so it
+  follows the layout; named keys are a table. `Parts` treats a trailing "+" as the key itself.
+  Every pack shortcut has to parse (the harness checks).
+- On the page, `actionWheelOpen`, `captureState`, `keyPick` and `overlayTargetProcess` are declared
+  in app.js, not actions.js: app.js reads them while it boots, and a `let` in a later script is
+  in its temporal dead zone until that script runs — `typeof` does not save you from that.
+- The Settings category is three levels in one pane (`actionsUi.level`: apps grid, an app's list,
+  an action's editor). The grid is the same scroller with `.apps-grid`; tiles are rows with
+  `tile: true` so `settingsInput`, `syncSettingsPane` and the highlight keys work unchanged. The
+  level is part of the scroller's `shape`, or a drill-down with the same row count would not
+  rebuild. B climbs one level (`actionsBack`) before it reaches the categories.
+- The key picker takes a real keyboard too (capture-phase keydown in actions.js, before app.js's
+  own key map turns X into a pad button). A bare letter is the key; bare Esc/Enter/arrows/Space
+  still navigate. In the browser preview, **P** opens the Power Wheel over "Firefox" and **O**
+  over an app with no pack.
+- The harness for the host side is a scratch console project referencing
+  `bin\Debug\...\Loungepad.dll` and reaching the internal types by reflection, with `SendKeys`
+  replaced: 64 checks over the parser, the packs, the chord logic and the file round trip
+  (Sept 2026). It writes the real `actions.json` and puts it back.
+
 ## The Loungepad keyboard: blocks, suggestions, options
 
 - **The board is data** (`KeyboardLayout`): keys placed by row and column on a canvas, a column being

@@ -2,6 +2,7 @@ using System.IO;
 using System.Windows;
 using System.Windows.Interop;
 using Loungepad.Interop;
+using Loungepad.Models;
 using Loungepad.Services;
 using Microsoft.Web.WebView2.Core;
 
@@ -17,6 +18,7 @@ public partial class MainWindow : Window
     private readonly VirtualKeyboardService _keyboard;
     private readonly GameLaunchService _launcher;
     private readonly GamepadService _gamepad;
+    private readonly ActionService _actions;
     private readonly HidGamepadReader _hid = new();
     private readonly CursorService _cursor;
     private readonly ThemeService _themes = new();
@@ -26,6 +28,10 @@ public partial class MainWindow : Window
     private bool _overlayWasMinimized;
     private bool _overlayActive;
     private IntPtr _overlayTarget;
+    /// <summary>Whether <see cref="_overlayTarget"/> was captured by the overlay now open. It is
+    /// kept across opens, so when the launcher itself was in front it still names whatever was
+    /// last behind a menu -- which the action wheel must not send anything to.</summary>
+    private bool _overlayTargetLive;
     private UiBridge? _bridge;
     private IntPtr _hwnd;
     private bool _suppressRefocus;
@@ -58,6 +64,11 @@ public partial class MainWindow : Window
             isLauncherForeground: () => _overlayActive || NativeMethods.GetForegroundWindow() == _hwnd,
             isGameFocused: () => !_overlayActive && _launcher.IsGameForeground(),
             hid: _hid);
+        _actions = new ActionService(() => _library.Emulators);
+        _actions.Load();
+        _gamepad.Actions = _actions;
+        _gamepad.Captured += combo => Dispatcher.BeginInvoke(() => _bridge?.PushActionCaptured(combo));
+        _gamepad.CaptureRejected += why => Dispatcher.BeginInvoke(() => _bridge?.PushActionCaptureRejected(why));
 
         _launcher.GameStarted += _ => Dispatcher.Invoke(OnGameStarted);
         _launcher.GameExited += _ => Dispatcher.Invoke(OnGameExited);
@@ -76,6 +87,7 @@ public partial class MainWindow : Window
         _gamepad.KeyboardToggleRequested += () => Dispatcher.BeginInvoke(() => _keyboard.Toggle());
         _gamepad.MinimizeToggleRequested += () => Dispatcher.BeginInvoke(OnComboTap);
         _gamepad.RadialRequested += () => Dispatcher.BeginInvoke(() => _ = ShowOverlay("radial"));
+        _gamepad.WheelTapRequested += () => Dispatcher.BeginInvoke(OnWheelTap);
         _gamepad.StickDirection += (x, y) => Dispatcher.BeginInvoke(() => _bridge?.PushStick(x, y));
         _gamepad.WakeRequested += () => Dispatcher.BeginInvoke(() =>
         {
@@ -589,8 +601,25 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Combo tapped. While a game is running this raises the in-game menu instead of minimizing,
-    /// so the pad can reach "close game" and "home" without touching a keyboard.
+    /// The combo tapped in the tap-and-hold mode: the Power Wheel, from anywhere. A tap with a
+    /// menu already up puts it away instead, as the guide button does on a console -- the same
+    /// button in and out, whichever menu it is.
+    /// </summary>
+    private void OnWheelTap()
+    {
+        if (_overlayActive)
+        {
+            _bridge?.PushDismiss();
+            CloseOverlay(true);
+            return;
+        }
+        _ = ShowOverlay("radial");
+    }
+
+    /// <summary>
+    /// Show or hide Loungepad: the combo held (tap and hold) or tapped (double tap). While a game
+    /// is running this raises the in-game menu instead of minimizing, so the pad can reach "close
+    /// game" and "home" without touching a keyboard.
     /// </summary>
     private void OnComboTap()
     {
@@ -616,6 +645,7 @@ public partial class MainWindow : Window
         _overlayWasMinimized = _parked;
         var fg = NativeMethods.GetForegroundWindow();
         if (fg != _hwnd) _overlayTarget = fg;
+        _overlayTargetLive = fg != _hwnd;
 
         // Grab the screen before we put ourselves in front of it: the menu paints this still,
         // dimmed, as its background, which is how you can still see what is behind it now that
@@ -625,7 +655,8 @@ public partial class MainWindow : Window
         // Tell the UI to switch to overlay mode FIRST. Script keeps running while the window is
         // hidden, so by the time we show it the library is already hidden and only the menu is
         // painted -- otherwise the launcher flashes up before the overlay appears.
-        _bridge?.PushOverlay(mode, _windows.TitleOf(_overlayTarget), shot);
+        _bridge?.PushOverlay(mode, _windows.TitleOf(_overlayTarget), shot,
+            _overlayTargetLive ? ActionService.ExeOf(_overlayTarget) : "");
         await Task.Delay(90);
 
         _overlayActive = true;
@@ -762,6 +793,57 @@ public partial class MainWindow : Window
 
     /// <summary>The window the radial menu acts on (whatever was in front when it opened).</summary>
     public IntPtr OverlayTarget => _overlayTarget;
+
+    internal ActionService Actions => _actions;
+
+    /// <summary>
+    /// An action chosen on the wheel: put the launcher away, hand the foreground back to the
+    /// window the menu was opened over, and once it has it, press the shortcut. A shortcut that
+    /// acts on the window in front is refused, with a toast, when that would be the launcher
+    /// itself -- an Alt+F4 meant for a browser must never close Loungepad -- while a system-wide
+    /// one (the media keys, any Win chord) goes regardless.
+    /// </summary>
+    public void FireAction(ActionApp app, ActionDef action)
+    {
+        if (string.IsNullOrEmpty(action.Keys))
+        {
+            _bridge?.PushToast($"{action.Name} has no shortcut yet: set one under Settings → Actions");
+            return;
+        }
+        var target = _overlayTargetLive && _overlayTarget != IntPtr.Zero && NativeMethods.IsWindow(_overlayTarget)
+            ? _overlayTarget : IntPtr.Zero;
+        bool systemWide = ShortcutKeys.IsSystemWide(action.Keys);
+        CloseOverlay(true);
+        // Opened with the launcher on screen but another window in front (KeepFocus off): the
+        // close above leaves the launcher up, so the target is asked for by name.
+        if (target != IntPtr.Zero && NativeMethods.GetForegroundWindow() != target) _windows.Focus(target);
+
+        _ = Task.Run(async () =>
+        {
+            for (int i = 0; i < 25 && target != IntPtr.Zero && NativeMethods.GetForegroundWindow() != target; i++)
+                await Task.Delay(20);
+            var fg = NativeMethods.GetForegroundWindow();
+            bool onTarget = target != IntPtr.Zero ? fg == target : fg != _hwnd;
+            if (!onTarget && !systemWide)
+            {
+                Log.Info($"Action {action.Name}: not sent, {(fg == _hwnd ? "the launcher" : "another window")} is in front");
+                _ = Dispatcher.BeginInvoke(() => _bridge?.PushToast(target == IntPtr.Zero
+                    ? "Open an app in front of Loungepad first: this action works on the window in front"
+                    : "Could not bring the window forward"));
+                return;
+            }
+            await Task.Delay(60);
+            try
+            {
+                _actions.SendKeys(action.Keys);
+                Log.Info($"Action: {action.Name} → {action.Keys} sent to {ActionService.ExeOf(fg)} ({app.Name})");
+            }
+            catch (Exception ex) { Log.Info($"Action {action.Name} failed: {ex.Message}"); }
+        });
+    }
+
+    public void BeginActionCapture() => _gamepad.BeginCapture();
+    public void CancelActionCapture() => _gamepad.CancelCapture();
 
     /// <summary>
     /// Leave the game running and show the launcher properly — the "Home" action, and where

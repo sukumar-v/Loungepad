@@ -82,6 +82,11 @@ const ICONS = {
   apps: '<rect x="3.2" y="3.2" width="7.2" height="7.2" rx="1.6"/><rect x="13.6" y="3.2" width="7.2" height="7.2" rx="1.6"/>'
       + '<rect x="3.2" y="13.6" width="7.2" height="7.2" rx="1.6"/><rect x="13.6" y="13.6" width="7.2" height="7.2" rx="1.6"/>',
   power: '<path d="M12 3.2v8.4"/><path d="M7.3 6.4a7.6 7.6 0 1 0 9.4 0"/>',
+  /* The action wheel: a bolt for "do it", a globe for the actions that work everywhere, a plus
+     for adding an app or an action. */
+  bolt: '<path d="M13.2 2.6 4.8 13.4h6.4l-1.4 8 8.4-10.8h-6.4z"/>',
+  globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.6 2.6 3.9 5.6 3.9 9s-1.3 6.4-3.9 9c-2.6-2.6-3.9-5.6-3.9-9S9.4 5.6 12 3z"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
   monitor: '<rect x="2.5" y="4" width="19" height="12.5" rx="1.6"/><path d="M8.5 20.5h7M12 16.5v4"/>',
   volume: '<path d="M4 9.4h3.6L12 5.4v13.2L7.6 14.6H4z"/><path d="M15.8 9.6a3.8 3.8 0 0 1 0 4.8M18.6 7.2a7.6 7.6 0 0 1 0 9.6"/>',
   lock: '<rect x="4.4" y="10.4" width="15.2" height="10.1" rx="1.8"/><path d="M8 10.4V7.6a4 4 0 0 1 8 0v2.8"/>',
@@ -139,9 +144,17 @@ function canonBtn(btn) {
   return btn === "Start" ? "Menu" : btn === "Back" ? "View" : btn === "Xbox" || btn === "PS" ? "Guide" : btn;
 }
 
+/* The D-pad's four directions, which only an action binding ever names. */
+const DPAD_DIRS = { Up: "up", Down: "down", Left: "left", Right: "right" };
+const DPAD_WORDS = { Up: "D-pad up", Down: "D-pad down", Left: "D-pad left", Right: "D-pad right" };
+const DPAD_ARROWS = { Up: "↑", Down: "↓", Left: "←", Right: "→" };
+
 function btnName(btn, family) {
-  const names = BTN_NAMES[family || inputFamily] || BTN_NAMES.xbox;
-  return names[canonBtn(btn)] || btn;
+  const fam = family || inputFamily;
+  const names = BTN_NAMES[fam] || BTN_NAMES.xbox;
+  btn = canonBtn(btn);
+  if (DPAD_DIRS[btn]) return fam === "keyboard" ? DPAD_ARROWS[btn] : DPAD_WORDS[btn];
+  return names[btn] || btn;
 }
 
 /* "LS + RS" in words, for the pad in hand: "L3 + R3" on a DualSense. */
@@ -185,14 +198,16 @@ function keycap(label) {
     `<rect x="6" y="30.5" width="${w - 12}" height="3" rx="1.5" fill="var(--bg-deep)" fill-opacity="0.55"/>` +
     svgText(w / 2, label, label.length > 3 ? 12.5 : 15, "var(--ink)", { weight: 600, mono: true }));
 }
-/* The D-pad, with the arms that matter lit: "v" for up and down, "h" for left and right. */
+/* The D-pad, with the arms that matter lit: "v" for up and down, "h" for left and right, "all"
+   for the whole cross, or one of up/down/left/right for a single direction. */
 function dpad(arms) {
-  const on = (a) => (arms === "all" || arms === a ? 0.95 : 0.26);
+  const lit = { v: ["up", "down"], h: ["left", "right"], all: ["up", "down", "left", "right"] }[arms] || [arms];
+  const on = (a) => (lit.includes(a) ? 0.95 : 0.26);
   return svgIcon(40,
-    `<rect x="15" y="2" width="10" height="12" rx="2" fill="currentColor" fill-opacity="${on("v")}"/>` +
-    `<rect x="15" y="26" width="10" height="12" rx="2" fill="currentColor" fill-opacity="${on("v")}"/>` +
-    `<rect x="2" y="15" width="12" height="10" rx="2" fill="currentColor" fill-opacity="${on("h")}"/>` +
-    `<rect x="26" y="15" width="12" height="10" rx="2" fill="currentColor" fill-opacity="${on("h")}"/>` +
+    `<rect x="15" y="2" width="10" height="12" rx="2" fill="currentColor" fill-opacity="${on("up")}"/>` +
+    `<rect x="15" y="26" width="10" height="12" rx="2" fill="currentColor" fill-opacity="${on("down")}"/>` +
+    `<rect x="2" y="15" width="12" height="10" rx="2" fill="currentColor" fill-opacity="${on("left")}"/>` +
+    `<rect x="26" y="15" width="12" height="10" rx="2" fill="currentColor" fill-opacity="${on("right")}"/>` +
     `<rect x="14" y="14" width="12" height="12" fill="currentColor" fill-opacity="0.26"/>`);
 }
 /* A pad we have no names for: the four face buttons as a diamond, the one meant filled in. */
@@ -285,6 +300,8 @@ function btnIcon(btn, family) {
       return btn === "DpadV" ? keycap("↑") + keycap("↓") : btn === "DpadH" ? keycap("←") + keycap("→") : keycap("↑↓←→");
     return dpad(btn === "DpadV" ? "v" : btn === "DpadH" ? "h" : "all");
   }
+  // One direction, as a binding draws it: that arm of the cross, or the arrow key.
+  if (DPAD_DIRS[btn]) return fam === "keyboard" ? keycap(DPAD_ARROWS[btn]) : dpad(DPAD_DIRS[btn]);
   const art = BUTTON_ART[fam] || BUTTON_ART.xbox;
   const draw = art[btn] || BUTTON_ART.xbox[btn];
   return draw ? draw() : pill(btn);
