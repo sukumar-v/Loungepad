@@ -13,9 +13,6 @@ public class IgdbGame
     public string? Publisher { get; init; }
     public List<string> Genres { get; init; } = new();
     public DateTime? Released { get; init; }
-    /// <summary>IGDB's aggregate of external critic scores, 0-100. Not Metacritic, and must not
-    /// be labelled as such.</summary>
-    public int? CriticScore { get; init; }
     /// <summary>PEGI age -- 3, 7, 12, 16 or 18 -- or null when the game carries no PEGI rating.</summary>
     public int? PegiRating { get; init; }
     /// <summary>Finished URLs rather than IGDB image ids, so a proxy that has already resolved
@@ -135,7 +132,7 @@ public class IgdbClient : IFactsProvider
     }
 
     private const string BaseFields =
-        "name, summary, first_release_date, aggregated_rating, category, " +
+        "name, summary, first_release_date, category, " +
         "follows, total_rating_count, version_parent, " +
         "genres.name, cover.image_id, artworks.image_id, videos.name, videos.video_id, screenshots.image_id, " +
         "involved_companies.developer, involved_companies.publisher, involved_companies.company.name";
@@ -291,10 +288,6 @@ public class IgdbClient : IFactsProvider
         if (JsonNum.Long(e, "first_release_date") is { } unix)
             released = DateTimeOffset.FromUnixTimeSeconds(unix).UtcDateTime;
 
-        int? score = null;
-        if (JsonNum.Double(e, "aggregated_rating") is { } rating)
-            score = (int)Math.Round(rating);
-
         var genres = new List<string>();
         if (e.TryGetProperty("genres", out var gs) && gs.ValueKind == JsonValueKind.Array)
             genres = gs.EnumerateArray()
@@ -358,7 +351,6 @@ public class IgdbClient : IFactsProvider
             Publisher = publisher,
             Genres = genres,
             Released = released,
-            CriticScore = score,
             PegiRating = Pegi(e),
             CoverUrl = Image("cover") is { } c ? ImageUrl(c, "cover_big_2x") : null,
             ArtworkUrl = firstArtwork is { } a ? ImageUrl(a, "1080p") : null,

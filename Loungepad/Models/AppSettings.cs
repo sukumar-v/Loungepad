@@ -54,6 +54,10 @@ public class AppSettings
     /// rather than off Steam. The cache lives under %LOCALAPPDATA% and is capped (see
     /// TrailerCache.CapBytes), oldest out first. Off streams every time and keeps nothing.</summary>
     public bool CacheTrailers { get; set; } = true;
+    /// <summary>Whose age rating a game's page shows: "ESRB" or "PEGI". A game rated only by the
+    /// other board shows that one's instead -- the mark is the board's own logo, so it cannot be
+    /// read as the one asked for.</summary>
+    public string AgeRatingBoard { get; set; } = "ESRB";
 
     // Steam account
     /// <summary>

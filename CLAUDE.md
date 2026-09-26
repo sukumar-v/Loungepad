@@ -477,16 +477,20 @@ Stop the scrolled grid from clipping through the All games header
   `.playing-art` 366 wide against the card's 210, Polish's tile `--tile-w / 1.745`. The grid tile
   is 174x261, which is 2:3 -- box art's own shape -- and nine of them plus eight 24px gaps is the
   same 1760 run eight 199px ones made. `GRID_COLS` and `.grid-item` have to move together.
-- The critic score is labelled with `criticSource`, never with "Metacritic" by default. Steam's
-  appdetails carries a real Metacritic score and says so; IGDB's `aggregated_rating` is its own
-  average and is not Metacritic, so a fixed label would be wrong about half the time.
-- The score and the PEGI age sit together on the right, level with the stats hairline: the corner
-  of a game's box, which is where an age mark has been printed for thirty years. Each is a panel
-  with a caption -- a bare "82" is a number with no unit and a bare "16" reads like one too -- and
-  the PEGI group is `row-reverse` so the tablet, not a line of small type, is what sits in the
-  corner. Positioned absolutely out of the column: the stats are anchored to the bottom of the
-  page and the ratings are not always there, so in flow a game with a score would put its Play
-  button somewhere different from a game without one.
+- **The critic score is Metacritic's or nothing** (the user's call, Sept 2026). Metacritic has no
+  free API; the only free source is the `metacritic` block in Steam's `appdetails`, which
+  `FetchSteamFactsAsync` takes whenever Steam answers -- a score or null, so a dropped one goes
+  too. IGDB's `aggregated_rating` used to fill the gaps labelled "IGDB critics", and because the
+  service runs first it even beat Steam's real Metascore on installed games; it is no longer asked
+  for. `LibraryStore.Load` drops any score whose `CriticSource` is not "Metacritic". Coverage,
+  checked live: 9 of 12 big Steam games carry it; Black Myth: Wukong, Monster Hunter Wilds and
+  EA FC 25 do not. Wikidata holds ~11,000 Metacritic scores (P444 by Q150248) but had none of
+  those three, so it was not added. ROMs have none: Steam is never asked for one.
+- The score and the age mark sit together on the right, level with the stats hairline: the corner
+  of a game's box, which is where an age mark has been printed for thirty years. The age mark is
+  last, so it is what sits in the corner. Positioned absolutely out of the column: the stats are
+  anchored to the bottom of the page and the ratings are not always there, so in flow a game with
+  a score would put its Play button somewhere different from a game without one.
 - The wordmark gets a pool of shade of its own (`.detail-titleblock::before`, only when the logo
   is showing). A logo is whatever colour its designer chose and the key art behind it is the same
   palette -- Cyberpunk's yellow on yellow, and the reason a screen-wide scrim is not the answer:
@@ -608,20 +612,27 @@ Stop the scrolled grid from clipping through the All games header
 - **Nothing is ever cropped off a tile.** `contain` shows 100% of the picture; the leftover strip
   is the bed. A crop was measured and rejected — see the note under "Fitted art" — so a title
   running down an edge, like Shotgun Cop Man's, is always whole.
-- One badge construction for both marks: a value over the name of whoever issued it. The captions
-  beside them are gone — "AGE RATING / 16 AND OVER" next to a mark already reading PEGI 16 is the
-  same fact three times, and "OUT OF 100" is a footnote. What the score was missing is what the
-  age mark always had: the issuing body's name under the number, where it cannot be read as part
-  of it.
-- **ESRB is preferred over PEGI** because Steam lists it for more games: in this library six
-  carry an ESRB rating and four a PEGI one, and every PEGI game also had ESRB. The wordmark in the
-  badge says which board it is, so falling back cannot be mistaken for the other. Drawn in the
-  page's own materials, never the boards' actual artwork.
-- Stripping "critics" off a source name needs `\s+critics?$`, not `\s*critics?$` — without the
-  required space it also eats the "critic" inside "Metacritic", and every Metacritic score came
-  out labelled META.
-- Content descriptors ("Blood and Gore", "Mild Lyrics") come from the same board as the rating and
-  sit under the description. ESRB writes them as a sentence, so the last one arrives as "and
+- The score is drawn as Metacritic draws it (`.metascore`): a rounded square in the band colour
+  metacritic.com uses (`#00ce7a` / `#ffbd3f` / `#ff6b73`, read off the live site Sept 2026) with
+  `#262626` digits, and METACRITIC under it. The tile's proportions are the site's (36px digits
+  and a 6px corner in a 64px box). `--rating-h` on `.detail-ratings` sizes both marks: the age
+  mark stands that tall, the tile is 14px less (62px, PEGI's coloured square at that height) and
+  the name is trimmed to its capitals (`text-box`) so it lands on the age mark's bottom edge.
+  Measured in the preview: tops and bottoms match to the pixel against ESRB and PEGI.
+- **The age rating is the board's real logo** (`ui/ratings/*.svg`, the user's call, Sept 2026),
+  not a badge drawn in the page's materials. The files are Wikimedia Commons' `PEGI_<age>.svg`,
+  `ESRB_Everyone.svg`, `ESRB_Everyone_10+.svg`, `ESRB_Teen.svg`, `ESRB_Mature_17+.svg`,
+  `ESRB_Adults_Only_18+.svg` and `ESRB_RP.svg` -- public domain as text logos, still the boards'
+  trademarks. **Commons' ESRB files have no `viewBox`**; an `<img>` then draws them at 215x300
+  whatever box it is given and crops the rest, so one was added to each. Re-add it if a file is
+  ever replaced. upload.wikimedia.org answers 429 to a quick run of downloads: space them out.
+- **Settings → Library → Age rating** (`AgeRatingBoard`, "ESRB" or "PEGI", default ESRB) picks the
+  board; a game rated only by the other board shows that one's (`ageRating` on the page). The mark
+  is the board's own logo, so falling back cannot be read as the board asked for.
+- Content descriptors ("Blood and Gore", "Mild Lyrics") are kept per board (`EsrbDescriptors`,
+  `PegiDescriptors`; `FetchVersion` 9) and the page prints the ones from the same board as the
+  mark: PEGI's "Bad Language" under an ESRB M would credit one board's judgement to the other.
+  They sit under the description. ESRB writes them as a sentence, so the last one arrives as "and
   Strong Language" and the leading "and " has to come off.
 - **Steam's `logo.png` is a wordmark, 1.78:1 or wider, every time. SteamGridDB's logos are
   whatever somebody drew** — 0.92:1 for DREDGE, 1.11:1 for Henry Stickmin, 7.34:1 for ULTRAKILL.

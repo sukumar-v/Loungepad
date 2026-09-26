@@ -95,21 +95,24 @@ public class Game
     /// <summary>Display string as the source gave it, e.g. "Feb 24, 2017". Not parsed: sources
     /// disagree on format and precision, and it is only ever shown, never sorted on.</summary>
     public string? ReleaseDate { get; set; }
-    /// <summary>Metacritic score, 0-100, or null when the game has none. Plenty of games -- most
-    /// indies and anything recent -- simply are not scored, so null is the normal case.</summary>
+    /// <summary>Metacritic score, 0-100, as Steam's store carries it, or null. Nothing else is
+    /// ever put here: a game Metacritic has not scored, or that Steam does not sell, shows no
+    /// score at all. Plenty of games -- most indies -- are not scored, so null is the normal case.</summary>
     public int? CriticScore { get; set; }
-    /// <summary>Where the score came from, so the UI can attribute it rather than implying we
-    /// computed it.</summary>
+    /// <summary>"Metacritic" whenever there is a score. LibraryStore.Load drops a score carrying
+    /// anything else, which is what older builds wrote for IGDB's own average.</summary>
     public string? CriticSource { get; set; }
     /// <summary>PEGI age, one of 3, 7, 12, 16, 18, or null.</summary>
     public int? PegiRating { get; set; }
     /// <summary>ESRB rating as it is printed -- "E", "E10+", "T", "M", "AO", "RP" -- or null.
-    /// Preferred over PEGI because Steam lists it for more games: in a 16-game sample, six carried
-    /// an ESRB rating and four a PEGI one, and every PEGI game also had ESRB.</summary>
+    /// Which of the two the page shows is AppSettings.AgeRatingBoard.</summary>
     public string? EsrbRating { get; set; }
-    /// <summary>Why the game carries the rating it does -- "Blood and Gore", "Mild Lyrics". The
-    /// board's own words, taken from whichever board supplied the rating above.</summary>
-    public List<string> ContentDescriptors { get; set; } = new();
+    /// <summary>Why ESRB rated it what it did -- "Blood and Gore", "Mild Lyrics" -- in ESRB's own
+    /// words. Kept per board because the page prints them under that board's mark, and one board's
+    /// reasons under the other's logo would put words in its mouth.</summary>
+    public List<string> EsrbDescriptors { get; set; } = new();
+    /// <summary>PEGI's reasons -- "Violence", "Bad Language", "In-game purchases".</summary>
+    public List<string> PegiDescriptors { get; set; } = new();
     /// <summary>"full", "partial" or null. Worth surfacing in a couch launcher above almost
     /// anything else: it answers "can I actually play this from the sofa".</summary>
     public string? ControllerSupport { get; set; }

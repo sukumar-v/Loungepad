@@ -1167,6 +1167,7 @@ public class UiBridge
         t.SteamGridDbKey = s.SteamGridDbKey.Trim();
         t.MetadataEndpoint = s.MetadataEndpoint.Trim();
         t.CacheTrailers = s.CacheTrailers;
+        t.AgeRatingBoard = s.AgeRatingBoard == "PEGI" ? "PEGI" : "ESRB";
         t.SteamShowOwned = s.SteamShowOwned;
         t.SteamApiKey = (s.SteamApiKey ?? "").Trim();
         t.GamePassCatalog = s.GamePassCatalog;

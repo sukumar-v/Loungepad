@@ -339,38 +339,48 @@ body[data-view="detail"] #screen-library.under { opacity: 0; }
    always there. In flow, a game with a score would put its Play button in a different place from
    a game without one, which is the thing .detail-main's margin-top: auto exists to prevent. */
 .detail-numbers { position: relative; align-self: stretch; }
+/* --rating-h is the one height both marks are cut to: the age mark stands exactly that tall, and
+   the score's tile and name are sized out of it, so their tops and bottoms line up whichever board
+   is showing. */
 .detail-ratings {
+  --rating-h: 76px;
   position: absolute; right: 0; bottom: calc(100% + 20px);
-  display: flex; align-items: flex-end; gap: 14px;
+  display: flex; align-items: flex-end; gap: 18px;
 }
 .detail-ratings:empty { display: none; }
-/* One construction for both marks: a value over the name of whoever issued it.
-   Drawn in the page's own materials rather than shipped as the boards' artwork -- they have to
-   sit together at the same weight and recolour with the theme's background. The wordmark is what
-   makes the number mean something, so it is part of the badge rather than a caption beside it:
-   89 over METACRITIC, M over ESRB. Nothing else needs saying, and "OUT OF 100" beside a score or
-   "AGE RATING / 16 AND OVER" beside a PEGI 16 was saying it two and three times over. */
-.badge {
-  display: flex; flex-direction: column; align-items: stretch;
-  min-width: 48px; border-radius: 8px; overflow: hidden;
-  background: var(--band-deep, var(--bg-deep));
-  border: 1px solid color-mix(in srgb, var(--band) 55%, transparent);
+/* The score as Metacritic draws it: a rounded square in its colour, the number in near-black
+   across the middle of it -- 36px in a 64px box with a 6px corner on metacritic.com, kept here as
+   proportions of the tile. The name sits under it, since the tile alone does not say whose it is.
+   The tile is 62px -- the size of PEGI's own coloured square at this height, which also has its
+   small print (www.pegi.info) under it -- and the name is set about as wide as the tile and
+   trimmed to its capitals, so it sits flush on the bottom edge the age mark stands on. */
+.metascore {
+  --tile: calc(var(--rating-h) - 14px);
+  display: flex; flex-direction: column; align-items: center; justify-content: space-between;
+  height: var(--rating-h); flex: none;
 }
-.badge-value {
-  padding: 5px 10px 3px; text-align: center;
-  font-size: 22px; font-weight: 700; letter-spacing: -0.03em; color: var(--band);
+.metascore-tile {
+  display: grid; place-items: center;
+  width: var(--tile); height: var(--tile); border-radius: calc(var(--tile) * 0.094);
+  background: var(--band); color: #262626;
+  font-size: calc(var(--tile) * 0.5625); font-weight: 700; line-height: 1; letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
 }
-.badge-word {
-  padding: 3px 10px 4px; text-align: center;
-  background: var(--band); color: var(--bg-deep);
-  font-size: 9px; letter-spacing: 0.14em;
+/* A perfect score is three digits in a box drawn for two. */
+.metascore-tile.three { font-size: calc(var(--tile) * 0.44); }
+.metascore-name {
+  font-size: 10.5px; line-height: 1; font-weight: 700; letter-spacing: 0.03em;
+  text-box: trim-both cap alphabetic;
+  color: color-mix(in srgb, var(--ink) 66%, transparent);
 }
-/* The three steps both boards use, in Metacritic's colours -- the ones people already read
-   without being told. RP ("rating pending") is not a severity, so it is the neutral one. */
-.badge[data-band="good"], .badge[data-band="green"] { --band: #6ab04c; }
-.badge[data-band="mixed"], .badge[data-band="amber"] { --band: #e8a33d; }
-.badge[data-band="poor"], .badge[data-band="red"] { --band: #d64545; }
-.badge[data-band="grey"] { --band: color-mix(in srgb, var(--ink) 45%, transparent); }
+/* Metacritic's three steps in the colours metacritic.com uses now (Sept 2026): green 75+, yellow
+   50-74, red below. */
+.metascore[data-band="good"] { --band: #00ce7a; }
+.metascore[data-band="mixed"] { --band: #ffbd3f; }
+.metascore[data-band="poor"] { --band: #ff6b73; }
+/* The ESRB or PEGI logo itself, as printed on the box (ui/ratings). Sized by height so the two
+   boards' different proportions -- ESRB's 0.72:1, PEGI's 0.82:1 -- stand the same height. */
+.age-mark { display: block; height: var(--rating-h); width: auto; flex: none; }
 
 /* The two layers of a fitted tile: the game's own colours filling the box, and the picture
    whole on top of it. See bedArt -- built only for art that does not fill its box. */

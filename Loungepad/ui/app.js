@@ -2829,16 +2829,34 @@ function renderDetailStats(g) {
     `<div class="stat-value">${esc(s.value)}</div></div>`).join("");
 }
 
-/* PEGI's own bands: 3 and 7 green, 12 and 16 amber, 18 red. */
-function pegiBand(age) { return age >= 18 ? "red" : age >= 12 ? "amber" : "green"; }
+/*
+ * The boards' own marks, in ui/ratings. Taken from Wikimedia Commons (PEGI_18.svg, ESRB_Teen.svg,
+ * ESRB_RP.svg and their siblings), where they are public domain as plain text logos -- they are
+ * still the boards' trademarks. ESRB's files came with no viewBox, and one was added to each:
+ * without it an <img> draws the art at 215x300 whatever size the box is and crops the rest.
+ */
+const ESRB_MARKS = {
+  E: ["esrb-e", "Everyone"], "E10+": ["esrb-e10", "Everyone 10+"], T: ["esrb-t", "Teen"],
+  M: ["esrb-m", "Mature 17+"], AO: ["esrb-ao", "Adults Only 18+"], RP: ["esrb-rp", "Rating Pending"],
+};
+const PEGI_AGES = [3, 7, 12, 16, 18];
 
-/* ESRB's, in the same three steps: E and E10+ green, T amber, M and AO red. RP is "not rated
-   yet", which is not a severity at all, so it gets the neutral one. */
-function esrbBand(r) {
-  if (r === "M" || r === "AO") return "red";
-  if (r === "T") return "amber";
-  if (r === "RP") return "grey";
-  return "green";
+/*
+ * The one age rating a game's page shows, with the reasons that go under it: the board picked in
+ * Settings, else the other one. Falling back cannot be mistaken for the board asked for, because
+ * the mark is that board's own logo. The descriptors always come from the same board as the mark
+ * -- PEGI's "Bad Language" under an ESRB M is one board's judgement credited to another.
+ */
+function ageRating(g) {
+  const esrb = ESRB_MARKS[g.esrbRating] && {
+    board: "ESRB", file: ESRB_MARKS[g.esrbRating][0],
+    label: `ESRB ${ESRB_MARKS[g.esrbRating][1]}`, descriptors: g.esrbDescriptors || [],
+  };
+  const pegi = PEGI_AGES.includes(g.pegiRating) && {
+    board: "PEGI", file: `pegi-${g.pegiRating}`,
+    label: `PEGI ${g.pegiRating}`, descriptors: g.pegiDescriptors || [],
+  };
+  return (S.settings && S.settings.ageRatingBoard === "PEGI" ? pegi || esrb : esrb || pegi) || null;
 }
 
 /*
@@ -2849,48 +2867,34 @@ function esrbBand(r) {
  * -- and a bare "16" is worse, because it looks like one of those too. With a scale and the name
  * of whoever said it, each reads at a glance from across a room, which is the whole job.
  *
- * The score's source is named, never assumed. Steam's appdetails carries a genuine Metacritic
- * score and says so; IGDB's aggregated_rating is its own average of critics and is NOT
- * Metacritic, so printing Metacritic's name on every score would be wrong about half the time.
+ * The score is Metacritic's or there is none: the host takes it from Steam's store and nowhere
+ * else. IGDB's own average used to fill the gaps under its own name, and a badge that changed
+ * scale from one game to the next read worse than a gap.
  */
 /*
- * One badge for both: a value over the name of whoever gave it.
- *
- * The captions beside them are gone. "AGE RATING / 16 AND OVER" beside a mark that already says
- * PEGI 16 is the same fact three times, and "OUT OF 100" beside a score is a footnote nobody
- * needs twice. What the score was actually missing is the thing the age mark had all along --
- * the name of the body that issued it, sitting under the number where it cannot be read as part
- * of it. So the score gets the same two-part construction: 89 over METACRITIC.
+ * The score drawn the way Metacritic draws it -- the number on a tile in its band's colour -- with
+ * Metacritic's name under it, since a coloured square alone does not say whose score it is. The
+ * age rating needs no caption: it is the board's own logo (ageRating).
  */
-function ratingBadge(value, word, band, label) {
-  return `<div class="badge" data-band="${band}" role="img" aria-label="${esc(label)}">` +
-    `<div class="badge-value">${esc(value)}</div>` +
-    `<div class="badge-word mono">${esc(word)}</div></div>`;
+function metascoreBadge(n) {
+  return `<div class="metascore" data-band="${scoreBand(n)}" role="img" ` +
+    `aria-label="Metacritic score ${n} out of 100">` +
+    `<div class="metascore-tile${n >= 100 ? " three" : ""}">${n}</div>` +
+    `<div class="metascore-name">METACRITIC</div></div>`;
 }
 
 function renderDetailRatings(g) {
   const el = $("detailRatings");
   const parts = [];
 
-  if (typeof g.criticScore === "number") {
-    // Named for whoever actually scored it. IGDB aggregates critics itself and is not Metacritic,
-    // so a fixed label here would put one publication's name on another's number.
-    // "IGDB critics" -> "IGDB". The space is required: without it this also ate the "critic"
-    // inside "Metacritic" and every Metacritic score was labelled META.
-    const source = (g.criticSource || "Critics").replace(/\s+critics?$/i, "");
-    parts.push(ratingBadge(String(g.criticScore), source.toUpperCase(),
-      scoreBand(g.criticScore), `${source} ${g.criticScore} out of 100`));
-  }
+  if (typeof g.criticScore === "number") parts.push(metascoreBadge(Math.round(g.criticScore)));
 
-  // ESRB first: Steam lists it for more games than PEGI, and every game in a 16-game sample that
-  // had a PEGI rating had an ESRB one too. The wordmark says which board it is, so falling back
-  // to PEGI cannot be mistaken for the other.
-  if (g.esrbRating) {
-    parts.push(ratingBadge(g.esrbRating, "ESRB", esrbBand(g.esrbRating),
-      `ESRB rating ${g.esrbRating}`));
-  } else if (typeof g.pegiRating === "number") {
-    parts.push(ratingBadge(String(g.pegiRating), "PEGI", pegiBand(g.pegiRating),
-      `PEGI ${g.pegiRating}`));
+  // The board's real mark rather than one drawn in the page's materials: it is the picture
+  // everybody already knows from the corner of a box, and nobody has to read it to know it.
+  const age = ageRating(g);
+  if (age) {
+    parts.push(`<img class="age-mark" data-board="${age.board}" src="ratings/${age.file}.svg" ` +
+      `alt="${esc(age.label)}" draggable="false">`);
   }
 
   // Empty rather than a row of "unrated" placeholders: most indies carry neither, and saying so
@@ -2906,7 +2910,8 @@ function renderDetailRatings(g) {
  */
 function renderDetailDescriptors(g) {
   const el = $("detailDescriptors");
-  const list = g.contentDescriptors || [];
+  const age = ageRating(g);
+  const list = age ? age.descriptors : [];
   el.innerHTML = list.map(d => `<span class="descriptor">${esc(d)}</span>`).join("");
 }
 
@@ -3585,6 +3590,9 @@ function allSettingsRows() {
   rows.push(toggleRow("Keep trailers on this PC",
     "A trailer streams from Steam the first time it plays and is kept for next time, up to 4 GB with the oldest going first. Off streams every time",
     () => s.cacheTrailers !== false, v => set(() => s.cacheTrailers = v)));
+  rows.push(cycleRow("Age rating", ["ESRB", "PEGI"], () => s.ageRatingBoard,
+    v => set(() => s.ageRatingBoard = v),
+    "Which board's mark a game's page shows: ESRB for North America, PEGI for Europe. A game only one of them has rated shows that one either way"));
   // Everything from here down is an escape hatch, not a setup step. Worth keeping visible -- some
   // people would rather not route anything through a shared service -- but the hints have to say
   // plainly that leaving them alone is the normal thing to do.
@@ -5765,16 +5773,19 @@ function mockHandle(msg) {
         + "enough to show where a real one wraps and where the clamp takes over.",
       developer: "Northmoor Studio", publisher: "Northmoor",
       genres: ["Action", "Adventure", "Indie"], releaseDate: "Mar 12, 2021",
-      criticScore: 82, criticSource: "Metacritic", controllerSupport: "full", ...opts,
+      criticScore: 82, criticSource: "Metacritic", controllerSupport: "full",
+      // Both boards, each with its own reasons, so the Age rating option visibly changes the page.
+      esrbRating: "M", esrbDescriptors: ["Blood and Gore", "Intense Violence", "Strong Language"],
+      pegiRating: 18, pegiDescriptors: ["Violence", "Bad Language", "In-game purchases"], ...opts,
     });
     const now = Date.now();
     const games = [
       g("Hollowmark: Second Ascent", "Steam", { playtimeMinutes: 4934, sessions: 41, favorite: true, trailerUrl: clip(), media: mediaHollow, lastPlayed: new Date(now - 86400000).toISOString(), sizeBytes: 64.2 * 1024 ** 3, installDir: "C:\\Games\\Steam\\steamapps\\common\\Hollowmark" }),
       // No fetched metadata at all -- the facts row has to fall back to the platform and the
       // description has to collapse rather than leave a gap under the title.
-      g("Ridgeline 84", "Epic", { playtimeMinutes: 660, sessions: 9, lastPlayed: new Date(now - 2 * 86400000).toISOString(), sizeBytes: 31 * 1024 ** 3, description: null, developer: null, publisher: null, genres: [], releaseDate: null, criticScore: null, criticSource: null, controllerSupport: null }),
-      g("Salt & Tide", "GOG", { playtimeMinutes: 2820, sessions: 30, favorite: true, trailerUrl: clip(), lastPlayed: new Date(now - 3 * 86400000).toISOString(), sizeBytes: 12 * 1024 ** 3, criticScore: 61, controllerSupport: "partial" }),
-      g("Foundry Nine", "Manual", { playtimeMinutes: 360, sessions: 5, lastPlayed: new Date(now - 4 * 86400000).toISOString(), sizeBytes: 8 * 1024 ** 3, trailerUrl: "https://www.youtube.com/watch?v=TEXsORWDFNY", criticScore: 38, controllerSupport: null }),
+      g("Ridgeline 84", "Epic", { playtimeMinutes: 660, sessions: 9, lastPlayed: new Date(now - 2 * 86400000).toISOString(), sizeBytes: 31 * 1024 ** 3, description: null, developer: null, publisher: null, genres: [], releaseDate: null, criticScore: null, criticSource: null, controllerSupport: null, esrbRating: null, pegiRating: null }),
+      g("Salt & Tide", "GOG", { playtimeMinutes: 2820, sessions: 30, favorite: true, trailerUrl: clip(), lastPlayed: new Date(now - 3 * 86400000).toISOString(), sizeBytes: 12 * 1024 ** 3, criticScore: 61, controllerSupport: "partial", esrbRating: "T", esrbDescriptors: ["Fantasy Violence", "Mild Language"], pegiRating: null }),
+      g("Foundry Nine", "Manual", { playtimeMinutes: 360, sessions: 5, lastPlayed: new Date(now - 4 * 86400000).toISOString(), sizeBytes: 8 * 1024 ** 3, trailerUrl: "https://www.youtube.com/watch?v=TEXsORWDFNY", criticScore: 38, controllerSupport: null, esrbRating: null, pegiRating: 7, pegiDescriptors: ["Violence"] }),
       g("Cassette Run", "Steam", { playtimeMinutes: 180, trailerUrl: clip(), sessions: 3, lastPlayed: new Date(now - 5 * 86400000).toISOString(), sizeBytes: 4 * 1024 ** 3 }),
       // enough recently-played entries to exercise the Continue carousel
       g("Nightpost", "Steam", { playtimeMinutes: 95, trailerUrl: clip(), sessions: 2, lastPlayed: new Date(now - 6 * 86400000).toISOString() }),
@@ -5800,12 +5811,12 @@ function mockHandle(msg) {
       g("Starfield", "Xbox", { installed: false, installUri: "ms-windows-store://pdp/?productid=9NCJSXWZRJPS" }),
       g("Wallpaper Engine", "Steam", { hidden: true, sizeBytes: 2 * 1024 ** 3 }),
       // ROMs: the platform is the system, and they group with nothing.
-      g("Super Mario World", "Super Nintendo", { emulated: true, platformId: "snes", romFolderId: "f1", romPath: "D:\\ROMs\\SNES\\Super Mario World (USA).sfc", playtimeMinutes: 420, sessions: 6, lastPlayed: new Date(now - 86400000 * 1.5).toISOString(), sizeBytes: 512 * 1024, releaseDate: "Nov 21, 1990", developer: "Nintendo EAD", publisher: "Nintendo", genres: ["Platform"], criticScore: 94, criticSource: "IGDB critics" }),
-      g("Chrono Trigger", "Super Nintendo", { emulated: true, platformId: "snes", romFolderId: "f1", romPath: "D:\\ROMs\\SNES\\Chrono Trigger (USA).sfc", sizeBytes: 4 * 1024 ** 2, releaseDate: "Mar 11, 1995", genres: ["RPG"], criticScore: 92, criticSource: "IGDB critics" }),
-      g("Doom", "Super Nintendo", { emulated: true, platformId: "snes", romFolderId: "f1", romPath: "D:\\ROMs\\SNES\\Doom (USA).sfc", sizeBytes: 2 * 1024 ** 2, description: null, developer: null, publisher: null, genres: [], releaseDate: null, criticScore: null, criticSource: null, controllerSupport: null }),
+      g("Super Mario World", "Super Nintendo", { emulated: true, platformId: "snes", romFolderId: "f1", romPath: "D:\\ROMs\\SNES\\Super Mario World (USA).sfc", playtimeMinutes: 420, sessions: 6, lastPlayed: new Date(now - 86400000 * 1.5).toISOString(), sizeBytes: 512 * 1024, releaseDate: "Nov 21, 1990", developer: "Nintendo EAD", publisher: "Nintendo", genres: ["Platform"], criticScore: null, criticSource: null }),
+      g("Chrono Trigger", "Super Nintendo", { emulated: true, platformId: "snes", romFolderId: "f1", romPath: "D:\\ROMs\\SNES\\Chrono Trigger (USA).sfc", sizeBytes: 4 * 1024 ** 2, releaseDate: "Mar 11, 1995", genres: ["RPG"], criticScore: null, criticSource: null }),
+      g("Doom", "Super Nintendo", { emulated: true, platformId: "snes", romFolderId: "f1", romPath: "D:\\ROMs\\SNES\\Doom (USA).sfc", sizeBytes: 2 * 1024 ** 2, description: null, developer: null, publisher: null, genres: [], releaseDate: null, criticScore: null, criticSource: null, controllerSupport: null, esrbRating: null, pegiRating: null }),
       g("Final Fantasy VII", "PlayStation", { emulated: true, platformId: "ps1", romFolderId: "f2", romPath: "D:\\ROMs\\PS1\\Final Fantasy VII (USA).m3u", sizeBytes: 1.3 * 1024 ** 3, releaseDate: "Jan 31, 1997", genres: ["RPG"] }),
       g("Crash Bandicoot", "PlayStation", { emulated: true, platformId: "ps1", romFolderId: "f2", emulatorId: "e2", romPath: "D:\\ROMs\\PS1\\Crash Bandicoot (USA).chd", sizeBytes: 320 * 1024 ** 2 }),
-      g("sf2", "Arcade", { emulated: true, platformId: "arcade", romFolderId: "f3", romPath: "D:\\ROMs\\Arcade\\sf2.zip", sizeBytes: 3 * 1024 ** 2, description: null, developer: null, publisher: null, genres: [], releaseDate: null, criticScore: null, criticSource: null, controllerSupport: null, coverFile: null, bannerFile: null, heroFile: null }),
+      g("sf2", "Arcade", { emulated: true, platformId: "arcade", romFolderId: "f3", romPath: "D:\\ROMs\\Arcade\\sf2.zip", sizeBytes: 3 * 1024 ** 2, description: null, developer: null, publisher: null, genres: [], releaseDate: null, criticScore: null, criticSource: null, controllerSupport: null, esrbRating: null, pegiRating: null, coverFile: null, bannerFile: null, heroFile: null }),
       // A ROM: not on Steam, so its trailer is IGDB's YouTube video (this is the real id the
       // service answers for it) and plays through YouTube's player rather than a <video>.
       g("Pokemon: Emerald Version", "Game Boy Advance", { emulated: true, platformId: "gba", romFolderId: "f4", romPath: "C:\\RetroArch\\downloads\\GBA\\Pokemon - Emerald Version (USA, Europe).gba", sizeBytes: 16 * 1024 ** 2, releaseDate: "Sep 16, 2004", genres: ["RPG"], trailerUrl: "https://www.youtube.com/watch?v=TEXsORWDFNY", media: mediaPokemon }),
@@ -5842,7 +5853,7 @@ function mockHandle(msg) {
         minimizeCombo: "LS + RS",
         keyboardToggleButton: "Start", keyboardToggleHoldMs: 600,
         keyboardApp: "Builtin", keyboardScale: 1.0, keyRepeatDelayMs: 350, keyRepeatIntervalMs: 90,
-        accentColor: "#F0A253", theme: "", cacheTrailers: true,
+        accentColor: "#F0A253", theme: "", cacheTrailers: true, ageRatingBoard: "ESRB",
         animationsEnabled: true, animationSpeed: 1.0, themeSettings: {},
       },
       displays: [

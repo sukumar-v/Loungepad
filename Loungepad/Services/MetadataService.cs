@@ -45,7 +45,7 @@ public class MetadataService
     /// about not re-hitting the network for the same answer; it was never meant to pin a library
     /// to whatever the app happened to know the day it first scanned.
     /// </summary>
-    private const int FetchVersion = 8;   // 6: the store trailer; 7: IGDB's YouTube trailer; 8: the gallery
+    private const int FetchVersion = 10;  // 6: the store trailer; 7: IGDB's YouTube trailer; 8: the gallery; 9: descriptors per board; 10: Metacritic only
 
     /// <summary>
     /// Which source wrote a file, as part of its name.
@@ -244,7 +244,7 @@ public class MetadataService
                 // Then the service, for the slots Steam has nothing for -- a landscape tile for a
                 // game with no capsule, a wordmark, 16:9 key art -- and for every non-Steam game,
                 // where it is the only source there is. Facts come from here first regardless;
-                // Steam still holds the Metacritic score and the controller-support flag.
+                // the critic score (Metacritic's) and the controller-support flag are Steam's alone.
                 var (elsewhere, serviceFacts, igdbVideo) = lite
                     ? (false, false, (string?)null)
                     : await EnrichElsewhereAsync(g, facts, art, appId, platforms, filled, ct);
@@ -500,15 +500,14 @@ public class MetadataService
         // worth asking for a game the service has already answered.
         g.ControllerSupport = Str("controller_support");
 
-        // Steam carries Metacritic's score for the games that have one -- most big releases and
-        // almost no indies. Taken only when the service produced no score of its own, and always
-        // labelled for whichever actually answered.
+        // The critic score is Metacritic's or nothing, and Steam is the one free source of it: most
+        // big releases carry it, almost no indies do. Taken whenever Steam answers, so a score Steam
+        // has dropped goes too. IGDB's aggregated_rating used to fill the gaps and was dropped -- it
+        // is IGDB's own average, and a badge reading IGDB on one game and Metacritic on the next
+        // was two scales passing for one.
         var metacritic = d.TryGetProperty("metacritic", out var mc) ? JsonNum.Int(mc, "score") : null;
-        if (g.CriticScore is null && metacritic is { } n)
-        {
-            g.CriticScore = n;
-            g.CriticSource = "Metacritic";
-        }
+        g.CriticScore = metacritic;
+        g.CriticSource = metacritic is null ? null : "Metacritic";
 
         // Steam carries the age boards itself, PEGI among them, keyed by app id and with no key
         // and no title matching -- which makes it a better source for this than IGDB ever was.
@@ -516,7 +515,8 @@ public class MetadataService
         // having whether or not the service answered.
         if (g.PegiRating is null && SteamPegi(d) is { } pegi) g.PegiRating = pegi;
         if (g.EsrbRating is null && SteamEsrb(d) is { } esrb) g.EsrbRating = esrb;
-        if (g.ContentDescriptors.Count == 0) g.ContentDescriptors = SteamDescriptors(d);
+        if (g.EsrbDescriptors.Count == 0) g.EsrbDescriptors = SteamDescriptors(d, "esrb");
+        if (g.PegiDescriptors.Count == 0) g.PegiDescriptors = SteamDescriptors(d, "pegi");
 
         // The trailer, from the same call and whether or not the service answered: Steam's is the
         // one worth having, a plain file with no player around it. A changed URL drops the cached
@@ -847,13 +847,13 @@ public class MetadataService
             : null;
 
     /// <summary>
-    /// Why the game carries its rating, in the board's own words. ESRB's list is preferred because
-    /// its rating is, and the two have to agree -- printing PEGI's descriptors under an ESRB mark
-    /// would attribute one board's judgement to another.
+    /// Why one board rated the game what it did, in that board's own words. Kept per board, since
+    /// the page shows whichever board the user picked and the words have to agree with the mark --
+    /// PEGI's descriptors under an ESRB logo would attribute one board's judgement to another.
     /// </summary>
-    private static List<string> SteamDescriptors(JsonElement data)
+    private static List<string> SteamDescriptors(JsonElement data, string board)
     {
-        var text = Descriptors(data, "esrb") ?? Descriptors(data, "pegi");
+        var text = Descriptors(data, board);
         if (text is null) return new List<string>();
 
         return text.Split('\n')
@@ -905,11 +905,7 @@ public class MetadataService
                 g.Publisher = hit.Publisher;
                 if (hit.Genres.Count > 0) g.Genres = hit.Genres;
                 g.ReleaseDate = hit.Released?.ToString("MMM d, yyyy");
-                g.CriticScore = hit.CriticScore;
                 g.PegiRating = hit.PegiRating;
-                // Named for what it is. IGDB aggregates external reviews itself, so calling this
-                // Metacritic would put one publication's name on another's number.
-                g.CriticSource = hit.CriticScore is null ? null : "IGDB critics";
                 g.MetadataSource = "igdb";
                 // The gallery, for a game Steam has no page for; Steam's replaces it when Steam
                 // runs after this and has anything of its own.

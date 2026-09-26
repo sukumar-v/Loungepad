@@ -210,6 +210,16 @@ public class LibraryStore
             IgnoredEmulatorPaths = new List<string>();
             IgnoredRomFolderPaths = new List<string>();
         }
+
+        // A critic score is Metacritic's or nothing. Older builds filled the gaps with IGDB's own
+        // average, and those go here rather than showing until the metadata pass reaches each
+        // game -- which at store pace is half an hour into a big library.
+        foreach (var g in Games)
+        {
+            if (g.CriticSource == "Metacritic") continue;
+            g.CriticScore = null;
+            g.CriticSource = null;
+        }
     }
 
     public void Save()
@@ -272,7 +282,8 @@ public class LibraryStore
                     s.CriticSource = old.CriticSource;
                     s.PegiRating = old.PegiRating;
                     s.EsrbRating = old.EsrbRating;
-                    s.ContentDescriptors = old.ContentDescriptors;
+                    s.EsrbDescriptors = old.EsrbDescriptors;
+                    s.PegiDescriptors = old.PegiDescriptors;
                     s.ControllerSupport = old.ControllerSupport;
                     s.TrailerUrl = old.TrailerUrl;
                     s.TrailerFile = old.TrailerFile;

@@ -95,7 +95,6 @@ public class MetadataProxyClient : IFactsProvider, IArtProvider
                 Publisher = Str(root, "publisher"),
                 Genres = genres,
                 Released = released,
-                CriticScore = JsonNum.Int(root, "criticScore"),
                 PegiRating = JsonNum.Int(root, "pegi"),
                 // The proxy hands back finished URLs rather than image ids, so these go straight
                 // into the art slots without IgdbClient.ImageUrl in between.
