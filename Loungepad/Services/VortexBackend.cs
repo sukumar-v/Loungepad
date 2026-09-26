@@ -151,7 +151,6 @@ public sealed class VortexBackend
         {
             var src = ShippedPluginDir;
             if (!Directory.Exists(src)) { Log.Info($"Vortex bridge: nothing shipped at {src}"); return; }
-            RemoveOldPlugin();
             Directory.CreateDirectory(PluginDir);
 
             var shipped = PluginVersion(Path.Combine(src, "info.json"));
@@ -168,25 +167,6 @@ public sealed class VortexBackend
             File.WriteAllText(Path.Combine(PluginDir, "bridge.json"), cfg);
         }
         catch (Exception ex) { Log.Info($"Vortex bridge: could not sync the extension: {ex.Message}"); }
-    }
-
-    /// <summary>
-    /// The extension shipped as consolify-bridge up to 1.4. Left in place, Vortex loads both at
-    /// its next start: they race for the one port, and the old one reads a bridge.json nobody
-    /// writes any more, so whichever wins, every request can fail on a stale token. A Vortex
-    /// already running with the old one loaded answers 503 once its config is gone, which is the
-    /// ordinary "restart Vortex once" state.
-    /// </summary>
-    private static void RemoveOldPlugin()
-    {
-        var old = Path.Combine(VortexDataDir, "plugins", ConsolifyMigration.OldPluginFolderName);
-        if (!Directory.Exists(old)) return;
-        try
-        {
-            Directory.Delete(old, recursive: true);
-            Log.Info($"Vortex bridge: removed the old extension at {old}");
-        }
-        catch (Exception ex) { Log.Info($"Vortex bridge: could not remove the old extension at {old}: {ex.Message}"); }
     }
 
     private static string? PluginVersion(string infoJson)

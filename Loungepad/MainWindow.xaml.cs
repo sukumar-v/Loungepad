@@ -205,7 +205,16 @@ public partial class MainWindow : Window
     {
         try
         {
-            var env = await CoreWebView2Environment.CreateAsync(userDataFolder: Paths.WebViewDir);
+            // Trailers start on their own once the highlight has rested on a game, and Chromium
+            // only lets a MUTED video do that without a click or a key first. A gamepad press
+            // arrives as a bridge message, which is not a user gesture as far as the autoplay
+            // policy is concerned, so with "Trailer sound" on the play() would be refused and the
+            // screen would simply stay still. The flag lifts the policy for this one browser.
+            var options = new CoreWebView2EnvironmentOptions
+            {
+                AdditionalBrowserArguments = "--autoplay-policy=no-user-gesture-required",
+            };
+            var env = await CoreWebView2Environment.CreateAsync(null, Paths.WebViewDir, options);
             await WebView.EnsureCoreWebView2Async(env);
         }
         catch (WebView2RuntimeNotFoundException ex)
@@ -271,6 +280,19 @@ public partial class MainWindow : Window
     /// design choice rather than a broken host. Reading the file here instead puts it in this
     /// process, which has no such restriction, and fixes covers and themes in one go.
     /// </summary>
+    /// <summary>
+    /// Top-level names on the data host that live somewhere other than the data folder. The
+    /// trailer cache is gigabytes of video and belongs under Local, not in a roaming profile, so
+    /// it is served from there under the same host rather than given a second one.
+    /// </summary>
+    private static readonly Dictionary<string, string> DataRoots = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["trailers"] = Paths.TrailersDir,
+    };
+
+    /// <summary>Files up to this size are read whole; anything larger is streamed off disk.</summary>
+    private const long ReadWholeBelow = 8 * 1024 * 1024;
+
     private static void ServeDataFolder(CoreWebView2 core)
     {
         core.AddWebResourceRequestedFilter("https://loungepad.data/*", CoreWebView2WebResourceContext.All);
@@ -280,12 +302,20 @@ public partial class MainWindow : Window
             {
                 var uri = new Uri(e.Request.Uri);
                 // Query is only ever a cache-busting stamp; the path alone names the file.
-                var rel = Uri.UnescapeDataString(uri.AbsolutePath).TrimStart('/').Replace('/', Path.DirectorySeparatorChar);
-                var full = Path.GetFullPath(Path.Combine(Paths.DataDir, rel));
+                var rel = Uri.UnescapeDataString(uri.AbsolutePath).TrimStart('/');
+                var baseDir = Paths.DataDir;
+                var slash = rel.IndexOf('/');
+                var head = slash < 0 ? rel : rel[..slash];
+                if (DataRoots.TryGetValue(head, out var other))
+                {
+                    baseDir = other;
+                    rel = slash < 0 ? "" : rel[(slash + 1)..];
+                }
+                var full = Path.GetFullPath(Path.Combine(baseDir, rel.Replace('/', Path.DirectorySeparatorChar)));
 
-                // Refuse anything that resolves outside the data folder, so a crafted path in a
-                // theme cannot read the rest of the disk.
-                var root = Path.GetFullPath(Paths.DataDir) + Path.DirectorySeparatorChar;
+                // Refuse anything that resolves outside the folder, so a crafted path in a theme
+                // cannot read the rest of the disk.
+                var root = Path.GetFullPath(baseDir) + Path.DirectorySeparatorChar;
                 if (!full.StartsWith(root, StringComparison.OrdinalIgnoreCase) || !File.Exists(full))
                 {
                     e.Response = core.Environment.CreateWebResourceResponse(null, 404, "Not Found", "");
@@ -295,9 +325,39 @@ public partial class MainWindow : Window
                 var type = ContentTypes.TryGetValue(Path.GetExtension(full), out var t) ? t : "application/octet-stream";
                 // Allow-Origin because the page is served from loungepad.ui: without it a theme
                 // could not fetch its own JSON, and fonts would be refused outright.
-                var headers = $"Content-Type: {type}\r\nAccess-Control-Allow-Origin: *\r\nCache-Control: no-cache";
-                e.Response = core.Environment.CreateWebResourceResponse(
-                    new MemoryStream(File.ReadAllBytes(full)), 200, "OK", headers);
+                var headers = $"Content-Type: {type}\r\nAccess-Control-Allow-Origin: *\r\nCache-Control: no-cache\r\nAccept-Ranges: bytes";
+                var length = new FileInfo(full).Length;
+
+                // A <video> asks for the file in pieces -- the first few hundred KB, then the
+                // index at the end of an mp4 that is not fast-start, then the rest as it plays --
+                // and expects 206 with the byte range it got. Answering 200 with the whole file
+                // every time still plays, at the cost of the whole 200 MB being read for each
+                // request. Only the one form a browser sends is handled: "bytes=start-" and
+                // "bytes=start-end".
+                var range = e.Request.Headers.Contains("Range") ? e.Request.Headers.GetHeader("Range") : null;
+                if (range is not null && ParseRange(range, length) is { } r)
+                {
+                    var (start, end) = r;
+                    if (start >= length)
+                    {
+                        e.Response = core.Environment.CreateWebResourceResponse(null, 416, "Range Not Satisfiable",
+                            $"Content-Range: bytes */{length}");
+                        return;
+                    }
+                    var count = end - start + 1;
+                    var slice = new SliceStream(OpenShared(full), start, count);
+                    e.Response = core.Environment.CreateWebResourceResponse(slice, 206, "Partial Content",
+                        headers + $"\r\nContent-Range: bytes {start}-{end}/{length}\r\nContent-Length: {count}");
+                    return;
+                }
+
+                // Small files -- every cover, every theme file -- are read whole as before: one
+                // read, no handle left open. Only a video is worth streaming.
+                Stream body = length < ReadWholeBelow
+                    ? new MemoryStream(File.ReadAllBytes(full))
+                    : OpenShared(full);
+                e.Response = core.Environment.CreateWebResourceResponse(body, 200, "OK",
+                    headers + $"\r\nContent-Length: {length}");
             }
             catch (Exception ex)
             {
@@ -305,6 +365,88 @@ public partial class MainWindow : Window
                 e.Response = core.Environment.CreateWebResourceResponse(null, 500, "Error", "");
             }
         };
+    }
+
+    /// <summary>Read-only, and shared for everything including delete: WebView2 releases the
+    /// stream when it is done with the response, and the cache must be able to evict a file that
+    /// a response is still holding.</summary>
+    private static FileStream OpenShared(string path) =>
+        new(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1 << 16, FileOptions.Asynchronous);
+
+    /// <summary>"bytes=a-b" or "bytes=a-" to an inclusive (start, end) inside the file, or null.</summary>
+    private static (long Start, long End)? ParseRange(string header, long length)
+    {
+        if (!header.StartsWith("bytes=", StringComparison.OrdinalIgnoreCase)) return null;
+        var spec = header[6..].Trim();
+        if (spec.Contains(',')) return null;   // several ranges: not something a browser sends for media
+        var dash = spec.IndexOf('-');
+        if (dash <= 0) return null;            // a suffix range ("-500") is not sent for media either
+        if (!long.TryParse(spec[..dash], out var start) || start < 0) return null;
+        var end = length - 1;
+        if (dash < spec.Length - 1)
+        {
+            if (!long.TryParse(spec[(dash + 1)..], out end) || end < start) return null;
+            end = Math.Min(end, length - 1);
+        }
+        return (start, end);
+    }
+
+    /// <summary>A window onto part of a stream, for a 206. Disposing it closes the file.</summary>
+    private sealed class SliceStream : Stream
+    {
+        private readonly Stream _inner;
+        private readonly long _start, _length;
+        private long _pos;
+
+        public SliceStream(Stream inner, long start, long length)
+        {
+            _inner = inner; _start = start; _length = length;
+            _inner.Seek(start, SeekOrigin.Begin);
+        }
+
+        public override bool CanRead => true;
+        public override bool CanSeek => true;
+        public override bool CanWrite => false;
+        public override long Length => _length;
+        public override long Position
+        {
+            get => _pos;
+            set { _pos = Math.Clamp(value, 0, _length); _inner.Seek(_start + _pos, SeekOrigin.Begin); }
+        }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            var left = _length - _pos;
+            if (left <= 0) return 0;
+            var n = _inner.Read(buffer, offset, (int)Math.Min(count, left));
+            _pos += n;
+            return n;
+        }
+
+        public override async Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken ct)
+        {
+            var left = _length - _pos;
+            if (left <= 0) return 0;
+            var n = await _inner.ReadAsync(buffer.AsMemory(offset, (int)Math.Min(count, left)), ct);
+            _pos += n;
+            return n;
+        }
+
+        public override long Seek(long offset, SeekOrigin origin)
+        {
+            Position = origin switch
+            {
+                SeekOrigin.Begin => offset,
+                SeekOrigin.Current => _pos + offset,
+                _ => _length + offset,
+            };
+            return _pos;
+        }
+
+        public override void Flush() { }
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        protected override void Dispose(bool disposing) { if (disposing) _inner.Dispose(); base.Dispose(disposing); }
     }
 
     /// <summary>

@@ -73,7 +73,11 @@ html, body {
 }
 
 /* ---- backdrop (focused title art, blurred) ---- */
-#backdrop { position: fixed; inset: 0; overflow: hidden; background: var(--bg); }
+/* --trailers is the theme's say on whether a film may play behind the library at all. None here,
+   because Shelf is the built-in look and a film behind its grid was never part of it; a theme
+   that wants one sets it to anything else (Loungepad: auto). The page reads it before every
+   start, and the Trailers row in Settings drops the library option while it is none. */
+#backdrop { position: fixed; inset: 0; overflow: hidden; background: var(--bg); --trailers: none; }
 .bd {
   position: absolute; inset: -80px;
   background-size: cover; background-position: center;
@@ -83,6 +87,39 @@ html, body {
 .bd.visible { opacity: 0.22; }
 .bd.detail-mode { filter: none; inset: 0; }
 .bd.detail-mode.visible { opacity: 1; }
+
+/* ---- trailers ----
+   The focused game's trailer, over the still. The app fades it up on its first frame and down
+   again when the highlight moves on or the film ends (see the trailers section of app.js); how
+   much of the screen it is belongs to the theme that allowed it. Shelf allows none, so these
+   two rules are only the default a theme starts from: whole, and the screen. */
+#backdrop :is(video, .trailer-yt) {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover; pointer-events: none; overflow: hidden;
+  opacity: 0; transition: opacity calc(600ms * var(--motion)) linear;
+}
+#backdrop :is(video, .trailer-yt).playing { opacity: 1; }
+/* A YouTube trailer is an iframe, and an iframe cannot `cover`: the frame is made the larger of
+   "as wide as the box" and "as tall as the box" at 16:9 and centred, which is the same thing.
+   The backdrop is the window, so the window's own units; the detail page is the 16:9 stage, so
+   there the box itself is the right shape.
+
+   Then made taller than it is wide would call for. YouTube's player hangs its chrome in bands
+   along the top (title, channel, the cards button) and the bottom (the bar), and an embed
+   cannot turn them off. The frame used to be drawn 18% larger all round so those bands fell
+   outside the box, which also cut 8% off every edge of the picture. Now the frame keeps the
+   cover width and is 28% taller than a 16:9 frame of that width: the player letterboxes the
+   video to the frame's width, so the picture is exactly the box, centred, with nothing cut --
+   and the chrome, which the player pins to the frame's own top and bottom edges, lands in the
+   black bars the letterboxing leaves, which the wrapper clips away. */
+.trailer-yt { --yt-pad: 1.28; }
+.trailer-yt > * {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: max(100%, 177.78vh);
+  height: calc(max(100%, 177.78vh) * 0.5625 * var(--yt-pad));
+  border: 0;
+}
+.detail-yt > * { width: 100%; height: calc(100% * var(--yt-pad)); }
 
 /* ---- screens ----
    The library is the home screen and the other two sit over it: the detail page as an opaque
@@ -119,9 +156,15 @@ html, body {
 /* Under Settings the library and the art behind it soften, so the box reads as a box and what
    is around it still reads as the library. Transitioned rather than snapped: the box arrives over
    a blur that is forming. body[data-view] is written by switchView. */
-#screen-library, #backdrop { transition: filter var(--t-screen) var(--ease); }
+#screen-library, #backdrop { transition: filter var(--t-screen) var(--ease), opacity var(--t-screen) linear; }
 body[data-view="settings"] #screen-library,
 body[data-view="settings"] #backdrop { filter: blur(22px) saturate(0.85) brightness(0.7); }
+/* Under a game's page the library's own tiles and title fade out, and fade back in as the page
+   goes. Behind an opaque page (Shelf) that changes nothing you can see; behind a page a theme
+   draws over the backdrop (Loungepad's is transparent, so the same film keeps playing through
+   it) it is what makes the change of screen read as the content crossfading over a picture that
+   never moved. Only under the page: Settings blurs the library and needs it drawn. */
+body[data-view="detail"] #screen-library.under { opacity: 0; }
 
 /* ---- top bar ---- */
 .topbar {
@@ -430,11 +473,127 @@ body.no-legend .legend { display: none; }
    did not, so a logo the same colour as the art behind it had nothing to separate it from. */
 .detail-shade-x {
   position: absolute; inset: 0;
+  /* The left only. There used to be a vignette down the right edge as well, for the ratings in
+     that corner -- but they sit inside the bottom shade, which already holds them, and with a
+     film behind the page the right half is where it is seen. */
   background:
-    linear-gradient(90deg, color-mix(in srgb, var(--bg) 74%, transparent) 0, color-mix(in srgb, var(--bg) 30%, transparent) 46%, transparent 76%),
-    linear-gradient(270deg, color-mix(in srgb, var(--bg) 44%, transparent) 0, transparent 26%);
+    linear-gradient(90deg, color-mix(in srgb, var(--bg) 74%, transparent) 0, color-mix(in srgb, var(--bg) 30%, transparent) 46%, transparent 76%);
 }
 .detail-shade-y { position: absolute; inset: 0; background: linear-gradient(0deg, var(--bg) 26%, color-mix(in srgb, var(--bg) 70%, transparent) 46%, transparent 72%); }
+/* The trailer takes the whole page under the shades rather than the art's own band: a film is
+   16:9 and so is the screen, so there is nothing to letterbox, and the shades above already keep
+   the column and the ratings legible over whatever is moving behind them. */
+.detail-video, .detail-yt {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover; pointer-events: none; overflow: hidden;
+  opacity: 0; transition: opacity calc(600ms * var(--motion)) linear;
+}
+.detail-video.playing, .detail-yt.playing { opacity: 1; }
+
+/* ---- the gallery strip ----
+   Under the blurb: the trailer, then the store page's other films and its screenshots, as one
+   row of 16:9 tiles cut the way the library's are -- the same radius, the same ring, the same
+   lift -- so it reads as the page's own and not a widget set down on it. Quiet until the
+   highlight arrives: the tiles sit back a little, and the one under the highlight comes forward.
+   Clipped to the sides only, with room for the ring, and faded at the right edge while there is
+   more beyond it. */
+.media-strip {
+  position: relative; width: 900px; padding: 6px 0; margin: 2px 0 -6px;
+  /* Room for the highlighted tile's lift and ring on every side. A mask used to fade the right
+     edge as well, and a mask stops at the box: it took the left edge off the first tile's ring
+     whenever there was more to the right. The "more this way" signal is on the tiles now.
+     On a side that has more, the room closes to nothing: the tile past the edge would otherwise
+     show a sliver through it, and the tile on that edge is never the highlighted one. */
+  --clip-l: -20px; --clip-r: -20px;
+  clip-path: inset(-20px var(--clip-r) -20px var(--clip-l));
+}
+.media-strip.more-left { --clip-l: 0px; }
+.media-strip.more-right { --clip-r: 0px; }
+.media-strip[hidden] { display: none; }
+.media-track {
+  display: flex; gap: 12px; width: max-content;
+  transition: transform var(--t-slide) var(--ease); will-change: transform;
+}
+.media-item {
+  position: relative; flex: 0 0 auto; width: 168px; height: 95px;
+  border-radius: 10px; overflow: hidden; background: var(--surface); cursor: pointer;
+  opacity: 0.72;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--edge) 10%, transparent);
+  transition: transform var(--t-focus) var(--ease), box-shadow var(--t-focus) var(--ease), opacity var(--t-fade) linear;
+}
+.media-item.focused {
+  transform: scale(1.06); opacity: 1; z-index: 2;
+  box-shadow: 0 0 0 3px var(--accent), 0 0 34px 4px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+.media-thumb { position: absolute; inset: 0; background-size: cover; background-position: center; }
+/* More this way. The tile on an edge carries a shade over its outer half, and only while there is
+   something past it -- five tiles that happen to fill the row look exactly like five tiles that
+   are all there is, and this is what tells them apart. The highlight is kept a tile in from any
+   edge that has more (updateMediaScroll), so the shade never lands on the tile you are on. */
+.media-item::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(90deg, transparent 42%, color-mix(in srgb, var(--bg) 90%, transparent));
+  opacity: 0; transition: opacity var(--t-fade) linear;
+}
+.media-item.edge-right::after { opacity: 1; }
+.media-item.edge-left::after {
+  opacity: 1;
+  background: linear-gradient(270deg, transparent 42%, color-mix(in srgb, var(--bg) 90%, transparent));
+}
+/* A film is marked, quietly: a small disc in the corner rather than a play button across the
+   middle, which is a control and this is a label. */
+.media-play {
+  position: absolute; left: 8px; bottom: 8px; width: 26px; height: 26px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: color-mix(in srgb, var(--bg-deep) 72%, transparent);
+}
+.media-play svg { width: 11px; height: 11px; fill: var(--ink); margin-left: 2px; }
+
+/* ---- the viewer ----
+   One item of the gallery, whole, on black: no page, no shades. The bar along the bottom carries
+   the name and the count on the left and the pad on the right, over a gradient rather than a
+   box, so the picture runs to the edge under it; the progress line sits just above it while a
+   film plays. The film's own frame is fitted, not covered, because here the point is the whole
+   of it. */
+.overlay.media-view { background: #000; }
+.overlay.media-view.closing > * { animation: none; }
+.media-view-stage { position: absolute; inset: 0; }
+.media-view-img {
+  position: absolute; inset: 0;
+  background-size: contain; background-position: center; background-repeat: no-repeat;
+  opacity: 0; transition: opacity var(--t-fade) linear;
+}
+.media-view-img.shown { opacity: 1; }
+.media-view-video {
+  position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain;
+  opacity: 0; transition: opacity var(--t-fade) linear;
+}
+.media-view-video.playing { opacity: 1; }
+.media-view-yt { position: absolute; inset: 0; overflow: hidden; opacity: 0; transition: opacity var(--t-fade) linear; }
+.media-view-yt.playing { opacity: 1; }
+/* The same letterbox trick as the page's frame (see .trailer-yt): the stage is 16:9, so the
+   frame at the stage's width and 28% taller shows the whole film with YouTube's bands clipped. */
+.media-view-yt > * {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: 100%; height: calc(100% * var(--yt-pad, 1.28)); border: 0;
+}
+.media-view-bar {
+  position: absolute; left: 0; right: 0; bottom: 0; padding: 70px 88px 34px;
+  display: flex; align-items: center; justify-content: space-between; gap: 40px;
+  background: linear-gradient(0deg, color-mix(in srgb, var(--bg-deep) 84%, transparent), transparent);
+}
+.media-view-caption {
+  display: flex; gap: 22px; font-size: 16px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: color-mix(in srgb, var(--ink) 72%, transparent);
+}
+.media-view-caption span:last-child { color: color-mix(in srgb, var(--ink) 42%, transparent); }
+.media-view-progress {
+  position: absolute; left: 88px; right: 88px; bottom: 104px; height: 3px; border-radius: 2px;
+  background: color-mix(in srgb, var(--ink) 18%, transparent); overflow: hidden;
+}
+.media-view-progress[hidden] { display: none; }
+.media-view-progress > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width 250ms linear; }
+.media-view .legend { padding: 0; }
 /* The type here was set a size larger than it needed to be all the way down, which on a 1920
    stage made a two-line title out of most names and left the column reading as one dense block.
    Everything below is a step smaller with more air between the groups: the page has plenty of

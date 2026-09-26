@@ -227,12 +227,15 @@ Stop the scrolled grid from clipping through the All games header
 
 ## Settings, themes and the keyboard
 
-- A bundled theme is installed once and then kept up to date by the `version` in its theme.json
-  (`ThemeService.SyncBuiltIn`). It used to skip any folder that already existed, which froze a
-  bundled theme at whatever shipped the day it was first installed -- every later fix to Polish
-  landed in the app and was never seen, because the copy being loaded was the old one in
-  %APPDATA%. Bump the version whenever a bundled theme changes or nobody gets the change. The
-  folder is copied to `theme-backups` first, so an edited theme is recoverable rather than gone.
+- A bundled theme is installed once and then kept up to date by `ThemeService.SyncBuiltIn`, which
+  is keyed on a **hash of the shipped files** (`.shipped` beside the installed copy), not on the
+  `version` in theme.json. It was keyed on the version, and the version takes a human to bump:
+  a whole day of stylesheet changes shipped under the same "4.0" (Sept 2026), nobody's install
+  was refreshed, and the launcher went on loading a copy made that morning -- "the option is
+  gone" and "the still shows for a split second" were both reports against a stylesheet that no
+  longer existed in the repo. Before that it skipped any folder that already existed, which was
+  the same failure one step earlier. The folder is copied to `theme-backups` first, so an edited
+  theme is recoverable rather than gone. Bump `version` anyway; it is what Settings shows.
 - `CopySettings` has to list every setting. `HideCursorSystemWide` was wired through the UI, the
   host and the CSS but never copied, so the toggle moved on screen and was gone again on the next
   state push -- a whole feature that silently did nothing.
@@ -526,26 +529,17 @@ Stop the scrolled grid from clipping through the All games header
   and the log has no `---- Loungepad <version> starting ----` for it, they were looking at an instance
   somebody else started.
 
-## The rename from Consolify
+## The old names
 
-- Up to 1.4 the app was Consolify, and every name that identifies an install was keyed on it: the
-  data folders, the Run value, the mutex and wake event, the WebView hosts and the Vortex plugin
-  folder. All of the carrying-over is in `ConsolifyMigration`, so it can go in one piece one day.
-- Order in `OnStartup` matters: `CloseRunningCopy` (WM_CLOSE to a window titled exactly
-  "Consolify", never a kill), THEN `Paths.EnsureCreated`, which moves `%APPDATA%\Consolify` and
-  `%LOCALAPPDATA%\Consolify`. The old copy's last save has to land before the folder moves, and
-  nothing may create the new folders first or the move turns into the copy fallback.
-- A move, not a copy (the Couch Launcher migration copied): 569 MB of art on this PC, and on one
-  volume a rename is all-or-nothing. The copy is only the fallback for a refused move; the local
-  folder (caches, store sign-in profiles) is never copied, only moved or left for the next start.
-- **Running any Loungepad build on this PC moves the user's real data folder.** Ask before the
-  first run of the published app if `%APPDATA%\Consolify` still exists.
-- Loungepad keeps a handle on `Consolify_SingleInstance` and listens on `Consolify_ShowExisting`,
-  so an old shortcut to Consolify.exe finds "a copy running" and wakes Loungepad instead.
+- The app was Couch Launcher, then Consolify up to 1.4. **Every migration from those names is
+  gone** (Sept 2026, at the user's request: nobody else was on the old builds): no folder move
+  from `%APPDATA%\Consolify`, no old mutex or wake event, no Run-value rename, no old Vortex
+  plugin folder cleanup. Do not bring any of it back. `%APPDATA%\Consolify`,
+  `%LOCALAPPDATA%\Consolify`, the `Consolify` Run value and `%APPDATA%\Vortex\plugins\
+  consolify-bridge` are the user's to delete by hand; nothing in the app touches them now.
 - The metadata worker is still `consolify-metadata`: the worker's name is its URL, and a renamed
-  worker is a new one with no secrets. See the note in `proxy/wrangler.toml`.
-- The old Vortex extension folder `consolify-bridge` is deleted by `SyncPlugin`; left there, Vortex
-  would load both and they would race for port 47391 with one of them holding a dead token.
+  worker is a new one with no secrets. See the note in `proxy/wrangler.toml`. That is a fact about
+  the deployment, not a migration.
 
 ## Updates and the tray icon
 
@@ -1021,6 +1015,180 @@ Stop the scrolled grid from clipping through the All games header
   `FindRomFolders` with empty lists, nothing saved). It asserts what this PC has -- RetroArch at
   `C:\RetroArch-Win64`, PCSX2 at `C:\PCSX2`, a GBA and a DS playlist -- so it will need its
   expectations changed on another machine.
+
+## Trailers
+
+- **Steam's `appdetails` `movies` no longer names a playable file.** It used to carry `webm`/`mp4`
+  at `480`/`max`; since 2025 it carries only `dash_av1`, `dash_h264` and `hls_h264` manifests, which a
+  plain `<video>` cannot play. The progressive files are still on the CDN at
+  `video.akamai.steamstatic.com/store_trailers/<MOVIE id>/movie_max.mp4` (and `movie480.mp4`) --
+  keyed by the movie's id, not the app's. Checked Sept 2026 on nine games from Portal to Black Myth:
+  Wukong. A missing file is a **200 with an empty body** (Portal 2's oldest movie has only the 480),
+  so `SteamTrailerAsync` probes each URL with a one-byte range request and believes only a 206 with
+  a `video/*` type. The legacy keys are still read first if an entry has them. IGDB has YouTube ids
+  only, so a game not on Steam has no trailer.
+- `FetchVersion` is 7 for this (6 was Steam's trailer, 7 added IGDB's). `MergeScanned` lists `TrailerUrl` and `TrailerFile`; a changed URL
+  clears the file name, because the cache name carries a hash of the URL it came from.
+- **`appdetails` is not reliably keyed by the app id asked for.** With `basic` in the filter list (or
+  no filter at all), an app that has DLC answers keyed by one of its DLC ids -- Hollow Knight under
+  `916000`, Portal 2 under `323180`, Wukong under `3288260` -- with the right `steam_appid` inside.
+  Verified Sept 2026 with curl, and it predates the trailer work. `TryGetProperty(appId)` therefore
+  read every game with DLC as "not found": no description, no rating, no trailer, silently.
+  `FetchSteamFactsAsync` now takes the single entry whatever it is keyed by and checks
+  `steam_appid` inside instead. Nothing else calls appdetails.
+- **The pass saves at checkpoints now** (`EnrichAsync`'s `checkpoint` callback, every 20 s while
+  there is unsaved work; the bridge saves and pushes state) and runs installed games first, most
+  recently played first. It used to save once at the very end: at store pace a 954-game library is
+  half an hour, the launcher was closed before that every time, and nothing -- not one trailer URL,
+  not one stamp -- ever reached disk. That was "trailers are not playing" on the first build. The
+  stamps are also saved when nothing changed; unsaved, the same two games were fetched on every start.
+- **The data host (`ServeDataFolder`) answers Range requests now** -- 206 with `Content-Range`, a
+  `SliceStream` over a shared-delete `FileStream` -- and streams anything over 8 MB instead of
+  reading it whole. Covers still go through `ReadAllBytes`. `/trailers/...` is routed to
+  `%LOCALAPPDATA%\Loungepad\trailers` (`DataRoots`); everything else stays under `DataDir`. A
+  scratch harness exercised `ParseRange` and `SliceStream` by reflection (15 checks).
+- `TrailerCache`: the page streams the URL and sends `cacheTrailer` at the same moment; one download
+  at a time and only the latest request waits, the file lands as `<id>_<10 hex of sha1(url)>.mp4`,
+  the game is pointed at it, and the page gets a `trailerCached` message (one field on one game --
+  NOT a state push, which would rebuild the library under somebody browsing). 4 GB cap, oldest write
+  time out first; a play touches the file's write time. `Prune()` at bridge start clears names whose
+  file is gone and deletes stray `.part` files. `CacheTrailers` in `AppSettings` (and `CopySettings`).
+- `--autoplay-policy=no-user-gesture-required` is passed to the WebView2 environment: a pad press
+  arrives as a bridge message, which is not a user gesture, so an unmuted `play()` would otherwise be
+  refused and "Trailer sound" would do nothing.
+- **IGDB is the fallback source, and IGDB keeps no video files** -- only YouTube ids
+  (`videos.video_id`). The worker (`SCHEMA` v6, deployed Sept 2026) and `IgdbClient` both ask for
+  `videos.name, videos.video_id` and pick the one named "trailer", else the first; it travels as
+  `video` in `/v1/facts` and `IgdbGame.VideoId`, and lands in `TrailerUrl` as a
+  `youtube.com/watch?v=` URL only when Steam has nothing (`EnrichAsync`, after the Steam step).
+  Steam's "none" clears only a Steam-shaped URL (`IsSteamTrailer`), and IGDB's "none" clears only a
+  YouTube one, and only when IGDB actually answered. `TrailerCache.IsFile` keeps YouTube URLs out of
+  the cache. **Nothing streams through the proxy**: the id is eleven characters in an answer it
+  already makes; the video goes YouTube → page, and Steam's mp4 goes Steam CDN → page. The user was
+  explicit about not wanting video traffic on the worker.
+- On the page, one player interface with two backends (`videoBackend` over `<video>`,
+  `youTubeBackend` over YouTube's IFrame API, loaded lazily off youtube.com on the first YouTube
+  trailer and never for a Steam-only library). The YouTube player replaces `#bdYtHost` /
+  `#detailYtHost` with an iframe inside `.trailer-yt`, sized to cover with `max(100%, 177.78vh)` ×
+  `max(100%, 56.25vw)` because an iframe cannot `object-fit`. Every theme rule that styles the film
+  has to name both: `#backdrop :is(video, .trailer-yt)`.
+- **YouTube's chrome cannot be switched off by an embed, so it is worked around** (the user wants
+  the film to read as a film, not as YouTube): the fade-in waits `YT_SHOW_DELAY_MS` (900) after
+  PLAYING so the big play button and the centre bezel are gone before the frame shows; the
+  captions module is unloaded (`player.unloadModule("captions")`, undocumented but the one thing
+  that keeps captions off) on ready and on every PLAYING; the frame is made 28% TALLER than 16:9
+  at the cover width (`--yt-pad` on `.trailer-yt`) so the player letterboxes the picture to
+  exactly the box and pins its title bar, cards button and bottom bar into the black bars the
+  wrapper clips off -- an 18% overscan did the same job first and cut 8% off every edge, which
+  the user saw as "zoomed in"; and a 250 ms watch cuts the film `YT_END_MARGIN_S` (1.2 s) before
+  its end so the suggested-videos end screen is drawn behind a wrapper already at zero. A YouTube
+  stop mutes rather than pauses -- a paused embed shows the play button again -- and `stopVideo()`
+  comes after the fade. `rel: 0` only limits suggestions to the same channel these days and
+  `modestbranding` is ignored; neither is the answer.
+- `syncTrailers()` is the one decision point and is idempotent: called from `paintNav`,
+  `renderDetail`, `switchView`, `showOverlay`/`hideOverlay` (a tick later, because the overlay flag
+  is set around the call in either order), `setOverlayMode` and `visibilitychange`. It stops
+  everything when a search is being typed, the Mods screen or the guide is up, a game is running,
+  the window is hidden, or the option says so. **Ordinary menus do not stop it** (Y, the filter, the
+  collection and manage sheets, a confirm): the user asked for the film to keep running under them.
+  The library film additionally needs `--trailers` on `#backdrop` to not be `none`, which is how a
+  theme allows it at all (Loungepad) or turns it off per state without script.
+- **The film is not handed across screens; the page is drawn over it.** A handoff was built first
+  (the page's own player started at the library player's position) and the user could see the
+  still for the beat before the page's first frame. Now Loungepad's page is transparent, its
+  `.detail-art` is off, and it declares `--trailer-surface: backdrop`; `syncTrailers` then arms the
+  LIBRARY player with the page's game, which is a no-op when it is the game already showing, so
+  the film in `#backdrop` never stops. The library's tiles fade out under the page
+  (`body[data-view="detail"] #screen-library.under { opacity: 0 }`, app.css) and the theme's
+  grid-state dimming carries `body:not([data-view="detail"])` so a page opened from the grid is
+  not drawn over a blurred, darkened backdrop. Shelf's page is still an opaque sheet with its own
+  player and its own 3 s clock.
+- **Shelf's library has no film** (the user's call: Shelf stays as it was). `--trailers: none` is
+  the app's default on `#backdrop`; Loungepad sets `auto`. `libraryCanHostTrailers()` reads it,
+  `trailerModes()` drops "Library and details" from the Trailers row while it is none, and
+  `lookTrailers()` folds a stored "all" to "detail" so a bag written under Loungepad reads sensibly
+  under Shelf.
+- `makeTrailerPlayer` arms at 1.2 s (source assigned, buffering starts) and plays at 3 s; `ended`
+  and an unrecoverable error are remembered per game so a finished or unplayable film does not
+  restart on every repaint; a cached file that errors falls back to the stream once. Sound is on by
+  default at 0.7 (`TRAILER_VOLUME`); "Trailer sound" off mutes.
+- The trailer options are look settings in the theme's bag (`LOOK_IDS.trailers` = "all" | "detail" |
+  "off", `LOOK_IDS.trailerSound`, default on), listed first under "<THEME> OPTIONS" for every theme.
+  A new look setting needs `LOOK_IDS`, its `look*()` reader, and a row; `RESERVED_IDS` follows.
+- A "change the trailer" option (a link or a file, under Manage) was built and then removed at the
+  user's request the same day, in favour of the gallery below. Do not bring it back unasked.
+
+## The gallery
+
+- `Game.Media` is the store page's films and pictures (`MediaItem`: kind, url, thumb, name),
+  fetched for **installed games only** -- the list rides in every state push and a Game Pass
+  catalogue would make it most of the payload. Steam: every movie (`SteamMoviesAsync`, each
+  resolved and probed the way the trailer is, at most `MaxMovies`) then the screenshots
+  (`path_full` 1920x1080, `path_thumbnail` 600x338, at most `MaxScreenshots`); the lite pass
+  resolves the highlight movie only. IGDB: `videos` and `screenshots.image_id` at `t_1080p`
+  (worker `SCHEMA` v7, deployed Sept 2026; `IgdbGame.Videos`/`Screenshots`), the poster for a
+  YouTube video being `i.ytimg.com/vi/<id>/hqdefault.jpg`. IGDB's list is set first and Steam's
+  replaces it when Steam has anything. `MergeScanned` carries it; `FetchVersion` is 8.
+- **Any game's page fills its gallery on demand.** The page sends `fetchMedia` once per game per
+  session when a page opens with an empty strip (`requestMedia`); the bridge runs
+  `MetadataService.FetchMediaAsync` for that one game off the UI thread (Steam by app id or the
+  exact-title search, never for a ROM; IGDB otherwise; `_mediaFetching` stops a double ask), saves,
+  and answers with one `media` message that the page writes into the game in place and re-renders
+  the strip from. That is how an uninstalled game gets a full gallery without every catalogue
+  game carrying one. `SteamAppDetailsAsync` is the one appdetails call (the DLC-keyed root fix
+  lives there) and the facts fetch goes through it too.
+- The strip signals "more this way" on the tiles, not with an edge fade: the outermost visible
+  tile on a side that has more beyond it gets a shade over its outer half (`.edge-left` /
+  `.edge-right`, set by `updateMediaScroll`), and the scroll keeps the highlight a tile in from
+  such an edge so the shade never sits on the tile you are on. The earlier right-edge mask was
+  also what cut the first tile's ring: a mask stops at the element's box, and the lifted tile
+  reaches past it.
+- On the page, `detailMediaItems(g)` puts the trailer first (`trailerUrl(g)`, so the cached copy
+  when there is one, with the matching movie's poster) and skips the movie that IS the trailer.
+  The strip (`#detailMedia`, built by `renderDetailMedia`) is ordinary focusables in the detail
+  scope, so the spatial nav walks onto it from Play with Up; `updateMediaScroll` slides the track
+  like the continue row (`MEDIA_ITEM_W`/`MEDIA_GAP`/`MEDIA_STRIP_W` must match `.media-item` and
+  `.media-strip`).
+- **The highlight drives the picture and the film.** `paintNav` on the detail view reads
+  `focusedMediaOverride()` (a highlighted screenshot) and hands it to `scheduleBackdrop(g,
+  override)` / `setBackdrop(g, override)` (the override leads the candidate list) and to
+  `updateDetailArt` (Shelf's own art, applied only on a change). `syncTrailers` arms a highlighted
+  film with `GALLERY_DELAY_MS` (700) rather than the 3 s, plays nothing for a highlighted picture,
+  and plays the trailer again once the highlight leaves the strip.
+- Players are keyed on `filmKey(g, url)` -- "trailer:<remote>" for the game's own trailer whether
+  read from the store or the cache, the URL for anything else -- so a cache landing never restarts
+  a playing trailer and a different film always does. `arm(g, url, { delay, again })`; only
+  `trailer:` films are sent to `cacheTrailer`.
+- **The viewer** (`#overlay-media`, `mediaView`, its own `viewerTrailer` player): the item whole
+  on black, `contain`-fitted; A pause/resume (on a picture: next), X/Y seek ∓10 s, Left/Right step
+  (and move the strip's focus with them, so B lands where you were), B closes. `tickMediaView`
+  every 250 ms drives the progress line and the A label. It is quiet for the page's own films
+  (`mediaView` in `quiet`) but exempt from the Trailers option: its film was asked for. A ended or
+  failed film replays on A through `again`. The YouTube backend's `pause()` is a real pause (the
+  button it brings back is the price of asking); `quiet()` is what a stop does (mute, run out
+  under the fade, stop after). `handleInput` routes to `mediaViewInput` before the confirm;
+  `repaintFocus` has a branch; `overlayOpen()` includes it.
+- Loungepad's resting scrim was rebuilt so the film stays crisp: a light band under the chrome, a
+  flat heavy band from where the recents row starts (40% up) to the bottom, and an ellipse of shade
+  behind the title at the bottom left instead of a wall down the whole side. The detail page lost
+  its right-edge vignette for the same reason; the ratings sit inside the bottom shade anyway.
+- `--continue-max` on `.continue-row` is read by `continueMax()` to decide how many recents the
+  row lists (capped at `CONTINUE_MAX`, 12). Loungepad sets it to its column count so the row is
+  exactly full and never scrolls; Shelf has none set and keeps the carousel. It follows the "Tiles
+  across" option on the next render (the settings save's state push).
+
+## The theme names
+
+- The bundled theme is **Loungepad** (folder `loungepad`); the built-in look with no theme applied
+  is **Shelf** (id `""`). `ThemeService.Renamed` maps `marquee` and `polish` to `loungepad`, which
+  moves an installed old folder to `theme-backups` and rewrites settings.json on the next start.
+  Nothing else keys on the display name.
+- The recents row lost its frosted tray on purpose: the tray was what made the layout read as
+  somebody else's television. The tiles sit straight on the art with the scrim under them, and in
+  the grid state a 12% hairline under the row separates it from the grid. Corner radius is 10px.
+- `SyncBuiltIn` ignores a shipped folder whose id is a key of `Renamed`. Build output is never
+  cleaned, so `bin\Release\themes\polish` and `publish\themes\polish` are still next to the exe on
+  this PC, and without the guard the retired theme was reinstalled one line after being retired.
 
 ## Motion, and a theme's own options
 

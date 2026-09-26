@@ -22,7 +22,16 @@ public class IgdbGame
     /// them and a direct call can hand back the same object.</summary>
     public string? CoverUrl { get; init; }
     public string? ArtworkUrl { get; init; }
+    /// <summary>The trailer's YouTube id, or null. IGDB keeps no video files, only these; the page
+    /// plays one through YouTube's embedded player, and only for a game Steam has no trailer for.</summary>
+    public string? VideoId { get; init; }
+    /// <summary>Every video, as (YouTube id, name), for the gallery on the game's page.</summary>
+    public List<IgdbVideo> Videos { get; init; } = new();
+    /// <summary>Screenshots as finished 1080p URLs, for the same gallery.</summary>
+    public List<string> Screenshots { get; init; } = new();
 }
+
+public record IgdbVideo(string Id, string? Name);
 
 /// <summary>
 /// IGDB, which is where Playnite gets its metadata too. Free, but not keyless: it lives behind
@@ -128,7 +137,7 @@ public class IgdbClient : IFactsProvider
     private const string BaseFields =
         "name, summary, first_release_date, aggregated_rating, category, " +
         "follows, total_rating_count, version_parent, " +
-        "genres.name, cover.image_id, artworks.image_id, " +
+        "genres.name, cover.image_id, artworks.image_id, videos.name, videos.video_id, screenshots.image_id, " +
         "involved_companies.developer, involved_companies.publisher, involved_companies.company.name";
 
     /// <summary>
@@ -317,8 +326,32 @@ public class IgdbClient : IFactsProvider
                 .Select(a => a.TryGetProperty("image_id", out var id) ? id.GetString() : null)
                 .FirstOrDefault(id => !string.IsNullOrWhiteSpace(id));
 
+        // Every video, and the one named as a trailer (else the first) as THE trailer. Same rule
+        // as the proxy's videoOf.
+        var videos = new List<IgdbVideo>();
+        if (e.TryGetProperty("videos", out var vids) && vids.ValueKind == JsonValueKind.Array)
+            foreach (var v in vids.EnumerateArray())
+            {
+                var id = v.TryGetProperty("video_id", out var vi) && vi.ValueKind == JsonValueKind.String ? vi.GetString() : null;
+                if (string.IsNullOrWhiteSpace(id)) continue;
+                var vname = v.TryGetProperty("name", out var vn) && vn.ValueKind == JsonValueKind.String ? vn.GetString() : null;
+                videos.Add(new IgdbVideo(id, vname));
+            }
+        var video = (videos.FirstOrDefault(v => (v.Name ?? "").Contains("trailer", StringComparison.OrdinalIgnoreCase))
+                     ?? videos.FirstOrDefault())?.Id;
+
+        var screenshots = new List<string>();
+        if (e.TryGetProperty("screenshots", out var shots) && shots.ValueKind == JsonValueKind.Array)
+            foreach (var s in shots.EnumerateArray())
+                if (s.TryGetProperty("image_id", out var sid) && sid.ValueKind == JsonValueKind.String
+                    && sid.GetString() is { Length: > 0 } iid)
+                    screenshots.Add(ImageUrl(iid, "1080p"));
+
         return new IgdbGame
         {
+            VideoId = video,
+            Videos = videos,
+            Screenshots = screenshots,
             Name = Str("name") ?? "",
             Summary = Str("summary"),
             Developer = developer,

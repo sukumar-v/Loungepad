@@ -6,9 +6,6 @@ namespace Loungepad;
 public partial class App : Application
 {
     private System.Threading.Mutex? _instanceMutex;
-    /// <summary>Held, never owned: while this handle is open an old Consolify.exe finds its mutex
-    /// taken and hands over to this copy instead of starting beside it.</summary>
-    private System.Threading.Mutex? _oldNameMutex;
     private readonly List<(System.Threading.EventWaitHandle Signal, System.Threading.RegisteredWaitHandle Registration)> _wake = new();
 
     /// <summary>
@@ -56,11 +53,8 @@ public partial class App : Application
             return;
         }
 
-        // Before the data folder moves: the old copy's last save has to land in it first.
-        var closedOld = ConsolifyMigration.CloseRunningCopy();
         Paths.EnsureCreated();
         Log.Info($"---- Loungepad {UpdateService.Format(UpdateService.Current)} starting ----");
-        if (closedOld is not null) Log.Info(closedOld);
         if (UpdatedFrom is not null) Log.Info($"Updated from {UpdatedFrom}");
 
         UpdateService.FinishPreviousUpdate();
@@ -74,7 +68,6 @@ public partial class App : Application
         }
 
         ThemeService.SyncBuiltIn();
-        StartupService.MigrateOldEntry();
 
         AppDomain.CurrentDomain.UnhandledException += (_, ex) =>
             Log.Info($"Unhandled exception: {ex.ExceptionObject}");
@@ -90,11 +83,7 @@ public partial class App : Application
         MainWindow = window;
         window.Show();
 
-        _oldNameMutex = new System.Threading.Mutex(false, ConsolifyMigration.OldMutexName);
         ListenForSecondLaunch(window, WakeEventName);
-        // A desktop shortcut or pinned Start entry that still points at Consolify.exe starts the
-        // old copy, which finds its mutex held and signals this -- so it shows Loungepad.
-        ListenForSecondLaunch(window, ConsolifyMigration.OldWakeEventName);
     }
 
     private static string? ArgValue(string[] args, string name)
@@ -139,7 +128,6 @@ public partial class App : Application
             registration.Unregister(null);
             signal.Dispose();
         }
-        _oldNameMutex?.Dispose();
         _instanceMutex?.Dispose();
         base.OnExit(e);
     }

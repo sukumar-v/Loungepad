@@ -57,15 +57,6 @@ running). Turn the toggle off and nothing is fetched until you ask.
 An update replaces the files in the folder you unzipped into, so that folder has to be one your
 account can write to — anywhere under your user folder is; `Program Files` is not.
 
-### Coming from Consolify
-
-Loungepad was called **Consolify** up to 1.4, which has no updater, so this one download is by
-hand. Unzip it and run `Loungepad.exe`; you do not need to close Consolify first. On its first
-start it closes a running Consolify, moves `%APPDATA%\Consolify` and `%LOCALAPPDATA%\Consolify`
-to their Loungepad names, and switches the startup entry over. Your library, art, settings and
-store sign-ins come with it. A shortcut that still starts `Consolify.exe` brings Loungepad to the
-front, and once you are happy you can delete `Consolify.exe`.
-
 ## No keyboard. No mouse.
 
 Most couch launchers get you as far as starting a game, then leave you stranded the moment you
@@ -133,6 +124,32 @@ Galaxy (or the game's gog.com page when Galaxy is not installed), or the Microso
 Xbox list is your profile's title history, which is what Xbox Live exposes; **Show the PC Game
 Pass catalogue** adds every game included with PC Game Pass, from Microsoft's public catalogue,
 with no sign-in at all.
+
+**Trailers.** In the Loungepad theme, rest the highlight on a game for three seconds and its
+trailer plays across the screen, with sound, behind the tiles; open the game's page and the same
+film simply carries on behind the page, and a menu opened over it leaves it running. Shelf keeps
+its library as it always was and plays trailers only on a game's page, after the page has been
+open for three seconds. Steam's trailers come first, keyed by app id like the
+rest of the art, so any game Steam sells has one and nothing is matched by title: the file streams
+from Steam the first time and is kept under `%LOCALAPPDATA%\Loungepad\trailers` for the next, up
+to 4 GB with the oldest going first (**Keep trailers on this PC**, under Settings → Library, turns
+the keeping off). A game Steam has nothing for — a ROM, a store exclusive — gets IGDB's trailer,
+which is a YouTube video and plays through YouTube's own player straight from YouTube; nothing is
+kept for those, and the player's own dressing (the play button, captions, the title bar, the
+suggestions at the end) is kept off the screen. Neither kind passes through the metadata service,
+which only ever hands back the video's id. **Trailers** and **Trailer sound** sit under the theme's own options in Settings →
+Appearance: Trailers can be limited to the game's page or turned off (Shelf offers only those
+two), and the sound can be muted.
+
+**The gallery.** Under the blurb on a game's page sits a row of the store page's films and
+screenshots, the trailer first. Walking along it changes the picture behind the page: a film plays
+after a short beat, a screenshot hangs where the hero would. A opens the highlighted one whole, in
+a viewer with playback under the pad: A pauses and resumes a film (on a picture, it goes to the
+next), X and Y skip ten seconds back and ahead, Left and Right step through the gallery, B returns
+to the page. Steam's screenshots and every movie are used where a game has a Steam page; IGDB's
+screenshots and videos otherwise. Installed games get theirs in the background; any other game's
+fills in the first time its page is opened. A shade over the outer half of the last tile says
+there is more that way. Nothing from the gallery is kept on disk except the trailer.
 
 ### The Xbox sign-in needs an app registration
 
@@ -278,8 +295,8 @@ supported.
 A theme is a folder under `%APPDATA%\Loungepad\themes` — **Settings → Appearance → Themes
 folder** opens it — with a `theme.css` in it and, optionally, a `theme.json` and a `theme.html`.
 Nothing is compiled or copied: the launcher loads the files straight off disk, watches the folder
-and reloads on save, so editing a theme is editing a file. Polish, the theme the launcher opens
-on, ships this way too; Classic is the built-in look with no theme applied.
+and reloads on save, so editing a theme is editing a file. Loungepad, the theme the launcher opens
+on, ships this way too; Shelf is the built-in look with no theme applied.
 
 - **`theme.css`** is loaded after the app's own stylesheet, so it overrides by ordinary cascade
   order and needs no `!important`. Every colour in the UI resolves to a token on `:root` (`--bg`,
@@ -293,14 +310,15 @@ on, ships this way too; Classic is the built-in look with no theme applied.
 
   ```json
   {
-    "name": "Polish", "author": "Loungepad", "version": "3.7",
-    "description": "Full-bleed art, recents on a dock, the grid on the way down",
+    "name": "Loungepad", "author": "Loungepad", "version": "4.1",
+    "description": "Full-bleed art, recents in a row, the grid on the way down",
     "tokens": { "--bg": "#05070B" },
     "settings": [ ]
   }
   ```
 
-  `version` matters for a bundled theme: the installed copy is refreshed when it changes.
+  For a bundled theme the installed copy is refreshed whenever the shipped files change (the old
+  copy goes to `theme-backups`); `version` is what Settings shows.
 
 ### A theme's own options
 
@@ -308,7 +326,7 @@ on, ships this way too; Classic is the built-in look with no theme applied.
 row, that belong to that theme alone. Their values are stored per theme and go nowhere but the
 page, as CSS: each option becomes a `data-theme-<id>` attribute on `<html>` and, if it names a
 `token`, a custom property on the root — so a theme keys its rules off either, with no script.
-Polish declares five; two of them:
+Loungepad declares five; two of them:
 
 ```json
 "settings": [
@@ -337,10 +355,26 @@ html[data-theme-labels="true"] .tv-name { opacity: 1; }
 Without `values`, a toggle writes `1` or `0`, a slider writes the number with its unit, and a
 select writes the option. An entry that does not make sense is skipped rather than shown broken.
 
-The accent colour, the button hints and the animation settings are kept in the same per-theme
-store, under the ids `accent`, `hide-hints`, `animations` and `animation-speed` — which is why a
-theme cannot declare an option with one of those ids. **Restore <theme>'s defaults**, the last row,
-puts that one theme's look, animation and options back and leaves every other theme as it is.
+The accent colour, the button hints, the animation settings and the trailer settings are kept in
+the same per-theme store, under the ids `accent`, `hide-hints`, `animations`, `animation-speed`,
+`trailers` and `trailer-sound` — which is why a theme cannot declare an option with one of those
+ids. **Restore <theme>'s defaults**, the last row, puts that one theme's look, animation and
+options back and leaves every other theme as it is.
+
+Two things a theme can say to the app in CSS alone, with no option declared:
+
+- `--continue-max: 6` on the Continue row (`.continue-row`) is how many recents it lists. The
+  built-in row is a carousel and takes twelve; Loungepad ties it to its column count so the row is
+  always exactly full and never scrolls.
+- `--trailers` on `#backdrop` is whether a film may play behind the library at all. The app's
+  default is `none`, which is what Shelf has; Loungepad sets `auto`. Set it per state to turn the
+  film off in some states only. The film itself is `#backdrop video` (Steam's) or
+  `#backdrop .trailer-yt` (a YouTube one), faded up with `.playing`; Loungepad lets it be the
+  screen at rest and darkens it behind the grid.
+- `--trailer-surface: backdrop` on `#screen-detail` says the game's page is drawn over the
+  backdrop rather than over its own art, so the film stays in `#backdrop` and never restarts when
+  the page opens. Loungepad makes the page transparent, hides `.detail-art` and sets this; the
+  library's own tiles fade out under the page (`body[data-view="detail"] #screen-library.under`).
 
 ### Animation
 
@@ -364,7 +398,7 @@ the user's speed and their "off" still apply — or replaces an animation outrig
 overlay carries `.active` while it is up and `.closing` for the length of its exit, and the
 keyframes are ordinary rules in `app.css` (`screenIn`, `cardIn`, `cardOut`, `spokeIn`, …).
 Multiply the durations in a theme's own transitions by `var(--motion, 1)` and they follow the
-setting too; Polish does, and exposes its dock's slide as one of its options.
+setting too; Loungepad does, and exposes its row's slide as one of its options.
 
 ## Build & run
 
@@ -429,7 +463,7 @@ Loungepad/
     CursorService.cs      Optional system-wide pointer hiding while the D-pad drives
     StartupService.cs     HKCU Run key registration
     UpdateService.cs      Checks GitHub releases, downloads, swaps the files in place, restarts
-    ConsolifyMigration.cs Carries an install over from the app's old name
+    TrailerCache.cs       Keeps a copy of each trailer the page plays, capped, oldest out first
     Storage.cs            JSON persistence in %APPDATA%\Loungepad (settings, library, log, covers)
   TrayIcon.cs             The notification-area icon: show, update, quit
   Interop/NativeMethods.cs   All P/Invoke declarations
@@ -540,15 +574,8 @@ Loungepad/
   launcher re-activates itself (Settings → "Keep launcher focused"). Alt-Tab still works.
 
 Data lives in `%APPDATA%\Loungepad\` (`settings.json`, `library.json`, `covers\`,
-`loungepad.log`). Delete `library.json` to force a clean rescan.
-
-Up to 1.4 the app was **Consolify**; see [Coming from Consolify](#coming-from-consolify) for what
-the first start of Loungepad carries over.
-
-Before that it was called **Couch Launcher**. On first run it copies `settings.json`,
-`library.json` and any missing cover art out of `%APPDATA%\CouchLauncher\`, and moves an existing
-HKCU Run entry across. It copies rather than moves, and leaves the old folder alone — delete that
-yourself once you are satisfied the library came over.
+`loungepad.log`). Delete `library.json` to force a clean rescan. Trailers are kept apart, under
+`%LOCALAPPDATA%\Loungepad\trailers\`, and that folder can be deleted at any time.
 
 ## Design → native mapping (flagged deviations)
 

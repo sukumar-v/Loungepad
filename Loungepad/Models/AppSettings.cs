@@ -11,9 +11,9 @@ public class AppSettings
     /// </summary>
     public string AccentColor { get; set; } = "#F0A253";
     /// <summary>Folder name under %APPDATA%\Loungepad\themes, or "" for the built-in look.
-    /// A theme that has been deleted falls back to the built-in look rather than failing. Polish
-    /// ships with the app, so a fresh install opens on it rather than on Classic.</summary>
-    public string Theme { get; set; } = "polish";
+    /// A theme that has been deleted falls back to the built-in look rather than failing. The
+    /// Loungepad theme ships with the app, so a fresh install opens on it rather than on Shelf.</summary>
+    public string Theme { get; set; } = "loungepad";
     /// <summary>Hide the button-hint bar along the bottom of every screen. Off by default: it is
     /// the only thing telling a new player what A and Y do, so it is opt-out, not opt-in.</summary>
     public bool HideLegend { get; set; }
@@ -50,6 +50,10 @@ public class AppSettings
     /// <summary>Overrides the shipped metadata service endpoint. Empty means use the built-in one;
     /// this exists for self-hosting and for testing, not as something anyone need ever set.</summary>
     public string MetadataEndpoint { get; set; } = "";
+    /// <summary>Keep a copy of each trailer the page plays, so the second play comes off disk
+    /// rather than off Steam. The cache lives under %LOCALAPPDATA% and is capped (see
+    /// TrailerCache.CapBytes), oldest out first. Off streams every time and keeps nothing.</summary>
+    public bool CacheTrailers { get; set; } = true;
 
     // Steam account
     /// <summary>

@@ -30,6 +30,10 @@ public static class Paths
     /// belongs anyway, and it keeps it out of a roaming profile.
     /// </summary>
     public static string WebViewDir { get; } = Path.Combine(LocalDir, "webview2");
+    /// <summary>Downloaded trailers, a few hundred megabytes each. Under Local like the other
+    /// caches -- gigabytes of video have no business in a roaming profile -- and reached from the
+    /// page as https://loungepad.data/trailers/…, which MainWindow routes here by hand.</summary>
+    public static string TrailersDir { get; } = Path.Combine(LocalDir, "trailers");
     public static string SettingsFile { get; } = Path.Combine(DataDir, "settings.json");
     public static string LibraryFile { get; } = Path.Combine(DataDir, "library.json");
     /// <summary>The last list of games the Steam account owned, so a start with no network keeps
@@ -42,93 +46,9 @@ public static class Paths
 
     public static void EnsureCreated()
     {
-        MigrateFromConsolify();
-        MigrateFromCouchLauncher();
         Directory.CreateDirectory(DataDir);
         Directory.CreateDirectory(CoversDir);
         Directory.CreateDirectory(ThemesDir);
-    }
-
-    private static bool _consolifyChecked;
-
-    /// <summary>
-    /// Up to 1.4 the app was Consolify, in %APPDATA%\Consolify and %LOCALAPPDATA%\Consolify.
-    /// Once per process: EnsureCreated also runs on every save, from the scan thread among others.
-    /// Must run before anything creates either new folder, or the move finds its destination
-    /// already there and falls back to the slower copy. The Couch Launcher migration runs after
-    /// this one, because its marker file is in the folder that this one moves.
-    /// </summary>
-    private static void MigrateFromConsolify()
-    {
-        if (_consolifyChecked) return;
-        _consolifyChecked = true;
-        var roaming = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-        var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-
-        var moved = ConsolifyMigration.MoveFolder(Path.Combine(roaming, ConsolifyMigration.OldName), DataDir, copyFallback: true);
-        // Local is caches and the stores' sign-in profiles. Worth moving, so nobody has to sign in
-        // to GOG again, but never worth copying a quarter of a gigabyte of browser cache for.
-        var movedLocal = ConsolifyMigration.MoveFolder(Path.Combine(local, ConsolifyMigration.OldName), LocalDir, copyFallback: false);
-        ConsolifyMigration.RenameLog(DataDir, LogFile);
-
-        if (moved is not null) Log.Info(moved);
-        if (movedLocal is not null) Log.Info(movedLocal);
-    }
-
-    /// <summary>
-    /// The app used to be called Couch Launcher and kept everything in %APPDATA%\CouchLauncher.
-    /// Renaming without this would orphan an existing library, its cover art and every setting.
-    ///
-    /// Copies rather than moves, and leaves the old folder alone. Moving the whole directory is
-    /// all-or-nothing and races anything still holding a handle in there -- an old build left
-    /// running will keep writing to it, and a half-finished move can leave the library in one
-    /// folder and the settings in another. The WebView2 profile is skipped deliberately: it is a
-    /// rebuildable cache, it is the part that holds locks, and it is most of the bytes.
-    ///
-    /// A marker file makes this run exactly once, so a rescan that happened before the migration
-    /// completed is still replaced by the real library, and later starts never touch it again.
-    /// </summary>
-    private static void MigrateFromCouchLauncher()
-    {
-        var old = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "CouchLauncher");
-        var marker = Path.Combine(DataDir, ".migrated-from-couchlauncher");
-        if (!Directory.Exists(old) || File.Exists(marker)) return;
-
-        try
-        {
-            Directory.CreateDirectory(DataDir);
-            Directory.CreateDirectory(CoversDir);
-
-            foreach (var name in new[] { "settings.json", "library.json" })
-            {
-                var src = Path.Combine(old, name);
-                if (File.Exists(src)) File.Copy(src, Path.Combine(DataDir, name), overwrite: true);
-            }
-
-            int covers = 0;
-            var oldCovers = Path.Combine(old, "covers");
-            if (Directory.Exists(oldCovers))
-                foreach (var f in Directory.GetFiles(oldCovers))
-                {
-                    var dst = Path.Combine(CoversDir, Path.GetFileName(f));
-                    if (File.Exists(dst)) continue;
-                    File.Copy(f, dst);
-                    covers++;
-                }
-
-            // Carry the history over, but only into an empty log, so a re-run cannot duplicate it.
-            var oldLog = Path.Combine(old, "couchlauncher.log");
-            if (File.Exists(oldLog) && !File.Exists(LogFile)) File.Copy(oldLog, LogFile);
-
-            File.WriteAllText(marker, DateTime.Now.ToString("O"));
-            Log.Info($"Migrated settings, library and {covers} cover(s) from {old} (left in place)");
-        }
-        catch (Exception ex)
-        {
-            // Never block startup on this. Without the marker it simply tries again next time.
-            try { Log.Info($"Could not migrate from {old}: {ex.Message}"); } catch { }
-        }
     }
 }
 
@@ -354,6 +274,9 @@ public class LibraryStore
                     s.EsrbRating = old.EsrbRating;
                     s.ContentDescriptors = old.ContentDescriptors;
                     s.ControllerSupport = old.ControllerSupport;
+                    s.TrailerUrl = old.TrailerUrl;
+                    s.TrailerFile = old.TrailerFile;
+                    s.Media = old.Media;
                     s.MetadataSource = old.MetadataSource;
                     s.MetadataFetched = old.MetadataFetched;
                     // Without this the stamp resets to 0 on every scan, every game looks like it

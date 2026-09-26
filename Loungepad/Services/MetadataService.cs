@@ -45,7 +45,7 @@ public class MetadataService
     /// about not re-hitting the network for the same answer; it was never meant to pin a library
     /// to whatever the app happened to know the day it first scanned.
     /// </summary>
-    private const int FetchVersion = 5;
+    private const int FetchVersion = 8;   // 6: the store trailer; 7: IGDB's YouTube trailer; 8: the gallery
 
     /// <summary>
     /// Which source wrote a file, as part of its name.
@@ -130,12 +130,25 @@ public class MetadataService
         ("library_hero.jpg", Slot.Hero, Steam + "_hero"),   // 1920x620, the 1x hero
     };
 
+    /// <summary>How often a pass hands its work so far to the caller to save and show.</summary>
+    private static readonly TimeSpan CheckpointEvery = TimeSpan.FromSeconds(20);
+
     /// <summary>
-    /// Brings every game that needs it up to date, in place. Returns the number actually touched
-    /// so the caller can skip a UI push when there was nothing to do.
+    /// Brings every game that needs it up to date, in place. Returns how many were given
+    /// something new (Changed) and how many were stamped as tried (Stamped), so the caller can
+    /// skip a UI push when nothing is different on screen but still save the stamps.
+    ///
+    /// `checkpoint` is called every CheckpointEvery while there is unsaved work, and it is not
+    /// optional in practice. A pass over a whole library runs at store pace -- 1.5 s a game, so
+    /// the best part of half an hour for a Game Pass catalogue -- and everything it found used to
+    /// be held in memory until the last game. Close the launcher before then and the pass had
+    /// never happened: every start began again from the first game and nothing ever reached the
+    /// screen. Installed games go first, most recently played first, so what is actually on the
+    /// tiles is filled in within the first seconds rather than after five hundred catalogue
+    /// entries nobody has played.
     /// </summary>
-    public async Task<int> EnrichAsync(IReadOnlyList<Game> games, AppSettings settings,
-        CancellationToken ct = default)
+    public async Task<(int Changed, int Stamped)> EnrichAsync(IReadOnlyList<Game> games, AppSettings settings,
+        Action? checkpoint = null, CancellationToken ct = default)
     {
         // The user's own credentials win over the shared service. Somebody who has gone to the
         // trouble of registering a Twitch application should not be silently routed through
@@ -158,15 +171,28 @@ public class MetadataService
         }
 
         var search = new SteamSearchClient(Http);
-        var due = games.Where(g => NeedsFetch(g)).ToList();
-        if (due.Count == 0) return 0;
+        var due = games.Where(g => NeedsFetch(g))
+            .OrderByDescending(g => g.Installed)
+            .ThenByDescending(g => g.LastPlayed ?? DateTime.MinValue)
+            .ToList();
+        if (due.Count == 0) return (0, 0);
 
         Log.Info($"Metadata: {due.Count} game(s) to fetch" +
                  $", facts={Describe(facts)}, art={Describe(art)}");
         var changed = 0;
+        var stamped = 0;
+        var unsaved = false;
+        var lastCheckpoint = DateTime.UtcNow;
 
         foreach (var g in due)
         {
+            if (unsaved && DateTime.UtcNow - lastCheckpoint > CheckpointEvery)
+            {
+                try { checkpoint?.Invoke(); Log.Info($"Metadata: checkpoint, {changed} changed and {stamped} stamped so far"); }
+                catch (Exception ex) { Log.Info($"Metadata: checkpoint failed: {ex.Message}"); }
+                unsaved = false;
+                lastCheckpoint = DateTime.UtcNow;
+            }
             if (ct.IsCancellationRequested) break;
             try
             {
@@ -219,15 +245,26 @@ public class MetadataService
                 // game with no capsule, a wordmark, 16:9 key art -- and for every non-Steam game,
                 // where it is the only source there is. Facts come from here first regardless;
                 // Steam still holds the Metacritic score and the controller-support flag.
-                var (elsewhere, serviceFacts) = lite
-                    ? (false, false)
+                var (elsewhere, serviceFacts, igdbVideo) = lite
+                    ? (false, false, (string?)null)
                     : await EnrichElsewhereAsync(g, facts, art, appId, platforms, filled, ct);
                 touched |= elsewhere;
 
                 // Steam runs after, as the fallback: it fills every art slot and every field the
                 // service left empty, and it always supplies controller support, which IGDB has
                 // no equivalent of.
-                if (appId is not null) touched |= await EnrichSteamAsync(g, appId, filled, serviceFacts, ct);
+                if (appId is not null) touched |= await EnrichSteamAsync(g, appId, filled, serviceFacts, lite, ct);
+
+                // The trailer, settled once both have spoken. Steam's is a file -- cacheable, no
+                // player chrome -- and it has already written itself above when it exists. IGDB's
+                // is a YouTube id and is only for the games Steam has nothing for: ROMs, store
+                // exclusives, anything the search did not find. One that IGDB has since dropped
+                // goes too, but only when IGDB actually answered.
+                if (g.TrailerUrl is null || IsYouTube(g.TrailerUrl))
+                {
+                    if (igdbVideo is not null) touched |= SetTrailer(g, "https://www.youtube.com/watch?v=" + igdbVideo);
+                    else if (serviceFacts) touched |= SetTrailer(g, null);
+                }
 
                 // The store's own art, last. Galaxy's GOG-hosted covers and the Microsoft Store's
                 // posters are proper box art, and for a game that is not on Steam and that the
@@ -245,8 +282,10 @@ public class MetadataService
                 {
                     g.MetadataFetched = DateTime.UtcNow;
                     g.MetadataVersion = FetchVersion;
+                    stamped++;
+                    unsaved = true;
                 }
-                if (touched) changed++;
+                if (touched) { changed++; unsaved = true; }
             }
             catch (OperationCanceledException) { break; }
             catch (Exception ex)
@@ -257,8 +296,8 @@ public class MetadataService
             }
         }
 
-        Log.Info($"Metadata: updated {changed} game(s)");
-        return changed;
+        Log.Info($"Metadata: updated {changed} game(s), stamped {stamped}");
+        return (changed, stamped);
     }
 
     private static string Describe(object? provider) => provider switch
@@ -356,10 +395,10 @@ public class MetadataService
     /// names a working header_image under store_item_assets, hashed per release.
     /// </summary>
     private async Task<bool> EnrichSteamAsync(Game g, string appId, HashSet<Slot> filled,
-        bool serviceAnswered, CancellationToken ct)
+        bool serviceAnswered, bool lite, CancellationToken ct)
     {
         await PaceStoreAsync(ct);
-        var (gotFacts, headerImage) = await FetchSteamFactsAsync(g, appId, serviceAnswered, ct);
+        var (gotFacts, headerImage) = await FetchSteamFactsAsync(g, appId, serviceAnswered, lite, ct);
         if (gotFacts && g.MetadataSource is null) g.MetadataSource = "steam";
 
         var gotArt = await FetchSteamArtAsync(g, appId, headerImage, filled, ct);
@@ -439,21 +478,15 @@ public class MetadataService
     /// <summary>Facts, plus the header image URL appdetails names -- the art step needs it as a
     /// fallback for apps that no longer publish to the legacy CDN paths.</summary>
     private async Task<(bool Ok, string? HeaderImage)> FetchSteamFactsAsync(Game g, string appId,
-        bool serviceAnswered, CancellationToken ct)
+        bool serviceAnswered, bool lite, CancellationToken ct)
     {
         // "ratings" is the one that carries the age boards, and it has to be asked for by name --
         // the filter list is exhaustive, so leaving it out drops the whole block silently.
-        var url = $"https://store.steampowered.com/api/appdetails?appids={appId}&l=english" +
-                  "&filters=basic,genres,metacritic,release_date,developers,publishers," +
-                  "controller_support,ratings";
-
-        using var res = await Http.GetAsync(url, ct);
-        if (!res.IsSuccessStatusCode) return (false, null);
-
-        using var doc = JsonDocument.Parse(await res.Content.ReadAsStringAsync(ct));
-        if (!doc.RootElement.TryGetProperty(appId, out var entry)) return (false, null);
-        if (!entry.TryGetProperty("success", out var ok) || !ok.GetBoolean()) return (false, null);
-        if (!entry.TryGetProperty("data", out var d)) return (false, null);
+        var details = await SteamAppDetailsAsync(appId,
+            "basic,genres,metacritic,release_date,developers,publishers,controller_support,ratings,movies,screenshots", ct);
+        if (details is null) return (false, null);
+        using var doc = details.Value.Doc;
+        var d = details.Value.Data;
 
         string? Str(string key) =>
             d.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
@@ -485,6 +518,32 @@ public class MetadataService
         if (g.EsrbRating is null && SteamEsrb(d) is { } esrb) g.EsrbRating = esrb;
         if (g.ContentDescriptors.Count == 0) g.ContentDescriptors = SteamDescriptors(d);
 
+        // The trailer, from the same call and whether or not the service answered: Steam's is the
+        // one worth having, a plain file with no player around it. A changed URL drops the cached
+        // file's name with it -- Steam re-cuts trailers now and then, and the name on disk is keyed
+        // on the URL it came from, so an old name would play an old cut. Steam saying "none" only
+        // takes away a Steam trailer: a YouTube one from IGDB is not Steam's to remove. Nothing is
+        // dropped for a probe that failed to answer: an outage is not "no trailer".
+        var (movies, sure) = await SteamMoviesAsync(d, onlyHighlight: lite, ct);
+        var trailer = movies.FirstOrDefault(m => m.Highlight).Url ?? movies.FirstOrDefault().Url;
+        if (sure)
+        {
+            if (trailer is not null) SetTrailer(g, trailer);
+            else if (IsSteamTrailer(g.TrailerUrl)) SetTrailer(g, null);
+        }
+
+        // The gallery: every film, then the screenshots. Steam's list wins over IGDB's whenever
+        // it has anything, and is left alone when it has nothing -- not for the lite pass, whose
+        // games have no page worth dressing yet.
+        if (!lite)
+        {
+            var media = movies
+                .Select(m => new MediaItem { Kind = "video", Url = m.Url!, Thumb = m.Thumb, Name = m.Name })
+                .ToList();
+            media.AddRange(SteamScreenshots(d));
+            if (media.Count > 0) g.Media = media;
+        }
+
         // The rest is Steam's only when the service did not answer at all. Keyed on that rather
         // than on whether each field happens to be empty: a field left over from a previous run is
         // also non-empty, and testing emptiness would make stale values impossible to correct.
@@ -509,6 +568,243 @@ public class MetadataService
         }
 
         return (true, Str("header_image"));
+    }
+
+    /// <summary>
+    /// One appdetails call: the app's `data` object, with the document that owns it (dispose it),
+    /// or null. Callers pace the store themselves.
+    ///
+    /// The answer is an object with one entry, and the entry is NOT reliably keyed by the app id
+    /// asked for: with `basic` in the filter list, an app that has DLC comes back keyed by one of
+    /// the DLC ids -- Hollow Knight under "916000", Portal 2 under "323180" -- with the right
+    /// steam_appid inside. Looked up by name, every game with DLC read as "not found" and got no
+    /// facts, no rating and no trailer. So the entry is taken by the id when it is there and as
+    /// the single entry otherwise, and the app id inside is checked instead.
+    /// </summary>
+    private static async Task<(JsonDocument Doc, JsonElement Data)?> SteamAppDetailsAsync(string appId, string filters, CancellationToken ct)
+    {
+        var url = $"https://store.steampowered.com/api/appdetails?appids={appId}&l=english&filters={filters}";
+        using var res = await Http.GetAsync(url, ct);
+        if (!res.IsSuccessStatusCode) return null;
+
+        var doc = JsonDocument.Parse(await res.Content.ReadAsStringAsync(ct));
+        try
+        {
+            if (doc.RootElement.ValueKind != JsonValueKind.Object) { doc.Dispose(); return null; }
+            JsonElement entry;
+            if (!doc.RootElement.TryGetProperty(appId, out entry))
+            {
+                var only = doc.RootElement.EnumerateObject().Select(p => (JsonElement?)p.Value).FirstOrDefault();
+                if (only is null) { doc.Dispose(); return null; }
+                entry = only.Value;
+            }
+            if (!entry.TryGetProperty("success", out var ok) || ok.ValueKind != JsonValueKind.True) { doc.Dispose(); return null; }
+            if (!entry.TryGetProperty("data", out var d) || d.ValueKind != JsonValueKind.Object) { doc.Dispose(); return null; }
+            if (JsonNum.Long(d, "steam_appid") is { } inside && inside.ToString() != appId)
+            {
+                Log.Info($"Metadata: appdetails for {appId} answered with app {inside}; ignored");
+                doc.Dispose();
+                return null;
+            }
+            return (doc, d);
+        }
+        catch { doc.Dispose(); throw; }
+    }
+
+    /// <summary>
+    /// The gallery for one game, on demand. The page asks for it when a game's page opens with
+    /// nothing in the strip: an uninstalled game got the lite pass, which stops at the trailer,
+    /// because the list rides in every state push and five hundred catalogue games' galleries
+    /// would be most of the payload -- so a gallery is fetched only for a game somebody opens.
+    /// Steam's page first (by app id, or by the same exact-title search the pass uses; never for
+    /// a ROM), IGDB for the rest. Returns true when the game now has one.
+    /// </summary>
+    public async Task<bool> FetchMediaAsync(Game g, AppSettings settings, CancellationToken ct = default)
+    {
+        if (g.Media.Count > 0) return false;
+
+        var appId = SteamAppId(g);
+        if (appId is null && !g.Emulated)
+        {
+            await PaceStoreAsync(ct);
+            appId = await new SteamSearchClient(Http).FindAppIdAsync(g.Title, ct);
+        }
+        if (appId is not null)
+        {
+            await PaceStoreAsync(ct);
+            var details = await SteamAppDetailsAsync(appId, "movies,screenshots", ct);
+            if (details is { } found)
+            {
+                using var doc = found.Doc;
+                var (movies, _) = await SteamMoviesAsync(found.Data, onlyHighlight: false, ct);
+                var media = movies
+                    .Select(m => new MediaItem { Kind = "video", Url = m.Url!, Thumb = m.Thumb, Name = m.Name })
+                    .ToList();
+                media.AddRange(SteamScreenshots(found.Data));
+                if (media.Count > 0) { g.Media = media; return true; }
+            }
+        }
+
+        IFactsProvider? facts = IgdbClient.IsConfigured(settings.IgdbClientId, settings.IgdbClientSecret)
+            ? new IgdbClient(Http, settings.IgdbClientId, settings.IgdbClientSecret)
+            : null;
+        var endpoint = string.IsNullOrWhiteSpace(settings.MetadataEndpoint) ? MetadataProxyClient.DefaultEndpoint : settings.MetadataEndpoint;
+        if (facts is null && MetadataProxyClient.IsConfigured(endpoint)) facts = new MetadataProxyClient(Http, endpoint);
+        if (facts is null) return false;
+
+        var platforms = g.Emulated ? EmulatedPlatforms.Find(g.PlatformId)?.IgdbIds : null;
+        var hit = await facts.FindAsync(g.Title, appId, platforms, ct);
+        if (hit is null) return false;
+        var fromIgdb = IgdbMedia(hit);
+        if (fromIgdb.Count == 0) return false;
+        g.Media = fromIgdb;
+        return true;
+    }
+
+    /// <summary>At most this many films and this many screenshots go into a gallery.</summary>
+    private const int MaxMovies = 6, MaxScreenshots = 12;
+
+    /// <summary>
+    /// The app's films, out of appdetails' `movies`, each as a URL a plain &lt;video&gt; can play:
+    /// (list, sure). `sure` is false when the CDN could not be asked about one of them, so the
+    /// caller keeps whatever trailer it had. With `onlyHighlight` only the store's headline movie
+    /// is resolved -- the lite pass has no gallery to fill and no reason to probe five films.
+    ///
+    /// Steam marks one movie per app as the highlight, the one the store page opens on. What an
+    /// entry carries has changed under us: it used to name webm and mp4 files at "480" and "max",
+    /// and since 2025 it names only DASH and HLS manifests, which a plain &lt;video&gt; cannot play.
+    /// The progressive files are still on the CDN, at a path keyed on the MOVIE id -- checked
+    /// Sept 2026 across nine games from Portal (2007) to Black Myth: Wukong -- so the URL is built
+    /// from the id and probed with a one-byte range request before it is believed. The probe is
+    /// what catches the one shape a missing file takes: a 200 with no body, which Portal 2's
+    /// oldest movie answers for movie_max.mp4 while movie480.mp4 is there. The legacy keys are
+    /// still honoured first when an entry has them. mp4 over webm because that is what every
+    /// decoder does in hardware, and the largest size first: this fills a television. http:// is
+    /// upgraded, since the page is served over https and the browser would refuse the mix.
+    /// </summary>
+    private static async Task<(List<(string? Url, string? Thumb, string? Name, bool Highlight)> Movies, bool Sure)>
+        SteamMoviesAsync(JsonElement data, bool onlyHighlight, CancellationToken ct)
+    {
+        var list = new List<(string? Url, string? Thumb, string? Name, bool Highlight)>();
+        if (!data.TryGetProperty("movies", out var movies) || movies.ValueKind != JsonValueKind.Array)
+            return (list, true);
+
+        var entries = movies.EnumerateArray().Where(m => m.ValueKind == JsonValueKind.Object).Take(MaxMovies).ToList();
+        if (entries.Count == 0) return (list, true);
+        if (onlyHighlight)
+        {
+            var pick = entries.FirstOrDefault(m => m.TryGetProperty("highlight", out var h) && h.ValueKind == JsonValueKind.True);
+            entries = new List<JsonElement> { pick.ValueKind == JsonValueKind.Object ? pick : entries[0] };
+        }
+
+        var sure = true;
+        foreach (var movie in entries)
+        {
+            var (url, reachable) = await SteamMovieUrlAsync(movie, ct);
+            if (!reachable) sure = false;
+            if (url is null) continue;
+            list.Add((url, StrOf(movie, "thumbnail") is { } t ? Https(t) : null, StrOf(movie, "name"),
+                movie.TryGetProperty("highlight", out var hl) && hl.ValueKind == JsonValueKind.True));
+        }
+        return (list, sure);
+    }
+
+    /// <summary>One movie's playable URL, or null; `Reachable` is false when the CDN did not answer.</summary>
+    private static async Task<(string? Url, bool Reachable)> SteamMovieUrlAsync(JsonElement movie, CancellationToken ct)
+    {
+        foreach (var (format, size) in new[] { ("mp4", "max"), ("mp4", "480"), ("webm", "max"), ("webm", "480") })
+        {
+            if (movie.TryGetProperty(format, out var f) && f.ValueKind == JsonValueKind.Object
+                && f.TryGetProperty(size, out var u) && u.ValueKind == JsonValueKind.String
+                && u.GetString() is { Length: > 0 } legacy)
+                return (Https(legacy), true);
+        }
+
+        var id = JsonNum.Long(movie, "id");
+        if (id is null) return (null, true);
+        var reachable = false;
+        foreach (var file in new[] { "movie_max.mp4", "movie480.mp4" })
+        {
+            var url = $"https://video.akamai.steamstatic.com/store_trailers/{id}/{file}";
+            var probe = await ProbeVideoAsync(url, ct);
+            if (probe is null) continue;        // could not ask
+            reachable = true;
+            if (probe == true) return (url, true);
+        }
+        return (null, reachable);
+    }
+
+    /// <summary>The store page's screenshots: the 1920x1080 file and its 600x338 thumbnail.</summary>
+    private static List<MediaItem> SteamScreenshots(JsonElement data)
+    {
+        var list = new List<MediaItem>();
+        if (!data.TryGetProperty("screenshots", out var shots) || shots.ValueKind != JsonValueKind.Array) return list;
+        foreach (var s in shots.EnumerateArray().Take(MaxScreenshots))
+        {
+            if (StrOf(s, "path_full") is not { } full) continue;
+            list.Add(new MediaItem { Kind = "image", Url = Https(full), Thumb = Https(StrOf(s, "path_thumbnail") ?? full) });
+        }
+        return list;
+    }
+
+    private static string? StrOf(JsonElement e, string key) =>
+        e.ValueKind == JsonValueKind.Object && e.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+
+    private static string Https(string url) =>
+        url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ? "https://" + url[7..] : url;
+
+    /// <summary>The gallery IGDB can offer: its videos (YouTube, with YouTube's own poster frame)
+    /// and its screenshots. Only the fallback for a game Steam has no page for.</summary>
+    private static List<MediaItem> IgdbMedia(IgdbGame hit)
+    {
+        var list = new List<MediaItem>();
+        foreach (var v in hit.Videos.Take(MaxMovies))
+            list.Add(new MediaItem
+            {
+                Kind = "video", Url = "https://www.youtube.com/watch?v=" + v.Id,
+                Thumb = $"https://i.ytimg.com/vi/{v.Id}/hqdefault.jpg", Name = v.Name,
+            });
+        foreach (var s in hit.Screenshots.Take(MaxScreenshots))
+            list.Add(new MediaItem { Kind = "image", Url = s, Thumb = s });
+        return list;
+    }
+
+    /// <summary>Points the game at a trailer, or at none. The cached copy's name goes with any
+    /// change, because it is keyed on the URL it was fetched from. Returns true when it changed.</summary>
+    private static bool SetTrailer(Game g, string? url)
+    {
+        if (url == g.TrailerUrl) return false;
+        g.TrailerUrl = url;
+        g.TrailerFile = null;
+        return true;
+    }
+
+    private static bool IsYouTube(string? url) =>
+        url is not null && Regex.IsMatch(url, @"^https?://(www\.)?(youtube\.com|youtu\.be)/", RegexOptions.IgnoreCase);
+
+    private static bool IsSteamTrailer(string? url) =>
+        url is not null && url.Contains("steamstatic.com/", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>True when the URL answers a range request with a slice of video, false when it
+    /// answers with something else (Steam's "missing" is a 200 with no body), null when the CDN
+    /// could not be reached at all.</summary>
+    private static async Task<bool?> ProbeVideoAsync(string url, CancellationToken ct)
+    {
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            req.Headers.Range = new System.Net.Http.Headers.RangeHeaderValue(0, 0);
+            using var res = await Http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+            if (res.StatusCode != HttpStatusCode.PartialContent) return false;
+            var type = res.Content.Headers.ContentType?.MediaType ?? "";
+            return type.StartsWith("video/", StringComparison.OrdinalIgnoreCase);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            Log.Info($"Metadata: trailer probe {url} failed: {ex.Message}");
+            return null;
+        }
     }
 
     /// <summary>
@@ -590,7 +886,8 @@ public class MetadataService
     ///
     /// Either half may be absent, in which case that half is simply missing and Steam fills it.
     /// </summary>
-    private async Task<(bool Touched, bool Facts)> EnrichElsewhereAsync(Game g,
+    /// <summary>The service's pass: (anything written, facts answered, IGDB's YouTube trailer id).</summary>
+    private async Task<(bool Touched, bool Facts, string? VideoId)> EnrichElsewhereAsync(Game g,
         IFactsProvider? facts, IArtProvider? art, string? appId, IReadOnlyList<int>? platforms,
         HashSet<Slot> filled, CancellationToken ct)
     {
@@ -614,6 +911,10 @@ public class MetadataService
                 // Metacritic would put one publication's name on another's number.
                 g.CriticSource = hit.CriticScore is null ? null : "IGDB critics";
                 g.MetadataSource = "igdb";
+                // The gallery, for a game Steam has no page for; Steam's replaces it when Steam
+                // runs after this and has anything of its own.
+                var media = IgdbMedia(hit);
+                if (media.Count > 0) g.Media = media;
                 factsHit = hit;
                 any = true;
                 gotFacts = true;
@@ -655,7 +956,7 @@ public class MetadataService
             }
         }
 
-        return (any, gotFacts);
+        return (any, gotFacts, factsHit?.VideoId);
     }
 
     // ---------- Art plumbing ----------

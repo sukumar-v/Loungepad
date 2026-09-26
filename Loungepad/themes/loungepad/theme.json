@@ -1,8 +1,8 @@
 {
-  "name": "Polish",
+  "name": "Loungepad",
   "author": "Loungepad",
-  "version": "3.7",
-  "description": "Full-bleed art, recents on a dock, the grid on the way down",
+  "version": "4.1",
+  "description": "Full-bleed art, recents in a row, the grid on the way down",
   "tokens": {
     "--bg": "#05070B",
     "--bg-deep": "#010204",
@@ -16,7 +16,7 @@
     {
       "id": "columns",
       "name": "Tiles across",
-      "hint": "How many tiles fit in a row of the grid. Fewer are larger; the dock's tiles match",
+      "hint": "How many tiles fit in a row of the grid. Fewer are larger; the recents row shows the same number",
       "type": "select",
       "options": ["5", "6", "7"],
       "labels": { "5": "5 · larger", "6": "6", "7": "7 · smaller" },
@@ -33,7 +33,7 @@
     {
       "id": "peek",
       "name": "Grid peek",
-      "hint": "How much of the grid shows under the dock while the art has the screen",
+      "hint": "How much of the grid shows under the recents while the art has the screen",
       "type": "slider",
       "min": 0,
       "max": 120,
@@ -51,7 +51,7 @@
     },
     {
       "id": "slide",
-      "name": "Dock slide",
+      "name": "Row slide",
       "hint": "How quickly the column moves between the art and the grid. Scaled by the animation speed like everything else",
       "type": "select",
       "options": ["Snappy", "Smooth", "Slow"],

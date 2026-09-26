@@ -71,7 +71,9 @@ public class ThemeService : IDisposable
     {
         var list = new List<ThemeInfo>
         {
-            new() { Id = "", Name = "Classic" },
+            // The built-in look, with no theme applied: portrait box art in rows, which is what
+            // the name says. It was "Classic" until the bundled theme took the app's own name.
+            new() { Id = "", Name = "Shelf" },
         };
 
         try
@@ -132,14 +134,15 @@ public class ThemeService : IDisposable
     /// already-installed copy up to date when the shipped one has moved on.
     ///
     /// This used to skip any folder that already existed, which quietly meant a bundled theme was
-    /// frozen at whatever shipped the day it was first installed: every later fix to Marquee --
+    /// frozen at whatever shipped the day it was first installed: every later fix to the bundled theme --
     /// tile art no longer cropped, the backdrop no longer blown up -- landed in the app and was
     /// never seen, because the copy being loaded was the old one on disk.
     ///
-    /// The version in theme.json is what decides. Same version, nothing happens. A different one
-    /// and the shipped files replace what is there -- but the whole folder is copied aside first,
-    /// so a theme someone has been editing is recoverable rather than gone. Delete a folder to get
-    /// the shipped version back cleanly.
+    /// What decides is a stamp of the shipped files, kept beside the installed copy (see
+    /// ShippedStamp). Same shipment, nothing happens. A changed one and the shipped files replace
+    /// what is there -- but the whole folder is copied aside first, so a theme someone has been
+    /// editing is recoverable rather than gone. Delete a folder to get the shipped version back
+    /// cleanly. The version in theme.json is only what the log and Settings show.
     /// </summary>
     /// <summary>
     /// Bundled themes that have been renamed, old id to new. The installed copy of the old one is
@@ -148,7 +151,7 @@ public class ThemeService : IDisposable
     /// the new id, so a user on the old one simply keeps their theme under its new name.
     /// </summary>
     public static readonly IReadOnlyDictionary<string, string> Renamed =
-        new Dictionary<string, string> { ["marquee"] = "polish" };
+        new Dictionary<string, string> { ["marquee"] = "loungepad", ["polish"] = "loungepad" };
 
     public static void SyncBuiltIn()
     {
@@ -172,23 +175,42 @@ public class ThemeService : IDisposable
             foreach (var dir in Directory.GetDirectories(src))
             {
                 var id = Path.GetFileName(dir);
+                // A build output folder is never cleaned: `dotnet build` and `dotnet publish` copy
+                // themes\** in and delete nothing, so a retired folder stays next to the exe for
+                // as long as the output folder lives. Installed from there, the old theme came
+                // straight back one line after it had been retired.
+                if (Renamed.ContainsKey(id))
+                {
+                    Log.Info($"Ignoring the retired theme folder '{id}' next to the exe");
+                    continue;
+                }
                 var dst = Path.Combine(Paths.ThemesDir, id);
+                var stamp = ShippedStamp(dir);
 
                 if (!Directory.Exists(dst))
                 {
                     CopyTheme(dir, dst);
+                    WriteStamp(dst, stamp);
                     Log.Info($"Installed the bundled theme '{id}'");
                     continue;
                 }
 
-                var shipped = VersionOf(dir);
-                var installed = VersionOf(dst);
-                if (shipped is null || installed == shipped) continue;
+                // Keyed on the shipped files themselves, not on the version in theme.json. The
+                // version was the key, and it takes a human to bump it: a day of stylesheet
+                // changes shipped under the same "4.0", every one of them was installed by
+                // nobody, and the launcher went on loading a copy made that morning. The stamp
+                // is a hash of what was shipped when the install was last synced, so an edit
+                // to the installed copy is left alone until the shipped theme actually changes
+                // -- exactly what the version was for, without anyone having to remember.
+                if (ReadStamp(dst) == stamp) continue;
 
+                var installed = VersionOf(dst);
                 var backup = BackUp(dst, id, installed);
                 CopyTheme(dir, dst);
+                WriteStamp(dst, stamp);
                 Log.Info($"Updated the bundled theme '{id}' from {installed ?? "an unversioned copy"} " +
-                         $"to {shipped}" + (backup is null ? "" : $"; the old copy is in {backup}"));
+                         $"to {VersionOf(dir) ?? "an unversioned copy"} (its shipped files changed)"
+                         + (backup is null ? "" : $"; the old copy is in {backup}"));
             }
         }
         catch (Exception ex)
@@ -232,10 +254,41 @@ public class ThemeService : IDisposable
         return clean;
     }
 
-    /// <summary>A folder name List() would accept, which is what a theme id is; "" is Classic.</summary>
+    /// <summary>A folder name List() would accept, which is what a theme id is; "" is Shelf.</summary>
     private static bool IsThemeId(string id) =>
         id.Length <= 64 && !id.StartsWith('.') && !id.Contains("..")
         && !id.Any(c => c is '/' or '\\' or '?' or '#' or ':');
+
+    /// <summary>Beside the installed files: the stamp of the shipped set they were last synced from.</summary>
+    private const string StampFile = ".shipped";
+
+    /// <summary>A hash over a shipped theme folder's files -- names and contents, in name order --
+    /// so any change to any of them reads as a new shipment.</summary>
+    private static string ShippedStamp(string dir)
+    {
+        using var sha = System.Security.Cryptography.SHA1.Create();
+        foreach (var f in Directory.GetFiles(dir).OrderBy(f => f, StringComparer.OrdinalIgnoreCase))
+        {
+            var name = System.Text.Encoding.UTF8.GetBytes(Path.GetFileName(f).ToLowerInvariant() + "\n");
+            sha.TransformBlock(name, 0, name.Length, null, 0);
+            var bytes = File.ReadAllBytes(f);
+            sha.TransformBlock(bytes, 0, bytes.Length, null, 0);
+        }
+        sha.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
+        return Convert.ToHexString(sha.Hash!).ToLowerInvariant();
+    }
+
+    private static string? ReadStamp(string dst)
+    {
+        try { var p = Path.Combine(dst, StampFile); return File.Exists(p) ? File.ReadAllText(p).Trim() : null; }
+        catch { return null; }
+    }
+
+    private static void WriteStamp(string dst, string stamp)
+    {
+        try { File.WriteAllText(Path.Combine(dst, StampFile), stamp); }
+        catch (Exception ex) { Log.Info($"Could not stamp the installed theme in {dst}: {ex.Message}"); }
+    }
 
     /// <summary>The version string from a theme folder's manifest, or null if it has none.</summary>
     private static string? VersionOf(string dir)

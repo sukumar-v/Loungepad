@@ -39,6 +39,8 @@ public class UiBridge
     /// <summary>The mod manager side: Vortex, through the bridge extension. Built here because it
     /// reads the Vortex path setting.</summary>
     private readonly ModService _mods;
+    /// <summary>Trailers kept on disk after their first play. See TrailerCache.</summary>
+    private readonly TrailerCache _trailers;
     /// <summary>The Mods screen's request in flight. Opening another game's list cancels the last
     /// one, so a slow Vortex start cannot answer for a screen that has since moved on.</summary>
     private CancellationTokenSource? _modsCts;
@@ -50,6 +52,9 @@ public class UiBridge
     private System.Threading.Timer? _manifestTimer;
     private bool _scanning;
     private bool _enriching;
+    /// <summary>Games whose gallery is being fetched on demand, so a page reopened while one is in
+    /// flight does not ask twice.</summary>
+    private readonly HashSet<string> _mediaFetching = new();
 
     public UiBridge(MainWindow window, CoreWebView2 core, SettingsStore settings, LibraryStore library,
         DisplayService displays, LibraryScanner scanner, GameLaunchService launcher, VirtualKeyboardService keyboard, WindowService windows, ThemeService themes,
@@ -74,6 +79,12 @@ public class UiBridge
                  })
             _accounts[account.Store] = account;
         _mods = new ModService(() => _settings.Settings.VortexPath);
+        _trailers = new TrailerCache(_library, () => _settings.Settings.CacheTrailers);
+        // A lighter message than a state push: the page swaps one field on one game and the
+        // library is not rebuilt under somebody who is browsing it.
+        _trailers.Cached += g => _window.Dispatcher.BeginInvoke(() =>
+            Push(new { type = "trailerCached", id = g.Id, file = g.TrailerFile }));
+        _trailers.Prune();
         StartInstallWatcher();
     }
 
@@ -472,6 +483,41 @@ public class UiBridge
                 game.Favorite = !game.Favorite;
                 _library.Save();
                 PushState();
+                break;
+            }
+
+            // The page is about to play a trailer. Nothing is answered here: it streams from the
+            // URL it already has, and the copy that lands on disk is announced as trailerCached.
+            case "cacheTrailer":
+            {
+                var id = msg["id"]?.GetValue<string>();
+                var game = id is null ? null : _library.Find(id);
+                if (game is not null) _trailers.Request(game);
+                break;
+            }
+
+            // A game's page opened with nothing in its gallery. Fetched for that one game, in the
+            // background, and answered as one `media` message -- not a state push, which would
+            // rebuild the library under a page that is up.
+            case "fetchMedia":
+            {
+                var id = msg["id"]?.GetValue<string>();
+                var game = id is null ? null : _library.Find(id);
+                if (game is null) break;
+                if (game.Media.Count > 0) { Push(new { type = "media", id = game.Id, media = game.Media }); break; }
+                lock (_mediaFetching) { if (!_mediaFetching.Add(game.Id)) break; }
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        var found = await _metadata.FetchMediaAsync(game, _settings.Settings);
+                        if (!found) return;
+                        _library.Save();
+                        _ = _window.Dispatcher.BeginInvoke(() => Push(new { type = "media", id = game.Id, media = game.Media }));
+                    }
+                    catch (Exception ex) { Log.Info($"Metadata: gallery for {game.Title} failed: {ex.Message}"); }
+                    finally { lock (_mediaFetching) _mediaFetching.Remove(game.Id); }
+                });
                 break;
             }
 
@@ -1120,6 +1166,7 @@ public class UiBridge
         t.IgdbClientSecret = s.IgdbClientSecret.Trim();
         t.SteamGridDbKey = s.SteamGridDbKey.Trim();
         t.MetadataEndpoint = s.MetadataEndpoint.Trim();
+        t.CacheTrailers = s.CacheTrailers;
         t.SteamShowOwned = s.SteamShowOwned;
         t.SteamApiKey = (s.SteamApiKey ?? "").Trim();
         t.GamePassCatalog = s.GamePassCatalog;
@@ -1402,11 +1449,20 @@ public class UiBridge
         try
         {
             // A snapshot: a rescan may replace the library while this is in flight, and its merge
-            // carries across whatever has been written by then.
-            var changed = await _metadata.EnrichAsync(_library.Games.ToList(), _settings.Settings);
-            if (changed == 0) return;
+            // carries across whatever has been written by then. Every twenty seconds the pass hands
+            // over what it has so far: saved, so closing the launcher mid-pass keeps it, and pushed,
+            // so the tiles fill in as it goes rather than all at once half an hour later.
+            void Checkpoint()
+            {
+                _library.Save();
+                _ = _window.Dispatcher.BeginInvoke(PushState);
+            }
+            var (changed, stamped) = await _metadata.EnrichAsync(_library.Games.ToList(), _settings.Settings, Checkpoint);
+            // The stamps are saved even when nothing new was found: unsaved, a game with no
+            // metadata anywhere was looked up again on every single start.
+            if (changed == 0 && stamped == 0) return;
             _library.Save();
-            _ = _window.Dispatcher.BeginInvoke(PushState);
+            if (changed > 0) _ = _window.Dispatcher.BeginInvoke(PushState);
         }
         catch (Exception ex) { Log.Info($"Metadata pass failed: {ex.Message}"); }
         finally { _enriching = false; }

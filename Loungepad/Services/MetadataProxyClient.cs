@@ -101,6 +101,17 @@ public class MetadataProxyClient : IFactsProvider, IArtProvider
                 // into the art slots without IgdbClient.ImageUrl in between.
                 CoverUrl = Str(root, "cover"),
                 ArtworkUrl = Str(root, "artwork"),
+                VideoId = Str(root, "video"),
+                Videos = root.TryGetProperty("videos", out var vids) && vids.ValueKind == JsonValueKind.Array
+                    ? vids.EnumerateArray()
+                        .Where(v => v.ValueKind == JsonValueKind.Object && Str(v, "id") is { Length: > 0 })
+                        .Select(v => new IgdbVideo(Str(v, "id")!, Str(v, "name")))
+                        .ToList()
+                    : new List<IgdbVideo>(),
+                Screenshots = root.TryGetProperty("screenshots", out var shots) && shots.ValueKind == JsonValueKind.Array
+                    ? shots.EnumerateArray().Where(s => s.ValueKind == JsonValueKind.String)
+                        .Select(s => s.GetString()!).Where(s => s.Length > 0).ToList()
+                    : new List<string>(),
             };
         }
     }

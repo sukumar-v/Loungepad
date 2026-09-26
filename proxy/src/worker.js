@@ -26,7 +26,7 @@
 const CACHE_TTL = 60 * 60 * 24 * 30;   // 30 days. Game facts do not change; art rarely does.
 const MISS_TTL = 60 * 60 * 24 * 3;     // Remember "no match" too, but re-check sooner: a game may
                                        // be added to a database after we first ask for it.
-const SCHEMA = "v5";                   // bump when a fetcher changes shape or its picking
+const SCHEMA = "v7";                   // bump when a fetcher changes shape or its picking (v7: the gallery)
                                        // rules; it is part of every cache key, so stale answers retire
 const RATE_LIMIT = 240;                // requests per IP per window
 const RATE_WINDOW = 60;                // seconds
@@ -136,7 +136,7 @@ function normalise(title) {
 const BASE_FIELDS =
   "name, summary, first_release_date, aggregated_rating, category, " +
   "follows, total_rating_count, version_parent, " +
-  "genres.name, cover.image_id, artworks.image_id, " +
+  "genres.name, cover.image_id, artworks.image_id, videos.name, videos.video_id, screenshots.image_id, " +
   "involved_companies.developer, involved_companies.publisher, involved_companies.company.name";
 
 /*
@@ -248,7 +248,30 @@ function shape(hit) {
     cover: hit.cover && hit.cover.image_id ? igdbImage(hit.cover.image_id, "cover_big_2x") : null,
     artwork: hit.artworks && hit.artworks.length && hit.artworks[0].image_id
       ? igdbImage(hit.artworks[0].image_id, "1080p") : null,
+    video: videoOf(hit),
+    // The gallery on the game's page: every video, and the screenshots at 1080p.
+    videos: (hit.videos || [])
+      .filter(v => v && typeof v.video_id === "string" && v.video_id)
+      .slice(0, 6)
+      .map(v => ({ id: v.video_id, name: v.name || null })),
+    screenshots: (hit.screenshots || [])
+      .filter(s => s && s.image_id)
+      .slice(0, 12)
+      .map(s => igdbImage(s.image_id, "1080p")),
   };
+}
+
+/*
+ * The YouTube id of the game's trailer, or null. IGDB keeps videos as YouTube ids -- there is no
+ * file to serve -- so the launcher plays them through YouTube's embedded player, and only for
+ * games Steam has no trailer of its own for. The one named as a trailer is preferred; failing
+ * that, the first listed.
+ */
+function videoOf(hit) {
+  const list = (hit.videos || []).filter(v => v && typeof v.video_id === "string" && v.video_id);
+  if (!list.length) return null;
+  const named = list.find(v => /trailer/i.test(v.name || ""));
+  return (named || list[0]).video_id;
 }
 
 /*

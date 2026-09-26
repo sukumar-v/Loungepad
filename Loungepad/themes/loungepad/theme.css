@@ -1,13 +1,19 @@
 /* ============================================================================
-   Polish — a tvOS-shaped library
+   Loungepad — the launcher's own look
    ============================================================================
 
    THE IDEA. The library has two states and slides between them:
 
-     resting   the focused game's art fills the screen unblurred, its title sits
-               low on the left, the recents ride a dock near the bottom, and the
-               first row of the grid peeks under it.
-     browsing  the dock is at the top and the grid owns the screen.
+     resting   the focused game's art fills the screen unblurred -- and its trailer,
+               once the highlight has rested on it -- its title sits low on the left,
+               the recents sit in a row near the bottom, and the first row of the grid
+               peeks under it.
+     browsing  the row is at the top and the grid owns the screen.
+
+   The recents used to ride a frosted tray, and the tray is what made the whole screen
+   read as somebody else's television. Gone: the tiles sit straight on the art, held
+   by the scrim, and the row shows exactly as many games as the grid has columns, so
+   there is nothing to scroll and no sliver of a next tile to explain.
 
    HOW, WITH NO SCRIPT. A theme is markup and CSS; it cannot run anything. The
    state comes from data-focus-region, which the app writes on the screen element
@@ -37,6 +43,12 @@
    the root and as data-theme-labels / data-theme-dim-art on <html>. Every fallback below is the
    option's default, so the theme reads the same with or without them.
 
+   TRAILERS. The app plays the focused game's trailer into #backdrop's <video> once the highlight
+   has rested for three seconds (Settings → Appearance, under this theme's options). It is the
+   screen at rest and a darkened wash behind the grid, the same two treatments the art gets. A
+   theme that wants no film at all in some state writes `--trailers: none` on #backdrop and the
+   app stops it; this one does not.
+
    MOTION. Every duration here is multiplied by --motion, the app's animation setting, so "off"
    and the speed slider reach this theme as well; a bare 460ms would ignore both.
    ============================================================================ */
@@ -58,7 +70,9 @@
   --view-h: 912px;    /* 1080 less the chrome and the legend */
   --hero-h: calc(var(--view-h) - var(--dock-h) - var(--peek));
   --gutter: 80px;
-  --radius: 16px;
+  /* Tighter than the 16px it was. A big radius on a small landscape tile is the app-icon look;
+     a picture with its corners barely taken off reads as a picture. */
+  --radius: 10px;
   --ease: cubic-bezier(0.22, 0.86, 0.24, 1);
   --slide: calc(var(--tv-slide, 460ms) * var(--motion, 1));   /* the column's move, the one option about timing */
 
@@ -80,7 +94,7 @@ body.no-legend .tv-foot { display: none; }
    it. Scoped to the library being the active screen so the detail view and the
    collections screen keep their own treatment.
 
-   Shaped the way tvOS shapes it: the art hangs from the top at its own aspect,
+   The art hangs from the top at its own aspect,
    fitted to the full width, and dissolves into the background before the dock
    rather than being stretched behind it.
 
@@ -93,7 +107,7 @@ body.no-legend .tv-foot { display: none; }
    from the other direction. 3.1 is the fallback because most of these are Steam's. */
 
 /* The screen is filled with the art twice over: once blurred and scaled past the edges, which
-   is the bed, and once sharp at its own aspect on top. It is the trick tvOS and Plex both use,
+   is the bed, and once sharp at its own aspect on top. It is the trick every media shelf uses,
    and it is the only way to have both -- a 3.1:1 hero stretched to cover a 16:9 screen shows the
    middle 57% of it and nothing else, which is what "zoomed in" was. The bed is blurred, so its
    resolution does not matter; the part you actually look at is never scaled up.
@@ -102,7 +116,7 @@ body.no-legend .tv-foot { display: none; }
 
    :is(.active, .closing, .under) rather than .active: the library loses .active the instant a
    detail page or Settings opens and is .under for as long as one is up, and on .active alone the
-   sharp hero snapped to Classic's blurred wash the moment a page opened, then transitioned back
+   sharp hero snapped to Shelf's blurred wash the moment a page opened, then transitioned back
    from it when the page closed -- the "background goes up and settles down" jump. */
 body:has(#screen-library:is(.active, .closing, .under)) #backdrop::before {
   content: "";
@@ -114,7 +128,7 @@ body:has(#screen-library:is(.active, .closing, .under)) #backdrop::before {
 }
 body:has(#screen-library:is(.active, .closing, .under)) #backdrop.has-art::before { opacity: 1; }
 /* Browsing, the bed is all that is left of the art, so it comes up as the sharp layer goes. */
-body:has(#screen-library:is(.active, .closing, .under)[data-focus-region="grid"]) #backdrop.has-art::before { opacity: 0.85; }
+body:not([data-view="detail"]):has(#screen-library:is(.active, .closing, .under)[data-focus-region="grid"]) #backdrop.has-art::before { opacity: 0.85; }
 
 body:has(#screen-library:is(.active, .closing, .under)) .bd {
   top: 0; left: 0; right: 0; bottom: auto;
@@ -155,40 +169,68 @@ body:has(#screen-library:is(.active, .closing, .under)) .bd.visible { opacity: 1
 /* Browsing: the art recedes to a wash so 20-odd tiles are not competing with it.
    Scaled up rather than just blurred -- the element stops at 58% and blur would
    otherwise bleed a soft edge along the sides and top. */
-body:has(#screen-library:is(.active, .closing, .under)[data-focus-region="grid"]) .bd {
+body:not([data-view="detail"]):has(#screen-library:is(.active, .closing, .under)[data-focus-region="grid"]) .bd {
   filter: blur(28px) saturate(1.1) brightness(0.5);
   transform: scale(1.08);
 }
-body:has(#screen-library:is(.active, .closing, .under)[data-focus-region="grid"]) .bd.visible { opacity: 0.8; }
+body:not([data-view="detail"]):has(#screen-library:is(.active, .closing, .under)[data-focus-region="grid"]) .bd.visible { opacity: 0.8; }
 /* "Dim the art while browsing" off: the picture stays close to itself once the highlight is in the
    grid -- softened a touch so the tiles still read against it, but neither darkened nor washed. */
-html[data-theme-dim-art="false"] body:has(#screen-library:is(.active, .closing, .under)[data-focus-region="grid"]) .bd {
+html[data-theme-dim-art="false"] body:not([data-view="detail"]):has(#screen-library:is(.active, .closing, .under)[data-focus-region="grid"]) .bd {
   filter: blur(8px) saturate(1.1) brightness(0.82);
   transform: scale(1.04);
 }
-html[data-theme-dim-art="false"] body:has(#screen-library:is(.active, .closing, .under)[data-focus-region="grid"]) .bd.visible { opacity: 1; }
+html[data-theme-dim-art="false"] body:not([data-view="detail"]):has(#screen-library:is(.active, .closing, .under)[data-focus-region="grid"]) .bd.visible { opacity: 1; }
 
-/* Scrims: one under the chrome, one under the dock, one behind the title. Without
-   these the readability of every label depends on what the art happens to be. */
+/* The trailer. The app fades it up over the still (see #backdrop video in app.css); at rest it
+   is the screen, sharp and whole, under the same scrim that holds the title and the row. Shelf
+   dims it to a wash behind its grid; here there is nothing in front of it to protect.
+   Browsing, it stays on behind the tiles the way the art does: darkened under the grid's scrim,
+   but not blurred -- a blur on every frame of a 1080p film is the one thing on this screen that
+   could cost a small box its frame rate, and the scrim already does most of the work. */
+/* This theme wants the film behind its library; the app's default is none (Shelf has no film). */
+body:has(#screen-library:is(.active, .closing, .under)) #backdrop { --trailers: auto; }
+body:has(#screen-library:is(.active, .closing, .under)) #backdrop :is(video, .trailer-yt) {
+  transition: opacity calc(600ms * var(--motion, 1)) linear,
+              filter calc(380ms * var(--motion, 1)) var(--ease);
+}
+body:has(#screen-library:is(.active, .closing, .under)) #backdrop :is(video, .trailer-yt).playing { opacity: 1; filter: none; }
+body:not([data-view="detail"]):has(#screen-library:is(.active, .closing, .under)[data-focus-region="grid"]) #backdrop :is(video, .trailer-yt).playing {
+  /* Darkened, never see-through: at less than full opacity the dimmed still underneath showed
+     through the film and the two read as one blurred picture. */
+  opacity: 1; filter: brightness(0.45) saturate(1.1);
+}
+/* "Dim the art while browsing" off: the film keeps most of its light, like the art. */
+html[data-theme-dim-art="false"] body:not([data-view="detail"]):has(#screen-library:is(.active, .closing, .under)[data-focus-region="grid"]) #backdrop :is(video, .trailer-yt).playing {
+  opacity: 1; filter: brightness(0.8);
+}
+
+/* Scrims: a light one under the chrome, a firm one from where the recents row starts, and a pool
+   behind the title. Without these the readability of every label depends on what the art or the
+   film happens to be doing.
+
+   Placed to leave the picture alone. The bottom one used to climb to 62% of the screen at half
+   strength, and the left one ran the full height of the screen at two thirds: together they took
+   most of the light out of a trailer that is supposed to be the point. Now the bottom band is
+   flat and heavy where the tiles sit (the row starts 40% up), goes to nothing just above them, and
+   the title has an ellipse of shade of its own at the bottom left rather than a wall down the
+   whole side. Above the row the film is untouched. */
 body:has(#screen-library:is(.active, .closing, .under)) #backdrop::after {
   content: "";
   position: absolute; inset: 0; pointer-events: none;
   transition: background calc(380ms * var(--motion, 1)) var(--ease);
-  /* The bottom used to go fully opaque, because there was nothing behind it. There is now --
-     the blurred bed reaches the whole screen -- so it only has to carry the dock and the title,
-     not hide an empty half. */
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--bg) 62%, transparent) 0, transparent 20%),
-    linear-gradient(0deg, color-mix(in srgb, var(--bg) 84%, transparent) 0, color-mix(in srgb, var(--bg) 52%, transparent) 30%, transparent 62%),
-    linear-gradient(90deg, color-mix(in srgb, var(--bg) 66%, transparent) 0, transparent 44%);
+    linear-gradient(180deg, color-mix(in srgb, var(--bg) 50%, transparent) 0, transparent 14%),
+    linear-gradient(0deg, color-mix(in srgb, var(--bg) 90%, transparent) 0, color-mix(in srgb, var(--bg) 80%, transparent) 22%, color-mix(in srgb, var(--bg) 55%, transparent) 32%, transparent 40%),
+    radial-gradient(ellipse 46% 34% at 8% 66%, color-mix(in srgb, var(--bg) 72%, transparent) 0, color-mix(in srgb, var(--bg) 30%, transparent) 60%, transparent 100%);
 }
-body:has(#screen-library:is(.active, .closing, .under)[data-focus-region="grid"]) #backdrop::after {
+body:not([data-view="detail"]):has(#screen-library:is(.active, .closing, .under)[data-focus-region="grid"]) #backdrop::after {
   background: linear-gradient(180deg,
     color-mix(in srgb, var(--bg) 90%, transparent),
     color-mix(in srgb, var(--bg) 82%, transparent));
 }
 /* With the art kept bright the scrim only has to hold the chrome and the dock, not hide a picture. */
-html[data-theme-dim-art="false"] body:has(#screen-library:is(.active, .closing, .under)[data-focus-region="grid"]) #backdrop::after {
+html[data-theme-dim-art="false"] body:not([data-view="detail"]):has(#screen-library:is(.active, .closing, .under)[data-focus-region="grid"]) #backdrop::after {
   background: linear-gradient(180deg,
     color-mix(in srgb, var(--bg) 46%, transparent),
     color-mix(in srgb, var(--bg) 58%, transparent));
@@ -263,36 +305,32 @@ html[data-theme-dim-art="false"] body:has(#screen-library:is(.active, .closing, 
   box-shadow: 0 0 0 3px var(--accent), 0 20px 50px -16px color-mix(in srgb, var(--bg-deep) 90%, transparent);
 }
 
-/* ------------------------------------------------------------------- dock --
-   The recents, on a frosted tray. Its inner padding is set so the tiles line up
-   with the grid's left gutter, which is what makes the two states feel like one
-   layout rather than two screens. */
+/* -------------------------------------------------------------------- row --
+   The recents, straight on the art. No tray: the tiles line up with the grid's gutter, the
+   scrim underneath holds them, and the same box in both states is what makes the slide read
+   as one layout moving rather than two screens swapping. The padding is what the tray used to
+   have, kept so the geometry at the top of this file still adds up. */
 
 .tv-dock {
   height: var(--dock-h);
-  margin: 0 calc(var(--gutter) - 24px);
-  padding: 22px 24px;
-  border-radius: 34px;
-  background: color-mix(in srgb, var(--edge) 6%, transparent);
-  border: 1px solid color-mix(in srgb, var(--edge) 9%, transparent);
-  backdrop-filter: blur(26px) saturate(1.5);
-  transition: background calc(380ms * var(--motion, 1)) var(--ease),
-              border-color calc(380ms * var(--motion, 1)) var(--ease);
+  margin: 0 var(--gutter);
+  padding: 22px 0;
+  /* Browsing, the row parks at the top of the grid and the art behind it is a wash, so a
+     hairline underneath is the one thing saying "these are the recent ones, the rest is below".
+     Transparent at rest: over the art it would be a line drawn across the picture. */
+  border-bottom: 1px solid transparent;
+  transition: border-color calc(380ms * var(--motion, 1)) var(--ease);
 }
-/* Once the art is gone the tray has nothing to sit against, so it has to carry its own edge --
-   otherwise the recents read as just another grid row. */
 #screen-library[data-focus-region="grid"] .tv-dock {
-  background: color-mix(in srgb, var(--edge) 13%, transparent);
-  border-color: color-mix(in srgb, var(--edge) 16%, transparent);
+  border-bottom-color: color-mix(in srgb, var(--edge) 12%, transparent);
 }
 
 .tv-dock .lib-section { gap: 0; }
 .tv-dock .section-head { display: none; }
-/* The carousel is deliberately overflow:visible so a focused tile's lift and glow are not
-   clipped -- but that also lets the tiles beyond the sixth spill out past the tray and off
-   the stage. Clip the sides only, with enough slack for the lift, and the overflow becomes
-   the sliver of a seventh tile that says there is more to the right. */
-.tv-dock .continue-row { padding: 0; margin: 0; clip-path: inset(-44px -20px); }
+/* Exactly one row of tiles, as many as the grid has columns. The app reads --continue-max off
+   this element (see continueMax in app.js) and lists that many recents, so there is nothing
+   past the right edge to scroll to and nothing to clip. */
+.tv-dock .continue-row { padding: 0; margin: 0; --continue-max: var(--cols); }
 .tv-dock .continue-track { gap: var(--gap); }
 
 /* ------------------------------------------------------------------ shelf --
@@ -339,7 +377,7 @@ html[data-theme-dim-art="false"] body:has(#screen-library:is(.active, .closing, 
 .tv-dock .zone-dim .cont-meta { opacity: 1; }
 
 /* ------------------------------------------------------------------- tiles --
-   One shape for both the dock and the grid, which is the tvOS trick: nothing
+   One shape for both the row and the grid, so that nothing
    about a tile says which row it is in, so the dock reads as part of the grid
    when it lands on top of it.
 
@@ -468,6 +506,21 @@ html[data-theme-labels="true"] .tv-tile.focused .tv-name { opacity: 1; }
 /* The buttons are drawn as svg for whatever pad is in hand (see btnIcon in app.js); a theme
    only ever sets their height. */
 .tv .legend .btn-icon { height: 34px; }
+
+/* ------------------------------------------------------------ game page --
+   Drawn over the backdrop, not over a copy of it. The app's page is an opaque sheet with the hero
+   hung at the top -- the same picture, in the same place, which is what made a fade between the
+   two look still. But a film is not still: the page's own player had to start again from the
+   same second, and for the beat before its first frame the still showed through. So here the
+   sheet is transparent, its own art is off, and the page says so with --trailer-surface, which
+   the app reads to keep the film where it is -- in #backdrop -- rather than start one on the page.
+   The library's tiles fade out under it (app.css), the column fades in, and the picture behind
+   both never changes. The resting scrim comes off, because the page has shades of its own, and
+   the grid's dimming is held off while the page is up (the :not([data-view="detail"]) on those
+   rules) -- the highlight is still in the grid underneath, but nothing is browsing. */
+#screen-detail { --trailer-surface: backdrop; background: transparent; }
+#screen-detail .detail-art { display: none; }
+body[data-view="detail"]:has(#screen-library.under) #backdrop::after { background: none; }
 
 /* ---------------------------------------------------------- other screens --
    Not relaid out -- only softened to match, so moving between them is not a jolt. */

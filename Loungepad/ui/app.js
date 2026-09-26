@@ -176,6 +176,7 @@ function repaintFocus() {
   // comes first for the same reason it does there -- it sits on top of everything else, and
   // repainting the library underneath it would leave the visible menu unhighlighted.
   if (radialSub) renderRadialSub();
+  else if (mediaView) renderMediaViewFoot();   // nothing to highlight; the pad is the only thing drawn
   else if (filterOpen) renderFilter();
   else if (gameMenu) renderGameMenu();
   else if (collectOpen) renderCollect();
@@ -487,8 +488,9 @@ window.addEventListener("wheel", (e) => {
 /*
  * The right stick sends real wheel events, and a wheel goes to whatever is under the cursor. In
  * pad mode the cursor is hidden and could be anywhere -- over the Continue row, the top bar, the
- * backdrop -- and in Classic the grid is only the bottom half of the screen, so most of the time
- * the stick scrolled nothing at all. Polish got away with it because its grid fills the screen.
+ * backdrop -- and in Shelf the grid is only the bottom half of the screen, so most of the time
+ * the stick scrolled nothing at all. The Loungepad theme got away with it because its grid fills
+ * the screen.
  *
  * So a vertical wheel that lands on nothing that can scroll that way is handed to the list the
  * user is actually in: the open menu, else the scroller around the highlight, else the screen's
@@ -639,16 +641,21 @@ function paintNav() {
      would be unusable. */
   const region = cur ? cur.closest("[data-region]") : null;
   // The search box sits in the top bar, but what it is ABOUT is the grid: while a search is being
-  // typed or is standing, say "grid" so a theme lays the results out in view. Polish would
-  // otherwise slide back to its resting hero and leave the results as a peek under the dock.
+  // typed or is standing, say "grid" so a theme lays the results out in view. The Loungepad theme
+  // would otherwise slide back to its resting hero and leave the results as a peek under the row.
   if (cur && cur.id === "libSearch" && (searchOpen || F.search)) scope.dataset.focusRegion = "grid";
   else if (region) scope.dataset.focusRegion = region.dataset.region;
   else delete scope.dataset.focusRegion;
 
   updateContinueScroll(true);
   const g = focusedGame();
-  scheduleBackdrop(g);
+  // On a game's page the gallery has a say: a highlighted screenshot is the picture behind the
+  // page, in the backdrop (Loungepad) and in the page's own art (Shelf) both.
+  const override = focusedMediaOverride();
+  if (view === "detail") { updateMediaScroll(); updateDetailArt(g, override); renderDetailLegend(g); }
+  scheduleBackdrop(g, override);
   updateFocusDetail(g);
+  syncTrailers();
 }
 
 /* Keep the opt-in focus-detail region filled. Cheap enough to do on every move -- it is a
@@ -788,10 +795,13 @@ function applyTheme() {
    what a theme has not set falls back to the app-wide fields in settings.json -- which is where a
    value from before this lived, so an accent chosen last year still shows. "Restore <theme>'s
    defaults" empties that one bag and nothing else. */
-const LOOK_IDS = { accent: "accent", hideHints: "hide-hints", animations: "animations", speed: "animation-speed" };
+const LOOK_IDS = {
+  accent: "accent", hideHints: "hide-hints", animations: "animations", speed: "animation-speed",
+  trailers: "trailers", trailerSound: "trailer-sound",
+};
 const RESERVED_IDS = new Set(Object.values(LOOK_IDS));
 
-/** The current theme's bag of values, made on demand when `create` is set. Classic's id is "". */
+/** The current theme's bag of values, made on demand when `create` is set. Shelf's id is "". */
 function lookBag(create) {
   const s = S.settings;
   if (!s) return null;
@@ -821,6 +831,25 @@ function lookSpeed() {
     : s && typeof s.animationSpeed === "number" && isFinite(s.animationSpeed) ? s.animationSpeed : 1;
   return Math.max(0.5, Math.min(2, speed));
 }
+/* Where a trailer may play. Per theme like the rest of the look, because how much of the screen
+   a film gets is a fact about the layout the theme draws. No app-level fallback: there was no
+   such setting before this, so the default is the default. */
+const TRAILER_MODES = ["all", "detail", "off"];
+const TRAILER_LABELS = { all: "Library and details", detail: "Details page only", off: "Off" };
+/** Whether the theme in force lets a film play behind its library: `--trailers` on #backdrop is
+    anything but `none`. Shelf leaves the app's default, none, so its library is never touched. */
+function libraryCanHostTrailers() {
+  const bd = $("backdrop");
+  return !!bd && getComputedStyle(bd).getPropertyValue("--trailers").trim() !== "none";
+}
+/** The modes this theme can offer: the library option only where the theme can draw it. */
+function trailerModes() { return libraryCanHostTrailers() ? TRAILER_MODES : TRAILER_MODES.slice(1); }
+function lookTrailers() {
+  const v = lookGet(LOOK_IDS.trailers);
+  const mode = TRAILER_MODES.includes(v) ? v : "all";
+  return mode === "all" && !libraryCanHostTrailers() ? "detail" : mode;
+}
+function lookTrailerSound() { return lookGet(LOOK_IDS.trailerSound) !== false; }
 
 /* ---- animation ----
    One number on the root, --motion, that every duration in app.css (and a well-behaved theme.css)
@@ -1086,7 +1115,10 @@ function renderLibraryLegend() {
 
 function renderDetailLegend(g) {
   const el = $("detailFoot");
-  if (el) el.innerHTML = foot(["A", "Select"], ["B", "Back"], ["X", g && g.favorite ? "Unfavorite" : "Favorite"]);
+  if (!el) return;
+  // On the gallery A opens the item; everywhere else on the page it presses what is under it.
+  const onStrip = !!focusedMediaItem();
+  el.innerHTML = foot(["A", onStrip ? "View" : "Select"], ["B", "Back"], ["X", g && g.favorite ? "Unfavorite" : "Favorite"]);
 }
 
 // A click on a legend entry is that button. Delegated, because footers are rebuilt constantly.
@@ -1250,8 +1282,10 @@ function motionLeave(el) {
   el.__leave = setTimeout(done, ms + 30);
 }
 
-function showOverlay(id) { motionEnter($(id)); }
-function hideOverlay(id) { motionLeave($(id)); }
+// The trailer check is deferred a tick: the flag that says an overlay is open (overlayOpen) is
+// set by the caller around this call, in either order, and a tick later it is settled.
+function showOverlay(id) { motionEnter($(id)); setTimeout(syncTrailers, 0); }
+function hideOverlay(id) { motionLeave($(id)); setTimeout(syncTrailers, 0); }
 
 /** Replay a one-shot animation class on an element whose content has just been replaced. */
 function pulse(el, cls = "swap") {
@@ -1303,6 +1337,23 @@ function backdropUrls(g) {
 function backdropUrl(g) { return backdropUrls(g)[0] || null; }
 
 function logoUrl(g) { return artUrl(g.logoFile); }
+
+/* The trailer: the copy on this PC once the host has one, the store's stream until then. The
+   cached name lives under a different top-level folder from the art because it is a different
+   kind of thing -- gigabytes of video under Local, not covers in a roaming profile -- and the
+   host routes the two by that first path segment. */
+function trailerUrl(g) {
+  if (!g) return null;
+  if (g.trailerFile) return HOST ? `https://loungepad.data/trailers/${encodeURIComponent(g.trailerFile)}` : g.trailerFile;
+  return g.trailerUrl || null;
+}
+
+/* Which film a URL IS, as opposed to where it is being read from. The game's own trailer can be
+   read from the store or from the cached copy, and a cached copy landing changes the address
+   and not the film, so a player showing it must not restart. Any other film is its address. */
+function filmKey(g, url) {
+  return g && (url === trailerUrl(g) || url === g.trailerUrl) ? "trailer:" + (g.trailerUrl || url) : url;
+}
 
 /* Art the user picked by hand. The host writes it under a "custom_" name precisely so nothing
    else can ever write that name, which makes the prefix a reliable answer to "did somebody
@@ -1614,16 +1665,18 @@ let bdCurrentKey = null;
 const BACKDROP_SETTLE_MS = 170;
 let bdDeferTimer = null, lastPaintAt = -Infinity;
 
-function scheduleBackdrop(g) {
+function scheduleBackdrop(g, override) {
   const now = performance.now();
   const fast = now - lastPaintAt < BACKDROP_SETTLE_MS;
   lastPaintAt = now;
-  if (!fast) { setBackdrop(g); return; }
+  if (!fast) { setBackdrop(g, override); return; }
   clearTimeout(bdDeferTimer);
-  bdDeferTimer = setTimeout(() => { bdDeferTimer = null; setBackdrop(focusedGame()); }, BACKDROP_SETTLE_MS);
+  bdDeferTimer = setTimeout(() => { bdDeferTimer = null; setBackdrop(focusedGame(), focusedMediaOverride()); }, BACKDROP_SETTLE_MS);
 }
 
-function setBackdrop(game) {
+/** `override` is a picture to hang instead of the game's own -- a screenshot highlighted in the
+    page's gallery -- with the game's own pictures behind it as the fallbacks. */
+function setBackdrop(game, override) {
   // A direct call -- the detail page and Settings clear it -- wins over one still waiting.
   clearTimeout(bdDeferTimer);
   bdDeferTimer = null;
@@ -1632,7 +1685,7 @@ function setBackdrop(game) {
   // under it, which left the element pointing at a file that no longer existed and the screen
   // black until you moved. The id is still in the key so two games that share a fallback picture
   // do not confuse it.
-  const url = game && backdropUrl(game);
+  const url = game && (override || backdropUrl(game));
   const key = game ? game.id + "|" + (url || "") : "none";
   if (key === bdCurrentKey) return;
   bdCurrentKey = key;
@@ -1671,7 +1724,7 @@ function setBackdrop(game) {
   // file that is no longer on disk -- a download rejected for being the wrong shape is deleted,
   // and the field that pointed at it is not always cleared in the same pass -- and one stale name
   // should cost that picture, not the whole backdrop.
-  const candidates = backdropUrls(game);
+  const candidates = override ? [override, ...backdropUrls(game)] : backdropUrls(game);
   const tryFrom = (i) => {
     if (i >= candidates.length) { flat(); show(null); return; }
     queueArt(candidates[i], (src, w, h) => {
@@ -1684,6 +1737,349 @@ function setBackdrop(game) {
   };
   tryFrom(0);
 }
+
+/* ============================== trailers ==============================
+   The focused game's trailer, played once the highlight has rested on it.
+
+   Two surfaces, one clock. On the library the film goes into #backdrop, over the still art, after
+   TRAILER_START_MS of the highlight sitting on one game -- but only under a theme that allows it
+   (`--trailers` on #backdrop, none by default: Shelf's library stays as it was). The game's page
+   has a player of its own under its shades, unless the theme draws the page over the backdrop and
+   says so with `--trailer-surface: backdrop` on #screen-detail (Loungepad does): then the page is
+   just another view of the same #backdrop film, which never stops, and the change of screen is
+   the content crossfading over it. That is the only way to get a transition with no restart at
+   all -- a <video> cannot change parents without a hiccup and an iframe cannot change them at all.
+
+   Two kinds of source, one player. Steam's trailer is a plain mp4 URL: streamed from the store the
+   first time, asked to be cached at the same moment (cacheTrailer), and played off disk once
+   trailerCached has arrived; a cached file that fails to load -- evicted under us -- falls back to
+   the stream, once. IGDB's is a YouTube id, because IGDB keeps no files, so it plays through
+   YouTube's embedded player, chromeless, and is never cached. The URL says which it is.
+
+   A theme that does not want the library film in some state writes `--trailers: none` on
+   #backdrop, and the property is read here before every start. A menu over the library -- Y, the
+   filter, the collection and manage sheets, a confirm -- leaves the film running underneath: it is
+   what the menu is about. Typing a search, the Mods screen, the guide, a game running and the
+   window being hidden stop it. syncTrailers is the one decision point and it is idempotent on
+   purpose: every focus repaint and every screen change calls it.
+
+   Nothing loops. A trailer ends on its title card and the still comes back; a screen restarting
+   the same fifteen seconds is a screensaver, not a library. Moving away and back plays it again. */
+const TRAILER_PRELOAD_MS = 1200;   // src assigned, so buffering gets a head start on the clock
+const TRAILER_START_MS = 3000;     // and then it plays
+const TRAILER_VOLUME = 0.7;        // trailers are mastered loud, and this is a living room
+
+function isYouTubeUrl(url) { return /^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\//i.test(url || ""); }
+function youTubeId(url) {
+  const m = /[?&]v=([\w-]{6,})/.exec(url) || /youtu\.be\/([\w-]{6,})/.exec(url) || /\/embed\/([\w-]{6,})/.exec(url);
+  return m ? m[1] : null;
+}
+
+/** The length of an element's first transition, motion setting included. 0 when animations are off. */
+function fadeMs(el) {
+  const d = getComputedStyle(el).transitionDuration.split(",")[0].trim();
+  const n = parseFloat(d);
+  return !isFinite(n) ? 0 : d.endsWith("ms") ? n : n * 1000;
+}
+
+/* YouTube's player API, fetched on the first YouTube trailer and never before: it is a script off
+   youtube.com, and a library with only Steam games should not load it at all. */
+let ytApi = null;
+function youTubeApi() {
+  if (ytApi) return ytApi;
+  ytApi = new Promise((resolve, reject) => {
+    if (window.YT && window.YT.Player) { resolve(window.YT); return; }
+    const prev = window.onYouTubeIframeAPIReady;
+    window.onYouTubeIframeAPIReady = () => { if (prev) prev(); resolve(window.YT); };
+    const s = document.createElement("script");
+    s.src = "https://www.youtube.com/iframe_api";
+    s.onerror = () => { ytApi = null; reject(new Error("YouTube player unavailable")); };
+    document.head.appendChild(s);
+  });
+  return ytApi;
+}
+
+/* The two ways a film is shown, behind one small interface: load(url, at), play(), pause(),
+   unload(), position(), setSound(on), loaded(), and `el`, the element that carries .playing. */
+function videoBackend(el, on) {
+  let wired = false;
+  function wire() {
+    if (wired) return;
+    wired = true;
+    el.addEventListener("playing", () => on.playing());
+    el.addEventListener("ended", () => on.ended());
+    el.addEventListener("error", () => on.error());
+  }
+  return {
+    el,
+    load(url) {
+      wire();
+      if (el.getAttribute("src") !== url) { el.preload = "auto"; el.src = url; el.load(); }
+    },
+    play() { const p = el.play(); if (p && p.catch) p.catch(() => { /* refused: the still stays */ }); },
+    // quiet() is what a stop does on the way out; pause() and resume() are the viewer's.
+    quiet() { try { el.pause(); } catch (e) { /* not playing */ } },
+    pause() { try { el.pause(); } catch (e) { /* not playing */ } },
+    resume() { const p = el.play(); if (p && p.catch) p.catch(() => {}); },
+    paused() { return el.paused; },
+    seek(d) { try { el.currentTime = Math.max(0, Math.min(isFinite(el.duration) ? el.duration : 0, el.currentTime + d)); } catch (e) { /* not seekable */ } },
+    duration() { return isFinite(el.duration) ? el.duration : 0; },
+    // Only once the fade is done: a <video> with no source draws a black box, and a black box
+    // fading out is exactly the flash this is trying not to have.
+    unload() { el.removeAttribute("src"); el.load(); },
+    reload() { el.load(); },
+    position() { return el.currentTime || 0; },
+    setSound(sound) { el.muted = !sound; el.volume = TRAILER_VOLUME; },
+    loaded() { return !!el.getAttribute("src"); },
+  };
+}
+
+/* YouTube's player is not a <video>, and it dresses its film: a large play button until the
+   first frame, a play/pause bezel in the middle as it starts, a title bar and a cards button
+   along the top, captions when it feels like it, and a grid of suggested videos over the last
+   frame. None of that is a trailer. What the embed allows is taken (controls off, keyboard off,
+   annotations off), and the rest is worked around here: the fade-in waits YT_SHOW_DELAY_MS after
+   playback starts so the button and the bezel have gone before the frame is shown; the captions
+   module is unloaded on every start, which is the one way to keep them off; the film is cut
+   YT_END_MARGIN_S before its end, so the end screen is drawn behind a wrapper already at zero;
+   and the frame is overscanned (.trailer-yt in app.css) so the chrome bands at the top and the
+   bottom fall outside the box. A stop mutes rather than pauses, because a paused embed shows
+   the button again; the frame keeps moving under its own fade and is stopped after it. */
+const YT_SHOW_DELAY_MS = 900;
+const YT_END_MARGIN_S = 1.2;
+
+function youTubeBackend(hostId, wrap, on) {
+  let player = null, ready = null, videoId = null, sound = true;
+  let showTimer = null, endWatch = null;
+  const hideCaptions = (p) => {
+    try { p.unloadModule("captions"); } catch (e) { /* older player */ }
+    try { p.unloadModule("cc"); } catch (e) { /* older player */ }
+  };
+  const stopWatching = () => { clearTimeout(showTimer); showTimer = null; clearInterval(endWatch); endWatch = null; };
+  const create = () => ready || (ready = youTubeApi().then(YT => new Promise(resolve => {
+    player = new YT.Player(hostId, {
+      width: "100%", height: "100%",
+      playerVars: {
+        controls: 0, disablekb: 1, fs: 0, iv_load_policy: 3, modestbranding: 1, rel: 0,
+        playsinline: 1, autoplay: 0, cc_load_policy: 0, hl: "en", origin: location.origin,
+      },
+      events: {
+        onReady: () => { hideCaptions(player); resolve(player); },
+        onStateChange: (e) => {
+          if (e.data === YT.PlayerState.PLAYING) {
+            hideCaptions(player);
+            stopWatching();
+            showTimer = setTimeout(() => { showTimer = null; on.playing(); }, YT_SHOW_DELAY_MS);
+            endWatch = setInterval(() => {
+              let d = 0, t = 0;
+              try { d = player.getDuration() || 0; t = player.getCurrentTime() || 0; } catch (err) { return; }
+              if (d > 0 && t >= d - YT_END_MARGIN_S) { stopWatching(); on.ended(); }
+            }, 250);
+          } else if (e.data === YT.PlayerState.ENDED) {
+            stopWatching();
+            on.ended();
+          } else if (e.data === YT.PlayerState.PAUSED || e.data === YT.PlayerState.UNSTARTED) {
+            stopWatching();
+          }
+        },
+        onError: () => { stopWatching(); on.error(); },
+      },
+    });
+  })));
+  const applySound = (p) => { if (sound) p.unMute(); else p.mute(); p.setVolume(Math.round(TRAILER_VOLUME * 100)); };
+  return {
+    el: wrap,
+    load(url) {
+      const id = youTubeId(url);
+      create().then(p => {
+        applySound(p);
+        if (videoId === id) return;
+        videoId = id;
+        // Cued rather than loaded: loading plays at once, and the clock has not run yet.
+        p.cueVideoById(id);
+      }).catch(() => on.error());
+    },
+    play() { create().then(p => { applySound(p); p.playVideo(); }).catch(() => { /* no player */ }); },
+    // A stop is silence, not a pause: the frame goes on moving under the fade and is stopped
+    // after it, because a paused embed puts YouTube's button back. The viewer's pause is a real
+    // one, and the button it brings is the price of the user asking for a pause.
+    quiet() { stopWatching(); if (player) try { player.mute(); } catch (e) { /* not ready */ } },
+    pause() { if (player) try { player.pauseVideo(); } catch (e) { /* not ready */ } },
+    resume() { if (player) try { player.playVideo(); } catch (e) { /* not ready */ } },
+    paused() { try { return !player || player.getPlayerState() !== 1 && player.getPlayerState() !== 3; } catch (e) { return true; } },
+    seek(d) { if (player) try { player.seekTo(Math.max(0, (player.getCurrentTime() || 0) + d), true); } catch (e) { /* not ready */ } },
+    duration() { try { return player ? player.getDuration() || 0 : 0; } catch (e) { return 0; } },
+    unload() { stopWatching(); videoId = null; if (player) try { player.stopVideo(); } catch (e) { /* not ready */ } },
+    reload() { /* a YouTube error is a verdict on the video, not the line; nothing to retry */ },
+    position() { try { return player ? player.getCurrentTime() || 0 : 0; } catch (e) { return 0; } },
+    setSound(s) { sound = s; if (player) try { applySound(player); } catch (e) { /* not ready */ } },
+    loaded() { return !!videoId; },
+  };
+}
+
+function makeTrailerPlayer(videoId, ytHostId, ytWrapId) {
+  let game = null;          // the game on the clock or playing
+  let armedKey = null;      // which film it is (filmKey), so a changed film is noticed
+  let backend = null;       // which of the two is showing it
+  let endedKey = null;      // the film that ran to the end and should not restart
+  let timers = [];
+  let unloadTimer = null;
+  let fallingBack = false;
+  let video = null, yt = null;
+
+  const on = {
+    playing: () => { if (game && backend) backend.el.classList.add("playing"); },
+    ended: () => { endedKey = game ? armedKey : null; stop(); },
+    error: () => {
+      if (!game) return;
+      // A cached copy that is no longer there (evicted, or the folder cleared by hand). Straight
+      // to the stream, once; the host re-downloads on the next cacheTrailer.
+      if (backend === video && !fallingBack && game.trailerUrl && game.trailerFile) {
+        fallingBack = true;
+        game.trailerFile = null;
+        backend.load(game.trailerUrl);
+        backend.play();
+        return;
+      }
+      // A stream the CDN dropped on the first fetch -- Steam's does, now and then -- gets one
+      // more go a moment later, on the same source.
+      if (backend === video && !retried) {
+        retried = true;
+        const g = game, b = backend;
+        timers.push(setTimeout(() => { if (game === g && backend === b) { b.reload(); b.play(); } }, 1500));
+        return;
+      }
+      // Nothing left to try right now -- a YouTube video that will not embed, a stream that is
+      // gone. The still stays, and the same film is not asked again for a while: not on every
+      // repaint, which would hammer a dead link, and not never, because a closed connection is
+      // usually a closed connection and not a verdict on the film.
+      failed = { key: armedKey, at: performance.now() };
+      stop();
+    },
+  };
+  let failed = null, retried = false;
+  const TRAILER_RETRY_MS = 30000;
+  function backendFor(url) {
+    if (isYouTubeUrl(url)) return yt || (yt = youTubeBackend(ytHostId, $(ytWrapId), on));
+    return video || (video = videoBackend($(videoId), on));
+  }
+  function clearTimers() { timers.forEach(clearTimeout); timers = []; }
+
+  /** Take the film down: fade, pause, and drop the source once it is out of sight. */
+  function stop() {
+    if (!game && !timers.length) return;
+    clearTimers();
+    const b = backend;
+    game = null;
+    backend = null;
+    fallingBack = false;
+    if (!b) return;
+    b.el.classList.remove("playing");
+    b.quiet();
+    clearTimeout(unloadTimer);
+    unloadTimer = setTimeout(() => b.unload(), fadeMs(b.el) + 40);
+  }
+
+  /**
+   * Put a film on the clock. The same film again is a no-op, so a repaint never resets it; a
+   * different film for the same game starts over. `delay` is how long the highlight has to rest
+   * before it plays (the page's 3 s by default; the gallery's short beat; 0 for the viewer, which
+   * plays at once), and `again` lets the viewer replay a film that ended or failed.
+   */
+  function arm(g, url, opts = {}) {
+    if (!url) { stop(); return; }
+    const key = filmKey(g, url);
+    if (game && game.id === g.id && armedKey === key) return;
+    if (opts.again) { if (endedKey === key) endedKey = null; if (failed && failed.key === key) failed = null; }
+    if (endedKey === key) return;
+    if (failed && failed.key === key && performance.now() - failed.at < TRAILER_RETRY_MS) return;
+    stop();
+    endedKey = null;
+    retried = false;
+    game = g;
+    armedKey = key;
+    backend = backendFor(url);
+    // The old film may still be fading on this element; its unload would take the new source
+    // with it, and the fade can outlast the preload delay, so the new source waits for it.
+    clearTimeout(unloadTimer);
+    backend.setSound(lookTrailerSound());
+    const begin = () => {
+      backend.load(url);
+      // Only the game's own trailer is kept on disk; the rest of a gallery streams every time.
+      if (key.startsWith("trailer:") && !isYouTubeUrl(url)) send({ cmd: "cacheTrailer", id: g.id });
+    };
+    const delay = opts.delay === undefined ? TRAILER_START_MS : opts.delay;
+    if (delay <= 0) { begin(); backend.play(); return; }
+    const preloadAt = Math.max(Math.min(TRAILER_PRELOAD_MS, delay), fadeMs(backend.el) + 80);
+    timers.push(setTimeout(begin, preloadAt));
+    timers.push(setTimeout(() => { if (game === g && backend && backend.loaded()) backend.play(); },
+      Math.max(delay, preloadAt + 200)));
+  }
+
+  // The viewer's controls. Each is a question or an order to whichever backend has the film.
+  function pause() { if (backend) backend.pause(); }
+  function resume() { if (backend) backend.resume(); }
+  function paused() { return backend ? backend.paused() : true; }
+  function seek(d) { if (backend) backend.seek(d); }
+  function position() { return backend ? backend.position() : 0; }
+  function duration() { return backend ? backend.duration() : 0; }
+  function active() { return !!game; }
+
+  return { arm, stop, pause, resume, paused, seek, position, duration, active };
+}
+
+const libraryTrailer = makeTrailerPlayer("bdVideo", "bdYtHost", "bdYt");
+const detailTrailer = makeTrailerPlayer("detailVideo", "detailYtHost", "detailYt");
+const viewerTrailer = makeTrailerPlayer("mediaViewVideo", "mediaViewYtHost", "mediaViewYt");
+
+/** Which surface should be showing which film right now, and make it so. */
+function syncTrailers() {
+  const mode = lookTrailers();
+  // Nothing plays anywhere behind a game, in a hidden window or under the text field. The option
+  // and the screens that are not about a game only silence the films the page plays on its own;
+  // the viewer's film was asked for, and plays.
+  const hard = S.gameRunning || overlayMode || document.visibilityState !== "visible" || inputOpen;
+  const quiet = hard || mode === "off" || !!modsState || guideOpen || !!mediaView;
+
+  const inBackdrop = libraryCanHostTrailers();
+  let lib = null, det = null, full = null;
+  if (!quiet && view === "library" && mode === "all" && inBackdrop && !searchOpen) {
+    // The library's own highlight, asked for by scope: with a menu up the active scope is the
+    // menu, whose rows are not games, and asking it would stop the film the moment Y was pressed.
+    const el = focusEl(document.getElementById("screen-library"));
+    const g = el && el.dataset.gameId ? gameById(el.dataset.gameId) : null;
+    const url = g ? trailerUrl(g) : null;
+    if (url) lib = { g, url };
+  } else if (!quiet && view === "detail") {
+    const g = gameById(detailGameId);
+    if (g) {
+      // The strip decides: a highlighted film plays after a short beat (it was chosen), a
+      // highlighted picture shows and no film runs, and off the strip the page plays its trailer.
+      const item = focusedMediaItem();
+      const url = item ? (item.kind === "video" ? item.url : null) : trailerUrl(g);
+      if (url) {
+        // A page the theme draws over the backdrop keeps the film there: the same player, the
+        // same film, and arm() on the film already showing is a no-op, so nothing flickers.
+        const page = $("screen-detail");
+        const shared = inBackdrop && !!page
+          && getComputedStyle(page).getPropertyValue("--trailer-surface").trim() === "backdrop";
+        const plan = { g, url, delay: item ? GALLERY_DELAY_MS : undefined };
+        if (shared) lib = plan; else det = plan;
+      }
+    }
+  }
+  if (!hard && mediaView && view === "detail") {
+    const g = gameById(detailGameId), item = mediaViewItems()[mediaView.idx];
+    if (g && item && item.kind === "video") full = { g, url: item.url, delay: 0 };
+  }
+
+  if (lib) libraryTrailer.arm(lib.g, lib.url, lib); else libraryTrailer.stop();
+  if (det) detailTrailer.arm(det.g, det.url, det); else detailTrailer.stop();
+  if (full) viewerTrailer.arm(full.g, full.url, full); else viewerTrailer.stop();
+}
+
+// The window going away -- parked behind a game, or hidden by the host -- and coming back.
+document.addEventListener("visibilitychange", () => syncTrailers());
 
 /* ============================== tab bars ============================== */
 
@@ -1957,6 +2353,17 @@ function preferEdition(g) {
    before there are two tiles to measure. */
 const CONTINUE_MAX = 12;
 const CONT_STEP = 328;
+
+/* How many recents the row shows. The built-in row is a carousel and takes twelve; a theme that
+   lays them out with nowhere to scroll to says how many it has room for with `--continue-max` on
+   the row (the Loungepad theme ties it to its column count, so the row is always exactly full).
+   Read off the computed style, so it follows the theme's own options without the app knowing
+   what they are. */
+function continueMax() {
+  const row = $("continueRow");
+  const v = row ? parseInt(getComputedStyle(row).getPropertyValue("--continue-max"), 10) : NaN;
+  return Number.isFinite(v) && v > 0 ? Math.min(v, CONTINUE_MAX) : CONTINUE_MAX;
+}
 const CONT_VIEWPORT = 1760;
 let contScroll = 0;   // index of the leftmost visible tile
 
@@ -2020,7 +2427,7 @@ function updateContinueScroll(follow) {
 let hWheelAccum = 0;
 
 function overlayOpen() {
-  return inputOpen || filterOpen || !!gameMenu || collectOpen || manageOpen || !!choiceState || !!modsState || !!confirmState || guideOpen;
+  return inputOpen || filterOpen || !!gameMenu || collectOpen || manageOpen || !!choiceState || !!modsState || !!confirmState || guideOpen || !!mediaView;
 }
 
 window.addEventListener("wheel", (e) => {
@@ -2067,7 +2474,7 @@ function libraryData() {
   const cont = collapseEditions(base.filter(g => g.lastPlayed && g.installed))
     .map(x => x.rep)
     .sort((a, b) => new Date(b.lastPlayed) - new Date(a.lastPlayed))
-    .slice(0, CONTINUE_MAX);
+    .slice(0, continueMax());
 
   // The "add a game" tile always trails the grid so it's reachable without a menu.
   const items = [...sortGames(filtered), { __add: true }];
@@ -2603,13 +3010,11 @@ function renderDetail() {
     ? (canInstall(g) ? "Install" : "Not installed")
     : (g.playtimeMinutes > 0 ? "Continue" : "Play");
 
-  const art = $("detailArt");
-  art.className = "detail-art";
-  art.innerHTML = "";
-  art.style.background = "";
-  // "cover" on purpose: the box is cut to this picture's own aspect (see --art-aspect and
-  // .detail-art), so there is nothing left for cover to crop, and scenery must never letterbox.
-  applyArt(g, art, backdropUrl(g), "cover");
+  // The gallery under the blurb, then the art: the page's own, or the screenshot the gallery's
+  // highlight is on. Rebuilt on every push, the strip keeps its place by focus key like the grid.
+  renderDetailMedia(g);
+  detailArtUrl = null;
+  updateDetailArt(g, focusedMediaOverride());
 
   document.querySelectorAll("#detailActions .pill-btn").forEach(el => {
     el.onmouseenter = () => { if (hoverEnabled()) { setFocusEl(el); paintNav(); } };
@@ -2617,6 +3022,242 @@ function renderDetail() {
   });
 
   updateDetailFocus();
+  syncTrailers();
+}
+
+/* ============================== the gallery ==============================
+   The store page's films and pictures, in a strip under the blurb on the game's page: the
+   trailer first (the film the page plays on its own), then every other film and every
+   screenshot Steam or IGDB lists for it. Walking along the strip changes the picture behind
+   the page -- a film plays after a short beat, a screenshot hangs where the hero would -- and
+   A opens the highlighted one whole, in a viewer of its own with playback under the pad. */
+const GALLERY_DELAY_MS = 700;      // a film highlighted in the strip starts after this, not the 3 s
+const MEDIA_ITEM_W = 168, MEDIA_GAP = 12, MEDIA_STRIP_W = 900;   // as .media-item / .media-strip
+
+function youTubeThumb(url) {
+  const id = isYouTubeUrl(url) ? youTubeId(url) : null;
+  return id ? `https://i.ytimg.com/vi/${id}/hqdefault.jpg` : null;
+}
+
+/** The strip's items for a game, trailer first. Empty for a game with nothing. */
+function detailMediaItems(g) {
+  if (!g) return [];
+  const items = [];
+  const media = Array.isArray(g.media) ? g.media : [];
+  const t = trailerUrl(g);
+  if (t) {
+    const own = media.find(m => m && m.kind === "video" && m.url === g.trailerUrl);
+    items.push({ kind: "video", url: t, thumb: (own && own.thumb) || youTubeThumb(t) || bannerUrl(g), name: (own && own.name) || "Trailer" });
+  }
+  for (const m of media) {
+    if (!m || !m.url) continue;
+    if (m.kind === "video" && m.url === g.trailerUrl) continue;   // the trailer is item 0 already
+    items.push({ kind: m.kind === "video" ? "video" : "image", url: m.url, thumb: m.thumb || m.url, name: m.name || null });
+  }
+  return items;
+}
+
+/** The strip item under the highlight, or null when the highlight is elsewhere on the page. */
+function focusedMediaItem() {
+  if (view !== "detail" || mediaView) return null;
+  const el = focusEl(document.getElementById("screen-detail"));
+  if (!el || el.dataset.mediaIndex === undefined) return null;
+  return detailMediaItems(gameById(detailGameId))[parseInt(el.dataset.mediaIndex, 10)] || null;
+}
+
+/** The screenshot to hang behind the page instead of the game's own art, or null. */
+function focusedMediaOverride() {
+  const item = focusedMediaItem();
+  return item && item.kind === "image" ? item.url : null;
+}
+
+let mediaScroll = 0;   // index of the strip's leftmost visible item
+
+/* A page that opens with nothing in its gallery asks the host for one, once per game per
+   session: the pass fills galleries for installed games only, so this is how an uninstalled
+   game's page gets its pictures. The answer is a `media` message. */
+const mediaAsked = new Set();
+function requestMedia(g) {
+  if (!g || (Array.isArray(g.media) && g.media.length) || mediaAsked.has(g.id)) return;
+  mediaAsked.add(g.id);
+  send({ cmd: "fetchMedia", id: g.id });
+}
+
+function renderDetailMedia(g) {
+  const strip = $("detailMedia"), track = $("detailMediaTrack");
+  if (!strip || !track) return;
+  requestMedia(g);
+  const items = detailMediaItems(g);
+  strip.hidden = items.length === 0;
+  track.innerHTML = "";
+  items.forEach((item, i) => {
+    const el = document.createElement("div");
+    el.className = "media-item" + (item.kind === "video" ? " is-video" : "");
+    el.dataset.focusable = "";
+    el.dataset.focusKey = "media:" + i;
+    el.dataset.mediaIndex = i;
+    const thumb = document.createElement("div");
+    thumb.className = "media-thumb";
+    thumb.style.backgroundImage = `url('${item.thumb}')`;
+    el.appendChild(thumb);
+    if (item.kind === "video")
+      el.insertAdjacentHTML("beforeend", '<span class="media-play"><svg viewBox="0 0 12 12"><path d="M2 1.5v9l8-4.5z"/></svg></span>');
+    el.addEventListener("mouseenter", () => { if (hoverEnabled()) { setFocusEl(el); paintNav(); } });
+    el.addEventListener("click", () => { setFocusEl(el); paintNav(); openMediaView(i); });
+    track.appendChild(el);
+  });
+  updateMediaScroll();
+}
+
+/* Slide the strip the least it needs to keep the highlighted item on screen -- with a tile of
+   context on any side that has more, so the highlight is never on the edge tile that carries the
+   "more this way" shade, and mark those edge tiles. */
+function updateMediaScroll() {
+  const track = $("detailMediaTrack"), strip = $("detailMedia");
+  if (!track || !strip) return;
+  const n = track.children.length;
+  const perView = Math.max(1, Math.floor((MEDIA_STRIP_W + MEDIA_GAP) / (MEDIA_ITEM_W + MEDIA_GAP)));
+  const last = Math.max(0, n - perView);
+  const el = focusEl(document.getElementById("screen-detail"));
+  const i = el && el.dataset.mediaIndex !== undefined ? parseInt(el.dataset.mediaIndex, 10) : null;
+  if (i !== null && perView > 2) {
+    const lo = mediaScroll + (mediaScroll > 0 ? 1 : 0);
+    const hi = mediaScroll + perView - 1 - (mediaScroll + perView < n ? 1 : 0);
+    if (i < lo) mediaScroll = Math.max(0, i - 1);
+    else if (i > hi) mediaScroll = Math.min(last, i - perView + 2);
+  } else if (i !== null) {
+    if (i < mediaScroll) mediaScroll = i;
+    else if (i > mediaScroll + perView - 1) mediaScroll = i - perView + 1;
+  }
+  mediaScroll = Math.max(0, Math.min(mediaScroll, last));
+  track.style.transform = `translateX(${-mediaScroll * (MEDIA_ITEM_W + MEDIA_GAP)}px)`;
+  const moreLeft = mediaScroll > 0, moreRight = mediaScroll + perView < n;
+  strip.classList.toggle("more-left", moreLeft);
+  strip.classList.toggle("more-right", moreRight);
+  [...track.children].forEach((tile, k) => {
+    tile.classList.toggle("edge-left", moreLeft && k === mediaScroll);
+    tile.classList.toggle("edge-right", moreRight && k === mediaScroll + perView - 1);
+  });
+}
+
+/* The page's own art -- Shelf's opaque page hangs the hero at the top; Loungepad hides this and
+   shows the backdrop through. It follows the strip: a highlighted screenshot takes the hero's
+   place. Applied only on a change, because this runs on every repaint. */
+let detailArtUrl = null;
+function updateDetailArt(g, override) {
+  const art = $("detailArt");
+  if (!art || !g) return;
+  const url = override || backdropUrl(g);
+  if (url === detailArtUrl) return;
+  detailArtUrl = url;
+  art.className = "detail-art";
+  art.innerHTML = "";
+  art.style.background = "";
+  // "cover" on purpose: the box is cut to this picture's own aspect (see --art-aspect and
+  // .detail-art), so there is nothing left for cover to crop, and scenery must never letterbox.
+  applyArt(g, art, url, "cover");
+}
+
+/* ---- the viewer ----
+   One item of the gallery, whole, over everything: a picture fitted entire, or a film with the
+   pad on it. A pauses and resumes a film (on a picture it goes to the next), X and Y skip ten
+   seconds back and ahead, Left and Right go to the previous and the next item -- and keep the
+   strip on it, so B lands back where you were -- and B closes. The film plays in a player of
+   the viewer's own, from the start, with the sound setting; the page's own film waits. */
+let mediaView = null;      // { idx }
+let mediaViewTimer = null;
+const MEDIA_SEEK_S = 10;
+
+function mediaViewItems() { return detailMediaItems(gameById(detailGameId)); }
+
+function openMediaView(idx) {
+  const items = mediaViewItems();
+  if (!items.length) return;
+  mediaView = { idx: Math.max(0, Math.min(idx, items.length - 1)) };
+  showOverlay("overlay-media");
+  renderMediaView();
+  clearInterval(mediaViewTimer);
+  mediaViewTimer = setInterval(tickMediaView, 250);
+}
+
+function closeMediaView() {
+  if (!mediaView) return;
+  mediaView = null;
+  clearInterval(mediaViewTimer);
+  mediaViewTimer = null;
+  hideOverlay("overlay-media");
+  paintNav();   // the backdrop and the page's own film pick up from the strip's highlight
+}
+
+function mediaViewStep(dir) {
+  const items = mediaViewItems();
+  if (!mediaView || !items.length) return;
+  mediaView.idx = (mediaView.idx + dir + items.length) % items.length;
+  const el = document.querySelector(`#detailMediaTrack [data-media-index="${mediaView.idx}"]`);
+  if (el) { setFocusEl(el); updateMediaScroll(); }
+  renderMediaView();
+}
+
+function renderMediaView() {
+  if (!mediaView) return;
+  const items = mediaViewItems();
+  const item = items[mediaView.idx];
+  if (!item) { closeMediaView(); return; }
+  const img = $("mediaViewImg");
+  img.style.backgroundImage = item.kind === "image" ? `url('${item.url}')` : "none";
+  img.classList.toggle("shown", item.kind === "image");
+  $("mediaViewName").textContent = item.name || (item.kind === "video" ? "Video" : "Screenshot");
+  $("mediaViewCount").textContent = `${mediaView.idx + 1} / ${items.length}`;
+  $("mediaViewProgress").hidden = item.kind !== "video";
+  $("mediaViewProgress").firstElementChild.style.width = "0%";
+  syncTrailers();
+  renderMediaViewFoot();
+}
+
+function renderMediaViewFoot() {
+  if (!mediaView) return;
+  const items = mediaViewItems();
+  const item = items[mediaView.idx];
+  const many = items.length > 1;
+  const pairs = [];
+  if (item && item.kind === "video") pairs.push(["A", viewerTrailer.paused() ? "Play" : "Pause"], ["X", "Back 10 s"], ["Y", "Ahead 10 s"]);
+  else if (many) pairs.push(["A", "Next"]);
+  if (many) pairs.push(["DpadH", "Previous / Next"]);
+  pairs.push(["B", "Back"]);
+  $("mediaViewFoot").innerHTML = foot(...pairs);
+}
+
+/* Every quarter second while the viewer is up: the progress line, and the A label, which has
+   to follow the film -- it ends on its own, and a paused one reads "Play". */
+function tickMediaView() {
+  if (!mediaView) return;
+  const d = viewerTrailer.duration(), t = viewerTrailer.position();
+  $("mediaViewProgress").firstElementChild.style.width = d > 0 ? Math.min(100, t / d * 100) + "%" : "0%";
+  const label = $("mediaViewFoot").querySelector('[data-press="A"] span');
+  if (!label || (label.textContent !== "Play" && label.textContent !== "Pause")) return;
+  const want = viewerTrailer.paused() ? "Play" : "Pause";
+  if (label.textContent !== want) label.textContent = want;
+}
+
+function mediaViewInput(btn) {
+  if (!mediaView) return;
+  const item = mediaViewItems()[mediaView.idx];
+  const film = item && item.kind === "video";
+  switch (btn) {
+    case "Left": mediaViewStep(-1); break;
+    case "Right": mediaViewStep(1); break;
+    case "A":
+      if (!film) { mediaViewStep(1); break; }
+      // A film that ran to its end, or would not start, plays again from the top.
+      if (!viewerTrailer.active()) viewerTrailer.arm(gameById(detailGameId), item.url, { delay: 0, again: true });
+      else if (viewerTrailer.paused()) viewerTrailer.resume();
+      else viewerTrailer.pause();
+      renderMediaViewFoot();
+      break;
+    case "X": if (film) viewerTrailer.seek(-MEDIA_SEEK_S); break;
+    case "Y": if (film) viewerTrailer.seek(MEDIA_SEEK_S); break;
+    case "B": closeMediaView(); break;
+  }
 }
 
 const DETAIL_BTNS = ["play", "collect", "manage"];
@@ -2631,6 +3272,7 @@ function updateDetailFocus() {
 function detailActivate() {
   const g = gameById(detailGameId);
   const el = focusEl();
+  if (el && el.dataset.mediaIndex !== undefined) { openMediaView(parseInt(el.dataset.mediaIndex, 10)); return; }
   const act = el ? el.dataset.act : null;
   if (act === "play" && g) { if (!g.installed) offerInstall(g); else launchGame(g); }
   else if (act === "collect") openCollect();
@@ -2665,7 +3307,7 @@ function allSettingsRows() {
   // Appearance, all of it per theme: the theme, then its look, its motion, and last the options
   // it declares for itself with the row that puts it all back.
   rows.push({ section: "THEME", cat: "appearance" });
-  const themes = S.themes && S.themes.length ? S.themes : [{ id: "", name: "Classic" }];
+  const themes = S.themes && S.themes.length ? S.themes : [{ id: "", name: "Shelf" }];
   const theme = themes.find(t => t.id === (s.theme || "")) || themes[0];
   rows.push(cycleRow("Theme", themes.map(t => t.id), () => (s.theme || ""), v => set(() => s.theme = v),
     theme && theme.error ? null
@@ -2940,6 +3582,9 @@ function allSettingsRows() {
     type: "action", label: "Refresh",
     action: () => { send({ cmd: "refreshMetadata" }); toast("Fetching in the background"); },
   });
+  rows.push(toggleRow("Keep trailers on this PC",
+    "A trailer streams from Steam the first time it plays and is kept for next time, up to 4 GB with the oldest going first. Off streams every time",
+    () => s.cacheTrailers !== false, v => set(() => s.cacheTrailers = v)));
   // Everything from here down is an escape hatch, not a setup step. Worth keeping visible -- some
   // people would rather not route anything through a shared service -- but the hints have to say
   // plainly that leaving them alone is the normal thing to do.
@@ -3005,8 +3650,20 @@ function allSettingsRows() {
    look and the animation to restore. */
 function themeSettingRows(theme, s, set) {
   const defs = theme ? themeSettingDefs(theme) : [];
-  const name = theme && theme.name ? theme.name : "Classic";
+  const name = theme && theme.name ? theme.name : "Shelf";
   const rows = [{ section: `${name.toUpperCase()} OPTIONS`, cat: "appearance" }];
+  // Trailers first, under every theme: where a film may play is a fact about the layout the
+  // theme draws, and it is kept in the theme's own bag like the accent, so each theme decides.
+  rows.push(cycleRow("Trailers", trailerModes(), () => lookTrailers(),
+    v => set(() => lookSet(LOOK_IDS.trailers, v)),
+    (libraryCanHostTrailers()
+      ? "The game's trailer plays over the art once the highlight has rested on it for three seconds. "
+      : "The game's trailer plays behind its page once it has been open for three seconds. ")
+    + "Steam's, kept on this PC after the first play; through YouTube for a game Steam has no trailer for",
+    null, TRAILER_LABELS));
+  if (lookTrailers() !== "off")
+    rows.push(toggleRow("Trailer sound", "Off, trailers play silently",
+      () => lookTrailerSound(), v => set(() => lookSet(LOOK_IDS.trailerSound, v))));
   const put = (d, v) => set(() => { lookBag(true)[d.id] = v; });
   for (const d of defs) {
     const cur = () => themeSettingValue(theme, d);
@@ -4468,7 +5125,7 @@ setInterval(publishClaims, 400);
 /* ============================== library search ==============================
  *
  * A field in the library top bar, so it is there in every theme -- both slot the top bar, and
- * Polish hides the section headings. View opens it and raises the on-screen keyboard; every
+ * the Loungepad theme hides the section headings. View opens it and raises the on-screen keyboard; every
  * keystroke refilters the grid live. Enter, A or Down keeps the search and drops the highlight on
  * the first result; Escape or B while typing clears it. With a search standing, the field shows
  * it and the grid heading says so, and View opens it again to change it.
@@ -4594,6 +5251,7 @@ function setOverlayMode(on) {
   overlayMode = on;
   document.documentElement.classList.toggle("overlay-mode", on);
   document.body.classList.toggle("overlay-mode", on);
+  syncTrailers();
   if (on) {
     setInputMode("pad");   // the pointer has no business here
     // Not redundant with the send inside setInputMode: if we were already in pad mode that
@@ -4636,6 +5294,7 @@ function switchView(v) {
   if (v === "detail") renderDetail();
   // Always land on the categories, never mid-list in whatever was open last time.
   if (v === "settings") { settingsPane = "nav"; settingsIdx = 0; renderSettings(); }
+  syncTrailers();
 }
 
 
@@ -4650,6 +5309,7 @@ function handleInput(btn, src) {
   // Only a direction hands control back to the pad. A face button must never re-arm a
   // highlight the pointer has cleared, so A over empty space does nothing.
   if (DIRECTIONS.has(btn)) setInputMode("pad");
+  if (mediaView) { mediaViewInput(btn); return; }
   if (confirmState) { confirmInput(btn); return; }
   if (searchOpen) { searchInput(btn); return; }
   if (radialSub) { radialSubInput(btn); return; }
@@ -4898,6 +5558,21 @@ function handleHostMessage(m) {
       S.runningGameId = m.id;
       renderLibrary();
       break;
+    // A trailer landed on disk. One field on one game, in place: a state push here would rebuild
+    // the library under somebody browsing it, for a change nothing on screen shows.
+    case "trailerCached": {
+      const g = gameById(m.id);
+      if (g) g.trailerFile = m.file || null;
+      break;
+    }
+    // A gallery fetched on demand. Into the game in place, and onto the page if it is the one up.
+    case "media": {
+      const g = gameById(m.id);
+      if (!g) break;
+      g.media = Array.isArray(m.media) ? m.media : [];
+      if (view === "detail" && detailGameId === m.id) { renderDetailMedia(g); updateDetailFocus(); }
+      break;
+    }
     // The host's folder dialog closed on a folder; the rest of adding it is asked here.
     case "romFolderPicked":
       startRomFolderWizard(m.path, m.platformId);
@@ -5055,6 +5730,28 @@ function mockHandle(msg) {
     const seedW = (t) => `https://picsum.photos/seed/${t.toLowerCase().replace(/[^a-z]/g, "")}w/600/340`;
     const seedP = (t) => `https://picsum.photos/seed/${t.toLowerCase().replace(/[^a-z]/g, "")}/400/480`;
     const seedH = (t) => `https://picsum.photos/seed/${t.toLowerCase().replace(/[^a-z]/g, "")}h/1200/390`;
+    // Real store trailers (Hollow Knight, Celeste, Stardew Valley, Cyberpunk 2077, at 480p) on a
+    // few games only: the rest of the library is what a game with no Steam listing looks like,
+    // which is the common case for ROMs and the one most likely to be got wrong.
+    const clips = [256679401, 256706951, 256815967, 257082775];
+    let clipN = 0;
+    const clipUrl = (id) => `https://video.akamai.steamstatic.com/store_trailers/${id}/movie480.mp4`;
+    const clip = () => clipUrl(clips[clipN++ % clips.length]);
+    // A gallery for two of them: Hollowmark's is what a Steam page gives (its films, then its
+    // screenshots, real ones from Hollow Knight's page), Pokemon's is what IGDB gives a ROM.
+    const ss = (h) => `https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/367520/ss_${h}?t=1776125684`;
+    const shot = (t, n) => `https://picsum.photos/seed/${t}${n}/1920/1080`;
+    const mediaHollow = [
+      { kind: "video", url: clipUrl(256679401), thumb: ss("5384f9f8b96a0b9934b2bc35a4058376211636d2.600x338.jpg"), name: "Release Trailer" },
+      { kind: "video", url: clipUrl(256706951), thumb: ss("d5b6edd94e77ba6db31c44d8a3c09d807ab27751.600x338.jpg"), name: "Gameplay" },
+      { kind: "image", url: ss("5384f9f8b96a0b9934b2bc35a4058376211636d2.1920x1080.jpg"), thumb: ss("5384f9f8b96a0b9934b2bc35a4058376211636d2.600x338.jpg") },
+      { kind: "image", url: ss("d5b6edd94e77ba6db31c44d8a3c09d807ab27751.1920x1080.jpg"), thumb: ss("d5b6edd94e77ba6db31c44d8a3c09d807ab27751.600x338.jpg") },
+      ...[1, 2, 3, 4, 5].map(n => ({ kind: "image", url: shot("hollow", n), thumb: shot("hollow", n) })),
+    ];
+    const mediaPokemon = [
+      { kind: "video", url: "https://www.youtube.com/watch?v=TEXsORWDFNY", thumb: "https://i.ytimg.com/vi/TEXsORWDFNY/hqdefault.jpg", name: "Trailer" },
+      ...[1, 2, 3].map(n => ({ kind: "image", url: shot("emerald", n), thumb: shot("emerald", n) })),
+    ];
     const g = (title, platform, opts = {}) => ({
       id: platform.toLowerCase() + ":" + title.toLowerCase().replace(/[^a-z]/g, ""),
       title, platform, installed: true, manual: platform === "Manual",
@@ -5072,15 +5769,15 @@ function mockHandle(msg) {
     });
     const now = Date.now();
     const games = [
-      g("Hollowmark: Second Ascent", "Steam", { playtimeMinutes: 4934, sessions: 41, favorite: true, lastPlayed: new Date(now - 86400000).toISOString(), sizeBytes: 64.2 * 1024 ** 3, installDir: "C:\\Games\\Steam\\steamapps\\common\\Hollowmark" }),
+      g("Hollowmark: Second Ascent", "Steam", { playtimeMinutes: 4934, sessions: 41, favorite: true, trailerUrl: clip(), media: mediaHollow, lastPlayed: new Date(now - 86400000).toISOString(), sizeBytes: 64.2 * 1024 ** 3, installDir: "C:\\Games\\Steam\\steamapps\\common\\Hollowmark" }),
       // No fetched metadata at all -- the facts row has to fall back to the platform and the
       // description has to collapse rather than leave a gap under the title.
       g("Ridgeline 84", "Epic", { playtimeMinutes: 660, sessions: 9, lastPlayed: new Date(now - 2 * 86400000).toISOString(), sizeBytes: 31 * 1024 ** 3, description: null, developer: null, publisher: null, genres: [], releaseDate: null, criticScore: null, criticSource: null, controllerSupport: null }),
-      g("Salt & Tide", "GOG", { playtimeMinutes: 2820, sessions: 30, favorite: true, lastPlayed: new Date(now - 3 * 86400000).toISOString(), sizeBytes: 12 * 1024 ** 3, criticScore: 61, controllerSupport: "partial" }),
-      g("Foundry Nine", "Manual", { playtimeMinutes: 360, sessions: 5, lastPlayed: new Date(now - 4 * 86400000).toISOString(), sizeBytes: 8 * 1024 ** 3, criticScore: 38, controllerSupport: null }),
-      g("Cassette Run", "Steam", { playtimeMinutes: 180, sessions: 3, lastPlayed: new Date(now - 5 * 86400000).toISOString(), sizeBytes: 4 * 1024 ** 3 }),
+      g("Salt & Tide", "GOG", { playtimeMinutes: 2820, sessions: 30, favorite: true, trailerUrl: clip(), lastPlayed: new Date(now - 3 * 86400000).toISOString(), sizeBytes: 12 * 1024 ** 3, criticScore: 61, controllerSupport: "partial" }),
+      g("Foundry Nine", "Manual", { playtimeMinutes: 360, sessions: 5, lastPlayed: new Date(now - 4 * 86400000).toISOString(), sizeBytes: 8 * 1024 ** 3, trailerUrl: "https://www.youtube.com/watch?v=TEXsORWDFNY", criticScore: 38, controllerSupport: null }),
+      g("Cassette Run", "Steam", { playtimeMinutes: 180, trailerUrl: clip(), sessions: 3, lastPlayed: new Date(now - 5 * 86400000).toISOString(), sizeBytes: 4 * 1024 ** 3 }),
       // enough recently-played entries to exercise the Continue carousel
-      g("Nightpost", "Steam", { playtimeMinutes: 95, sessions: 2, lastPlayed: new Date(now - 6 * 86400000).toISOString() }),
+      g("Nightpost", "Steam", { playtimeMinutes: 95, trailerUrl: clip(), sessions: 2, lastPlayed: new Date(now - 6 * 86400000).toISOString() }),
       g("Umber Fields", "Steam", { playtimeMinutes: 210, sessions: 4, lastPlayed: new Date(now - 7 * 86400000).toISOString() }),
       g("The Quiet Shore", "Epic", { playtimeMinutes: 140, sessions: 3, lastPlayed: new Date(now - 8 * 86400000).toISOString() }),
       g("Vector Bloom", "Steam", { playtimeMinutes: 60, sessions: 1, lastPlayed: new Date(now - 9 * 86400000).toISOString() }),
@@ -5109,7 +5806,9 @@ function mockHandle(msg) {
       g("Final Fantasy VII", "PlayStation", { emulated: true, platformId: "ps1", romFolderId: "f2", romPath: "D:\\ROMs\\PS1\\Final Fantasy VII (USA).m3u", sizeBytes: 1.3 * 1024 ** 3, releaseDate: "Jan 31, 1997", genres: ["RPG"] }),
       g("Crash Bandicoot", "PlayStation", { emulated: true, platformId: "ps1", romFolderId: "f2", emulatorId: "e2", romPath: "D:\\ROMs\\PS1\\Crash Bandicoot (USA).chd", sizeBytes: 320 * 1024 ** 2 }),
       g("sf2", "Arcade", { emulated: true, platformId: "arcade", romFolderId: "f3", romPath: "D:\\ROMs\\Arcade\\sf2.zip", sizeBytes: 3 * 1024 ** 2, description: null, developer: null, publisher: null, genres: [], releaseDate: null, criticScore: null, criticSource: null, controllerSupport: null, coverFile: null, bannerFile: null, heroFile: null }),
-      g("Pokemon: Emerald Version", "Game Boy Advance", { emulated: true, platformId: "gba", romFolderId: "f4", romPath: "C:\\RetroArch\\downloads\\GBA\\Pokemon - Emerald Version (USA, Europe).gba", sizeBytes: 16 * 1024 ** 2, releaseDate: "Sep 16, 2004", genres: ["RPG"] }),
+      // A ROM: not on Steam, so its trailer is IGDB's YouTube video (this is the real id the
+      // service answers for it) and plays through YouTube's player rather than a <video>.
+      g("Pokemon: Emerald Version", "Game Boy Advance", { emulated: true, platformId: "gba", romFolderId: "f4", romPath: "C:\\RetroArch\\downloads\\GBA\\Pokemon - Emerald Version (USA, Europe).gba", sizeBytes: 16 * 1024 ** 2, releaseDate: "Sep 16, 2004", genres: ["RPG"], trailerUrl: "https://www.youtube.com/watch?v=TEXsORWDFNY", media: mediaPokemon }),
     ];
     if (mockHandle._titles) games.forEach(x => { if (mockHandle._titles[x.id]) x.title = mockHandle._titles[x.id]; });
     if (mockHandle._emus) games.forEach(x => { if (mockHandle._emus[x.id] !== undefined) x.emulatorId = mockHandle._emus[x.id] || null; });
@@ -5143,7 +5842,7 @@ function mockHandle(msg) {
         minimizeCombo: "LS + RS",
         keyboardToggleButton: "Start", keyboardToggleHoldMs: 600,
         keyboardApp: "Builtin", keyboardScale: 1.0, keyRepeatDelayMs: 350, keyRepeatIntervalMs: 90,
-        accentColor: "#F0A253", theme: "",
+        accentColor: "#F0A253", theme: "", cacheTrailers: true,
         animationsEnabled: true, animationSpeed: 1.0, themeSettings: {},
       },
       displays: [
@@ -5157,15 +5856,15 @@ function mockHandle(msg) {
   if (msg.cmd === "ready") {
     setTimeout(pushState, 60);
     // The bundled theme, read off the same server, so the preview's Appearance screen has a theme
-    // with options to show and Polish can be switched to. The server's root is Loungepad/, which
-    // is what makes /themes/polish/… reachable at all; a server rooted anywhere else just leaves
-    // the list at Classic.
-    fetch("/themes/polish/theme.json").then(r => (r.ok ? r.json() : null)).then(t => {
+    // with options to show and the Loungepad theme can be switched to. The server's root is
+    // Loungepad/, which is what makes /themes/loungepad/… reachable at all; a server rooted
+    // anywhere else just leaves the list at Shelf.
+    fetch("/themes/loungepad/theme.json").then(r => (r.ok ? r.json() : null)).then(t => {
       if (!t || typeof t !== "object") return;
       const v = Date.now();
       handleHostMessage({ type: "themes", themes: [
-        { id: "", name: "Classic" },
-        { ...t, id: "polish", css: `/themes/polish/theme.css?v=${v}`, html: `/themes/polish/theme.html?v=${v}` },
+        { id: "", name: "Shelf" },
+        { ...t, id: "loungepad", css: `/themes/loungepad/theme.css?v=${v}`, html: `/themes/loungepad/theme.html?v=${v}` },
       ] });
     }).catch(() => {});
     setTimeout(() => { handleHostMessage({ type: "padConnected", connected: true }); handleHostMessage({ type: "battery", present: true, percent: 62, charging: false, level: 2 }); }, 700);
@@ -5176,6 +5875,21 @@ function mockHandle(msg) {
     if (mockUpdate.state === "ready") { toast("(preview) would restart on " + mockUpdate.latest); return; }
     [0, 30, 65, 100].forEach((p, i) => mockUpdateStep({ state: "downloading", progress: p }, i * 400));
     mockUpdateStep({ state: "ready" }, 1800);
+  } else if (msg.cmd === "cacheTrailer") {
+    // The host would download the file and answer with its name; here the "file" is the same
+    // URL, which is enough to walk the cached path (trailerUrl prefers trailerFile).
+    const g = S.games.find(x => x.id === msg.id);
+    if (g && g.trailerUrl && !g.trailerFile)
+      setTimeout(() => handleHostMessage({ type: "trailerCached", id: msg.id, file: g.trailerUrl }), 1500);
+  } else if (msg.cmd === "fetchMedia") {
+    // The host would ask Steam or IGDB; here a game with no gallery gets stand-in pictures a
+    // moment later, which is what an uninstalled game's page looks like filling in.
+    const g = S.games.find(x => x.id === msg.id);
+    if (g && !(g.media && g.media.length)) {
+      const seed = g.title.toLowerCase().replace(/[^a-z]/g, "");
+      const media = [1, 2, 3, 4, 5, 6].map(n => ({ kind: "image", url: `https://picsum.photos/seed/${seed}g${n}/1920/1080`, thumb: `https://picsum.photos/seed/${seed}g${n}/600/338` }));
+      setTimeout(() => handleHostMessage({ type: "media", id: msg.id, media }), 900);
+    }
   } else if (msg.cmd === "launch") {
     toast("(preview) would launch " + msg.id);
   } else if (msg.cmd === "toggleFavorite") {

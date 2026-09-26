@@ -61,7 +61,7 @@ if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed ($LASTEXITCODE)" }
 # themes\ is here for the same reason: ThemeService seeds the user's themes folder from the copy
 # next to the exe, so a zip without it installs a launcher whose theme list is empty.
 foreach ($required in 'Loungepad.exe', 'ui\index.html', 'ui\app.js', 'ui\app.css', 'ui\radial.js',
-                      'themes\polish\theme.json', 'themes\polish\theme.css', 'themes\polish\theme.html') {
+                      'themes\loungepad\theme.json', 'themes\loungepad\theme.css', 'themes\loungepad\theme.html') {
     if (-not (Test-Path (Join-Path $staging $required))) { throw "Missing from the publish output: $required" }
 }
 

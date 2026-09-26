@@ -14,6 +14,13 @@
 <div id="backdrop">
   <div class="bd" id="bdA"></div>
   <div class="bd" id="bdB"></div>
+  <!-- The focused game's trailer, faded up over the still once the highlight has rested on it.
+       Between the art and the scrim a theme draws with #backdrop::after, so the same gradients
+       that hold the title over a picture hold it over a film. See the trailers section of app.js. -->
+  <video id="bdVideo" playsinline disablepictureinpicture preload="none"></video>
+  <!-- The same film when it is a YouTube video (IGDB's trailers): YouTube's embedded player,
+       replacing the inner div on first use, sized to cover the screen like the video above. -->
+  <div id="bdYt" class="trailer-yt"><div id="bdYtHost"></div></div>
 </div>
 
 <!-- Still of the desktop or the game, captured by the host just before an overlay menu opens.
@@ -27,7 +34,7 @@
     <header class="topbar" data-region="topbar">
       <div class="topbar-left" data-tabbar="library"></div>
       <!-- Search. In the top bar rather than over the grid because every theme slots the top bar,
-           and Polish hides the section headings. View opens it; see openSearch in app.js. -->
+           and the Loungepad theme hides the section headings. View opens it; see openSearch in app.js. -->
       <label class="lib-search" id="libSearch" data-focusable data-nav-skip data-focus-key="search" data-action="search">
         <svg class="lib-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 20.5 20.5"/></svg>
         <input id="searchField" type="text" placeholder="Search your library" autocomplete="off" spellcheck="false" tabindex="-1">
@@ -98,6 +105,9 @@
   <!-- ============ DETAIL ============ -->
   <div class="screen" id="screen-detail" data-focus-scope>
     <div class="detail-art" id="detailArt"></div>
+    <!-- The trailer, over the art and under the shades, on the same three-second clock. -->
+    <video id="detailVideo" class="detail-video" playsinline disablepictureinpicture preload="none"></video>
+    <div id="detailYt" class="trailer-yt detail-yt"><div id="detailYtHost"></div></div>
     <div class="detail-shade-x"></div>
     <div class="detail-shade-y"></div>
 
@@ -119,6 +129,10 @@
           <!-- Why the board rated it what it did, in the board's own words. Empty for most
                games, and collapsed by :empty when it is. -->
           <div class="detail-descriptors" id="detailDescriptors"></div>
+          <!-- The gallery: the trailer, then the store page's other films and its screenshots.
+               Built by renderDetailMedia and hidden for a game with nothing. Walking along it
+               changes the picture behind the page; A opens the item in the viewer. -->
+          <div class="media-strip" id="detailMedia" hidden><div class="media-track" id="detailMediaTrack"></div></div>
         </div>
 
         <!-- Ratings above the hairline, the numbers we know about it below. Both are facts you
@@ -201,6 +215,22 @@
       <div class="quick-title mono">MANAGE</div>
       <div class="ov-scroll" id="manageList"></div>
       <div class="ov-foot" id="manageFoot"></div>
+    </div>
+  </div>
+
+  <!-- ============ THE VIEWER ============
+       One item of a game's gallery, whole, on black: a picture, or a film with the pad on it.
+       Driven by mediaViewInput; the bar carries the name, the count and the buttons. -->
+  <div class="overlay media-view" id="overlay-media">
+    <div class="media-view-stage">
+      <div class="media-view-img" id="mediaViewImg"></div>
+      <video id="mediaViewVideo" class="media-view-video" playsinline disablepictureinpicture preload="none"></video>
+      <div id="mediaViewYt" class="media-view-yt"><div id="mediaViewYtHost"></div></div>
+    </div>
+    <div class="media-view-progress" id="mediaViewProgress" hidden><i></i></div>
+    <div class="media-view-bar">
+      <div class="media-view-caption mono"><span id="mediaViewName"></span><span id="mediaViewCount"></span></div>
+      <div class="legend" id="mediaViewFoot"></div>
     </div>
   </div>
 

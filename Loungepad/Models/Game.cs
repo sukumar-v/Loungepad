@@ -1,5 +1,18 @@
 namespace Loungepad.Models;
 
+/// <summary>One entry in a game's gallery: a picture, or a film with a picture to stand for it.</summary>
+public class MediaItem
+{
+    /// <summary>"image" or "video".</summary>
+    public string Kind { get; set; } = "image";
+    /// <summary>The full-size picture, or the film: an mp4 on Steam's CDN, or a YouTube watch URL.</summary>
+    public string Url { get; set; } = "";
+    /// <summary>A small 16:9 picture for the strip; for a film, the store's own poster frame.</summary>
+    public string? Thumb { get; set; }
+    /// <summary>The store's name for a film ("Launch Trailer"); null for a screenshot.</summary>
+    public string? Name { get; set; }
+}
+
 public class Game
 {
     public string Id { get; set; } = "";            // e.g. "steam:1091500", "manual:<guid>"
@@ -100,6 +113,20 @@ public class Game
     /// <summary>"full", "partial" or null. Worth surfacing in a couch launcher above almost
     /// anything else: it answers "can I actually play this from the sofa".</summary>
     public string? ControllerSupport { get; set; }
+    /// <summary>The store trailer, as a URL the page can stream: Steam's highlight movie for the
+    /// app, mp4 at the largest size published. Steam is the only source -- IGDB carries YouTube
+    /// ids, which cannot be played inline -- so a game with no Steam listing has none.</summary>
+    public string? TrailerUrl { get; set; }
+    /// <summary>A copy of TrailerUrl on this PC, as a file name under the trailers cache, written
+    /// by TrailerCache once a download completes and cleared whenever the URL changes or the file
+    /// is evicted. The page plays this when it is set and streams the URL when it is not.</summary>
+    public string? TrailerFile { get; set; }
+    /// <summary>The store page's pictures and films, for the gallery on the game's page: Steam's
+    /// screenshots and every movie, or IGDB's screenshots and videos for a game Steam has not got.
+    /// Remote URLs only, never cached; fetched for installed games only, since the list rides in
+    /// every state push and a catalogue of five hundred games nobody has opened would be most of
+    /// the payload.</summary>
+    public List<MediaItem> Media { get; set; } = new();
     /// <summary>Which provider answered, e.g. "steam". Also the flag for "we have tried this one".</summary>
     public string? MetadataSource { get; set; }
     /// <summary>When it was fetched, so a rescan does not re-hit the network for everything.
