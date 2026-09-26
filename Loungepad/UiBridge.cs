@@ -1206,6 +1206,11 @@ public class UiBridge
         t.KeyboardInGame = s.KeyboardInGame;
         t.KeyboardApp = s.KeyboardApp;
         t.KeyboardScale = Math.Clamp(s.KeyboardScale, 0.6, 1.6);
+        t.KeyboardSuggestions = s.KeyboardSuggestions;
+        t.KeyboardFunctionKeys = s.KeyboardFunctionKeys;
+        t.KeyboardNavKeys = s.KeyboardNavKeys;
+        t.KeyboardNumpad = s.KeyboardNumpad;
+        t.KeyboardModifiers = s.KeyboardModifiers;
     }
 
 
@@ -1758,6 +1763,28 @@ public class UiBridge
 
     /// <summary>The built-in keyboard was closed with B while the launcher was in front.</summary>
     public void PushKeyboardDismissed() => Push(new { type = "keyboardDismissed" });
+
+    /// <summary>
+    /// The keyboard's own options page changed one of its switches. Only those five fields go, and
+    /// the page merges them into its copy rather than taking a whole settings object: a full copy
+    /// would overwrite a change the page had made and not yet saved.
+    /// </summary>
+    public void PushKeyboardOptions()
+    {
+        var s = _settings.Settings;
+        Push(new
+        {
+            type = "keyboardOptions",
+            settings = new
+            {
+                keyboardSuggestions = s.KeyboardSuggestions,
+                keyboardFunctionKeys = s.KeyboardFunctionKeys,
+                keyboardNavKeys = s.KeyboardNavKeys,
+                keyboardNumpad = s.KeyboardNumpad,
+                keyboardModifiers = s.KeyboardModifiers,
+            },
+        });
+    }
 
     public void PushPadConnected(bool connected) => Push(new { type = "padConnected", connected });
 

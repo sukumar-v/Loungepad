@@ -418,6 +418,73 @@ internal static class NativeMethods
         SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
     }
 
+    public const ushort VK_SHIFT = 0x10, VK_CONTROL = 0x11, VK_MENU = 0x12, VK_PAUSE = 0x13, VK_SPACE = 0x20;
+    public const ushort VK_PRIOR = 0x21, VK_NEXT = 0x22, VK_UP = 0x26, VK_DOWN = 0x28;
+    public const ushort VK_SNAPSHOT = 0x2C, VK_INSERT = 0x2D, VK_LWIN = 0x5B;
+    public const ushort VK_NUMPAD0 = 0x60, VK_MULTIPLY = 0x6A, VK_ADD = 0x6B, VK_SUBTRACT = 0x6D;
+    public const ushort VK_DECIMAL = 0x6E, VK_DIVIDE = 0x6F, VK_F1 = 0x70, VK_NUMLOCK = 0x90, VK_SCROLL = 0x91;
+
+    [DllImport("user32.dll")]
+    public static extern uint MapVirtualKeyW(uint uCode, uint uMapType);
+    private const uint MAPVK_VK_TO_VSC = 0;
+
+    /// <summary>The key and shift state that type a character on the current layout: the low byte
+    /// is the virtual key, the high byte 1 for Shift, 2 for Ctrl, 4 for Alt. -1 when no key does.</summary>
+    [DllImport("user32.dll")]
+    public static extern short VkKeyScanW(char ch);
+
+    /// <summary>
+    /// Tap a key with modifiers held around it, as one batch so nothing can land in between.
+    ///
+    /// Unlike SendVirtualKey this carries the scan code as well. A game reading raw input or
+    /// DirectInput sees only the scan code, and those are exactly the programs that bind F5 or a
+    /// number-pad key. Pause and Num Lock share 0x45 (Pause is really E1 1D 45), so Pause goes by
+    /// virtual key alone; Print Screen's mapping differs between layouts and it goes the same way.
+    /// </summary>
+    public static void SendKeyCombo(ushort vk, bool extended, IReadOnlyList<ushort> modifiers)
+    {
+        var inputs = new List<INPUT>(modifiers.Count * 2 + 2);
+        foreach (var m in modifiers) inputs.Add(KeyInput(m, m == VK_LWIN, up: false));
+        inputs.Add(KeyInput(vk, extended, up: false));
+        inputs.Add(KeyInput(vk, extended, up: true));
+        for (int i = modifiers.Count - 1; i >= 0; i--) inputs.Add(KeyInput(modifiers[i], modifiers[i] == VK_LWIN, up: true));
+        SendInput((uint)inputs.Count, inputs.ToArray(), Marshal.SizeOf<INPUT>());
+    }
+
+    private static INPUT KeyInput(ushort vk, bool extended, bool up)
+    {
+        ushort scan = vk is VK_PAUSE or VK_SNAPSHOT ? (ushort)0 : (ushort)MapVirtualKeyW(vk, MAPVK_VK_TO_VSC);
+        uint flags = (extended ? KEYEVENTF_EXTENDEDKEY : 0) | (up ? KEYEVENTF_KEYUP : 0);
+        return new INPUT { type = INPUT_KEYBOARD, u = new INPUTUNION { ki = new KEYBDINPUT { wVk = vk, wScan = scan, dwFlags = flags } } };
+    }
+
+    /// <summary>Type a run of characters as one batch, each as KEYEVENTF_UNICODE (see SendChar).</summary>
+    public static void SendText(string text)
+    {
+        if (text.Length == 0) return;
+        var inputs = new INPUT[text.Length * 2];
+        for (int i = 0; i < text.Length; i++)
+        {
+            inputs[i * 2] = new INPUT { type = INPUT_KEYBOARD, u = new INPUTUNION { ki = new KEYBDINPUT { wScan = text[i], dwFlags = KEYEVENTF_UNICODE } } };
+            inputs[i * 2 + 1] = new INPUT { type = INPUT_KEYBOARD, u = new INPUTUNION { ki = new KEYBDINPUT { wScan = text[i], dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP } } };
+        }
+        SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct GUITHREADINFO
+    {
+        public int cbSize;
+        public uint flags;
+        public IntPtr hwndActive, hwndFocus, hwndCapture, hwndMenuOwner, hwndMoveSize, hwndCaret;
+        public RECT rcCaret;
+    }
+
+    /// <summary>A thread's focus and caret. Works across processes, needs no hook, and reads nothing
+    /// but window handles and a rectangle.</summary>
+    [DllImport("user32.dll")]
+    public static extern bool GetGUIThreadInfo(uint idThread, ref GUITHREADINFO lpgui);
+
     // ---- XInput ----
 
     public const ushort XINPUT_GAMEPAD_DPAD_UP = 0x0001;

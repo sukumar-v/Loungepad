@@ -593,9 +593,19 @@ internal class GamepadService : IDisposable
                         if (lMask == NativeMethods.XINPUT_GAMEPAD_B) lMask = 0;
                         if (rMask == NativeMethods.XINPUT_GAMEPAD_B) rMask = 0;
                     }
-                    if ((pressed & lMask) != 0 && !leftDown && (modalTaken & lMask) == 0) { SendClick(NativeMethods.MOUSEEVENTF_LEFTDOWN); leftDown = true; }
+                    // A click with the keyboard up can put the caret anywhere, so the keyboard is
+                    // told: the word it thinks it is typing may no longer be under the caret.
+                    if ((pressed & lMask) != 0 && !leftDown && (modalTaken & lMask) == 0)
+                    {
+                        SendClick(NativeMethods.MOUSEEVENTF_LEFTDOWN); leftDown = true;
+                        if (keyboardDriving) KeyboardInput?.Invoke("PointerClick");
+                    }
                     if ((released & lMask) != 0 && leftDown) { SendClick(NativeMethods.MOUSEEVENTF_LEFTUP); leftDown = false; }
-                    if ((pressed & rMask) != 0 && !rightDown && (modalTaken & rMask) == 0) { SendClick(NativeMethods.MOUSEEVENTF_RIGHTDOWN); rightDown = true; }
+                    if ((pressed & rMask) != 0 && !rightDown && (modalTaken & rMask) == 0)
+                    {
+                        SendClick(NativeMethods.MOUSEEVENTF_RIGHTDOWN); rightDown = true;
+                        if (keyboardDriving) KeyboardInput?.Invoke("PointerClick");
+                    }
                     if ((released & rMask) != 0 && rightDown) { SendClick(NativeMethods.MOUSEEVENTF_RIGHTUP); rightDown = false; }
                 }
             }
@@ -708,6 +718,9 @@ internal class GamepadService : IDisposable
         (NativeMethods.XINPUT_GAMEPAD_RIGHT_SHOULDER, "CaretRight"),
         (NativeMethods.XINPUT_GAMEPAD_LEFT_THUMB, "Shift"),
         (NativeMethods.XINPUT_GAMEPAD_START, "Commit"),
+        // The first word suggestion. Not RT, the obvious reach: that is the pointer's boost button
+        // by default, and holding it to cross the screen would type a word.
+        (NativeMethods.XINPUT_GAMEPAD_RIGHT_THUMB, "Suggest"),
     };
 
     private static readonly (ushort mask, string name)[] FaceButtons =

@@ -17,11 +17,12 @@
       is no WebView2 in here, and the keyboard is driven entirely by the gamepad, so it never needs
       a mouse message at all. What it buys is real rounded corners over a game.
 
-      The keys themselves are built in code from the layout tables: the layout is data, and rebuilding a
-      stack of rows is less machinery than binding a two-layer, ragged-width grid.
+      The keys themselves are built in code from the layout tables (KeyboardLayout): the layout is
+      data, and placing keys on a canvas by column is less machinery than binding blocks of
+      ragged-width, sometimes two-row-tall keys. The suggestion bar is the board's first row.
     -->
     <Border x:Name="Root" Background="#F2141417" CornerRadius="18" Padding="18"
-            BorderBrush="#33FFFFFF" BorderThickness="1">
+            BorderBrush="#33FFFFFF" BorderThickness="1" UseLayoutRounding="True">
         <StackPanel>
             <!-- Grab bar. The keyboard parks near the bottom of the TV, which is exactly where a
                  game's chat box tends to be, so it has to be movable off whatever it covers. The
@@ -34,7 +35,7 @@
                             HorizontalAlignment="Center" VerticalAlignment="Center"/>
                 </Grid>
             </Border>
-            <StackPanel x:Name="Rows"/>
+            <Canvas x:Name="Board" HorizontalAlignment="Left"/>
         </StackPanel>
     </Border>
 </Window>

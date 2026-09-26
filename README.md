@@ -70,9 +70,12 @@ a menu remote:
   the centre for precision, fast at full deflection to cross a 4K screen — are all sliders in
   Settings. The right stick scrolls. A and B are left and right click, live across the whole
   desktop the moment the launcher isn't in front.
-- **The keyboard comes to you.** Hold Start to raise the Windows touch keyboard, which takes
-  gamepad input directly, so you can type a search, a password or a message without getting up.
-  Text fields inside the launcher raise it on their own.
+- **The keyboard comes to you.** Press RB to raise an on-screen keyboard, so you can type a
+  search, a password or a message without getting up. Text fields inside the launcher raise it on
+  their own. The Loungepad Keyboard never takes focus from the game underneath, suggests words as
+  you type (from Windows' own dictionary; the right stick's click takes the first), and can add
+  function keys, a number pad, navigation keys and Ctrl/Win/Alt — from Settings, or from the gear
+  on the keyboard itself. The Windows touch keyboard is there too.
 - **The Power Wheel runs Windows.** One double-tap of View + Menu, from anywhere — including
   mid-game — and you can switch to any open window (it gets dragged onto the TV with you), fire
   a saved shortcut, summon the keyboard, re-centre a lost pointer, close the window in front of

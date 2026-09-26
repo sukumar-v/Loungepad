@@ -1,21 +1,34 @@
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Threading;
 using Loungepad.Interop;
 using Loungepad.Services;
+using static Loungepad.Interop.NativeMethods;
 
 namespace Loungepad;
 
-internal enum KeyAction { Char, Shift, Layer, Backspace, Delete, Space, Enter, Tab, Escape, CaretLeft, CaretRight }
-
 /// <summary>
-/// One key. <paramref name="Units"/> is its width in grid columns, and <paramref name="Hint"/> is
-/// the gamepad button drawn in its corner, so the shortcuts are discoverable without a manual.
+/// One thing the keyboard sends: characters, typed by code point so they do not depend on the
+/// keyboard layout, or a key by virtual-key code with any modifiers held around it.
 /// </summary>
-internal sealed record KeyDef(string Lower, string? Upper = null, KeyAction Action = KeyAction.Char,
-                              int Units = 1, string? Hint = null);
+public readonly record struct KeyStroke(string? Text, ushort Vk, bool Extended, ushort[] Mods)
+{
+    public static KeyStroke Chars(string text) => new(text, 0, false, Array.Empty<ushort>());
+    public static KeyStroke Tap(ushort vk, bool extended = false, ushort[]? mods = null) =>
+        new(null, vk, extended, mods ?? Array.Empty<ushort>());
+
+    public override string ToString() => Text is { } t
+        ? $"\"{t}\""
+        : string.Concat(Mods.Select(m => $"0x{m:X2}+")) + $"0x{Vk:X2}";
+}
+
+/// <summary>Where the app in front has its focus and caret, to tell whether the caret moved
+/// without the keyboard moving it. <see cref="CaretWindow"/> is zero when it has no system caret.</summary>
+public readonly record struct TargetState(IntPtr Focus, IntPtr CaretWindow, int CaretX, int CaretY);
 
 /// <summary>
 /// A gamepad-driven on-screen keyboard that never takes the foreground.
@@ -28,76 +41,56 @@ internal sealed record KeyDef(string Lower, string? Upper = null, KeyAction Acti
 ///
 /// It cannot appear over a game in *exclusive* fullscreen -- no topmost window can, the touch
 /// keyboard included. Borderless windowed is fine.
+///
+/// What it is made of is KeyboardLayout's business: the letters, and whichever of the function
+/// row, navigation block, number pad and Ctrl/Win/Alt are switched on. Above them is a bar of word
+/// suggestions (WordPredictor) with a gear at its right end, which swaps the keys for the switches
+/// that decide all of that -- the same five as Settings → Keyboard.
 /// </summary>
 public partial class KeyboardWindow : Window
 {
     /// <summary>
-    /// Every layer is this many columns wide and every key is a whole number of columns starting
-    /// on a column boundary, so the keys line up in a true grid: the key above "s" is always "w",
-    /// never something between two keys. Rows used to be centred at their natural widths, which
-    /// staggered them like a real keyboard and made Up/Down a guess.
+    /// Everything the keyboard types goes through here, and where the app in front has its caret
+    /// comes from <see cref="Probe"/>. Both replaceable, so a harness can drive the whole keyboard
+    /// and record what it would have sent without typing into whatever window is in front.
     /// </summary>
-    private const int Columns = 12;
+    public static Action<KeyStroke> Output = Deliver;
+    public static Func<TargetState> Probe = ProbeForeground;
 
-    private static KeyDef[] Chars(string chars) =>
-        chars.Select(c => new KeyDef(c.ToString(), char.ToUpperInvariant(c).ToString())).ToArray();
+    private KeyboardOptions _options = new(Suggestions: true, FunctionKeys: false, NavKeys: false, Numpad: false, Modifiers: false);
+    private KeyboardLayout _layout = KeyboardLayout.Keys(new(true, false, false, false, false), symbols: false);
+    private bool _symbols, _optionsPage, _shift;
+    /// <summary>Ctrl, Win and Alt that are latched, in the order they were pressed.</summary>
+    private readonly List<ushort> _mods = new();
 
-    /// <summary>A row of single-column character keys plus the fixed two-column key on the right.</summary>
-    private static KeyDef[] RowOf(string chars, params KeyDef[] tail) => Chars(chars).Concat(tail).ToArray();
+    private Slot? _focus;
+    /// <summary>The row the highlight is in. A two-row key is in both, so the key alone cannot say.</summary>
+    private int _focusRow = 2;
+    /// <summary>Column the highlight tries to keep while moving up and down.</summary>
+    private double _wantX = 0.5;
 
-    // Hints match the Xbox keyboard's own bindings, so muscle memory carries over.
-    private static readonly KeyDef BackKey = new("Back", Action: KeyAction.Backspace, Units: 2, Hint: "X");
-    private static readonly KeyDef ShiftKey = new("Shift", Action: KeyAction.Shift, Units: 2, Hint: "LS");
-    private static readonly KeyDef SpaceKey = new("Space", Action: KeyAction.Space, Units: 6, Hint: "Y");
-    private static readonly KeyDef EnterKey = new("Enter", Action: KeyAction.Enter, Units: 2, Hint: "Menu");
-    private static readonly KeyDef TabKey = new("Tab", Action: KeyAction.Tab, Units: 2);
-    private static readonly KeyDef EscKey = new("Esc", Action: KeyAction.Escape, Units: 2);
-    private static readonly KeyDef DelKey = new("Del", Action: KeyAction.Delete, Units: 2);
-    private static readonly KeyDef LeftKey = new("←", Action: KeyAction.CaretLeft, Hint: "LB");
-    private static readonly KeyDef RightKey = new("→", Action: KeyAction.CaretRight, Hint: "RB");
-
-    // Both layers share one skeleton: same 12x5 grid, same right-hand column, same bottom row.
-    // Switching layers therefore never resizes or reshuffles the keyboard -- only the faces change.
-    private static KeyDef[][] Layer(string r0, string r1, string r2, string r3, KeyDef layerKey, KeyDef r3Tail) => new[]
-    {
-        RowOf(r0, LeftKey, RightKey),
-        RowOf(r1, BackKey),
-        RowOf(r2, EnterKey),
-        RowOf(r3, r3Tail),
-        new[] { layerKey, TabKey, SpaceKey, EscKey },
-    };
-
-    private static readonly KeyDef[][] Letters = Layer(
-        "1234567890",
-        "qwertyuiop",
-        "asdfghjkl;",
-        "zxcvbnm,./",
-        new KeyDef("&123", Action: KeyAction.Layer, Units: 2, Hint: "LT"),
-        ShiftKey);
-
-    // The apostrophe, double quote and backtick go in by code point (39, 34, 96) so the last row
-    // does not turn into a thicket of escapes.
-    //
-    // Shift has nothing to do here -- the layer already carries both cases of every ASCII symbol,
-    // so a Shift key would light up and type nothing -- and the slot goes to Del instead.
-    private static readonly KeyDef[][] Symbols = Layer(
-        "1234567890",
-        "!@#$%^&*()",
-        "-_=+[]{}\\|",
-        ";:" + (char)39 + (char)34 + (char)96 + "~<>?/",
-        new KeyDef("abc", Action: KeyAction.Layer, Units: 2, Hint: "LT"),
-        DelKey);
-
-    private KeyDef[][] _layout = Letters;
-    private bool _shift;
-    private int _row = 1, _col;
-    /// <summary>Grid column the highlight tries to keep while moving up and down.</summary>
-    private int _wantCol;
     private double _keySize = 64, _gap = 6, _scale = 1;
-    private readonly List<List<Border>> _cells = new();
+    private DisplayInfo? _display;
+    private TextBlock? _barNote;
+
+    // ---- suggestions ----
+    private readonly WordPredictor _predictor = new();
+    private readonly KeyboardText _text = new();
+    /// <summary>The engine's answer, as it gave it; drawn and typed in the case the word calls for.</summary>
+    private IReadOnlyList<string> _suggestions = Array.Empty<string>();
+    private int _suggestSeq;
+
+    // ---- where the caret is ----
+    private readonly DispatcherTimer _settle = new() { Interval = TimeSpan.FromMilliseconds(250) };
+    private TargetState _target;
+    private bool _targetSettled;
 
     /// <summary>Raised when the keyboard wants to close itself (B, or Menu after committing).</summary>
     public event Action? CloseRequested;
+
+    /// <summary>A switch on the options page changed. The keyboard has already rebuilt itself; the
+    /// owner keeps the settings in step.</summary>
+    public event Action<KeyboardOptions>? OptionsChanged;
 
     public KeyboardWindow()
     {
@@ -109,16 +102,32 @@ public partial class KeyboardWindow : Window
         Grip.MouseLeftButtonDown += (_, _) => BeginDrag();
         Grip.MouseMove += (_, _) => { if (_dragging) DragToCursor(); };
         Grip.MouseLeftButtonUp += (_, _) => EndDrag();
+
+        // Once typing has paused, note where the caret settled. If it is somewhere else at the next
+        // key, something other than the keyboard moved it.
+        _settle.Tick += (_, _) =>
+        {
+            _settle.Stop();
+            _target = Probe();
+            _targetSettled = true;
+        };
+        IsVisibleChanged += (_, _) =>
+        {
+            if (IsVisible) return;
+            _settle.Stop();
+            _suggestSeq++;   // an answer still on its way is for a keyboard that has gone
+        };
     }
+
+    private IntPtr Handle => new WindowInteropHelper(this).Handle;
 
     private void OnSourceInitialized(object? sender, EventArgs e)
     {
-        var hwnd = new WindowInteropHelper(this).Handle;
+        var hwnd = Handle;
 
         // The whole point: no foreground, ever. TOOLWINDOW additionally keeps it out of Alt-Tab.
-        var ex = NativeMethods.GetWindowLongPtr(hwnd, NativeMethods.GWL_EXSTYLE).ToInt64();
-        NativeMethods.SetWindowLongPtr(hwnd, NativeMethods.GWL_EXSTYLE,
-            new IntPtr(ex | NativeMethods.WS_EX_NOACTIVATE | NativeMethods.WS_EX_TOOLWINDOW));
+        var ex = GetWindowLongPtr(hwnd, GWL_EXSTYLE).ToInt64();
+        SetWindowLongPtr(hwnd, GWL_EXSTYLE, new IntPtr(ex | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW));
 
         // WS_EX_NOACTIVATE still lets a click activate the window; this refuses that too, which is
         // what lets the pointer press keys without the app underneath losing its caret.
@@ -127,14 +136,14 @@ public partial class KeyboardWindow : Window
 
     private IntPtr Hook(IntPtr h, int msg, IntPtr w, IntPtr l, ref bool handled)
     {
-        if (msg == NativeMethods.WM_MOUSEACTIVATE)
+        if (msg == WM_MOUSEACTIVATE)
         {
             handled = true;
-            return new IntPtr(NativeMethods.MA_NOACTIVATE);
+            return new IntPtr(MA_NOACTIVATE);
         }
         // Losing the capture (Alt-Tab, another window grabbing it) has to end the drag, or the
         // keyboard would follow the pointer around after the button was long since released.
-        if (msg == NativeMethods.WM_CAPTURECHANGED) _dragging = false;
+        if (msg == WM_CAPTURECHANGED) _dragging = false;
         return IntPtr.Zero;
     }
 
@@ -176,19 +185,44 @@ public partial class KeyboardWindow : Window
     /// A real mouse move is its own switch to pointer mode -- the gamepad service only sees the
     /// stick. Guarded on the position actually changing, because WPF also raises MouseMove when
     /// the tree under a stationary pointer is rebuilt.
+    ///
+    /// It is also what moves the highlight onto the key under the pointer. That used to be each
+    /// key's MouseEnter, which has no such guard: WPF raises it for a key BUILT under a pointer
+    /// that has not moved, so every rebuild -- letters to symbols, a switch on the options page --
+    /// dragged the D-pad's highlight to wherever the hidden cursor happened to be parked.
     /// </summary>
     private void OnRootMouseMove(object sender, MouseEventArgs e)
     {
         var p = e.GetPosition(Root);
         if (p == _lastPointer) return;
         _lastPointer = p;
-        if (_padMode) { _padMode = false; Paint(); }
+        bool changed = _padMode;
+        _padMode = false;
+        // Over the gaps between keys the last key stays lit, as it always has; only leaving the
+        // keyboard or reaching the grab bar puts the pointer on nothing.
+        if (SlotUnder(e.OriginalSource as DependencyObject) is { } s && (s != _focus || !_pointerOnKey))
+        {
+            FocusOn(s, s.Row);
+            _pointerOnKey = true;
+            changed = true;
+        }
+        if (changed) Paint();
+    }
+
+    private static Slot? SlotUnder(DependencyObject? d)
+    {
+        while (d is not null)
+        {
+            if (d is Border { Tag: Slot s }) return s;
+            d = d is Visual ? VisualTreeHelper.GetParent(d) : LogicalTreeHelper.GetParent(d);
+        }
+        return null;
     }
 
     // ---- moving the window ----
 
     private bool _dragging;
-    private NativeMethods.POINT _dragFrom;
+    private POINT _dragFrom;
     private int _dragOriginX, _dragOriginY;
     /// <summary>Once it has been dragged, showing it again must not yank it back to the default
     /// spot -- it was moved off something for a reason.</summary>
@@ -196,8 +230,8 @@ public partial class KeyboardWindow : Window
 
     private void BeginDrag()
     {
-        NativeMethods.GetCursorPos(out _dragFrom);
-        NativeMethods.GetWindowRect(new WindowInteropHelper(this).Handle, out var r);
+        GetCursorPos(out _dragFrom);
+        GetWindowRect(Handle, out var r);
         _dragOriginX = r.Left;
         _dragOriginY = r.Top;
         _dragging = true;
@@ -207,7 +241,7 @@ public partial class KeyboardWindow : Window
 
     private void DragToCursor()
     {
-        NativeMethods.GetCursorPos(out var p);
+        GetCursorPos(out var p);
         _moved = true;
         MoveTo(_dragOriginX + (p.X - _dragFrom.X), _dragOriginY + (p.Y - _dragFrom.Y));
     }
@@ -220,8 +254,7 @@ public partial class KeyboardWindow : Window
 
     /// <summary>Move without resizing or activating; screen pixels, so no DIP conversion to get wrong.</summary>
     private void MoveTo(int x, int y) =>
-        NativeMethods.SetWindowPos(new WindowInteropHelper(this).Handle, NativeMethods.HWND_TOPMOST,
-            x, y, 0, 0, NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_NOSIZE);
+        SetWindowPos(Handle, HWND_TOPMOST, x, y, 0, 0, SWP_NOACTIVATE | SWP_NOSIZE);
 
     /// <summary>
     /// Size the keyboard for a display, show it, and park it near the bottom of that display.
@@ -231,35 +264,115 @@ public partial class KeyboardWindow : Window
     /// does not exist before that either. So: build, show, measure the actual window rect, then
     /// move it without resizing. Reading the rect back rather than converting DIPs by hand keeps
     /// it correct on a scaled display.
+    ///
+    /// Also how a change made in Settings reaches a keyboard that is already up.
     /// </summary>
-    public void ShowOn(DisplayInfo display, double scale)
+    public void ShowOn(DisplayInfo display, double scale, KeyboardOptions options)
     {
-        bool resized = Math.Abs(scale - _scale) > 0.001;
+        bool fresh = !IsVisible;
+        bool rescaled = Math.Abs(scale - _scale) > 0.001 || display != _display;
+        _display = display;
         _scale = scale;
-        _keySize = Math.Round(Math.Clamp(display.Height * 0.058 * scale, 28, 150));
-        _gap = Math.Round(Math.Max(2, _keySize * 0.10));
-        Build();
+        _options = options;
+        if (fresh)
+        {
+            // A new keyboard starts on its keys, with nothing latched and nothing known about the
+            // field it is typing into. A Ctrl left latched from last time would be a trap.
+            _optionsPage = false;
+            _shift = false;
+            _mods.Clear();
+            _text.Reset();
+            _suggestions = Array.Empty<string>();
+        }
 
+        SizeKeys();
+        Build();
         Show();
         UpdateLayout();
+        FitToDisplay();
+        Place(rescaled);
 
-        // A resize invalidates wherever it was dragged to -- the old top-left would push a bigger
-        // keyboard off the screen edge -- so re-park it.
-        if (_moved && !resized) return;
-        _moved = false;
-
-        var hwnd = new WindowInteropHelper(this).Handle;
-        NativeMethods.GetWindowRect(hwnd, out var r);
-        int w = r.Right - r.Left, h = r.Bottom - r.Top;
-
-        MoveTo(display.X + (display.Width - w) / 2,
-               display.Y + display.Height - h - (int)(display.Height * 0.06));
+        if (fresh)
+        {
+            _target = Probe();
+            _targetSettled = true;
+        }
+        RefreshSuggestions();
     }
+
+    private void SizeKeys()
+    {
+        if (_display is not { } d) return;
+        _keySize = Math.Round(Math.Clamp(d.Height * 0.058 * _scale, 28, 150));
+        _gap = Math.Round(Math.Max(2, _keySize * 0.10));
+    }
+
+    /// <summary>
+    /// Shrink the keys until the board fits. Every block switched on adds width -- all of them
+    /// make it twenty columns -- and at a large size that runs off the side of the screen.
+    /// </summary>
+    private void FitToDisplay()
+    {
+        if (_display is not { } d) return;
+        for (int pass = 0; pass < 3; pass++)
+        {
+            GetWindowRect(Handle, out var r);
+            double w = r.Right - r.Left, h = r.Bottom - r.Top;
+            if (w <= 0 || h <= 0) return;
+            double f = Math.Min(d.Width * 0.96 / w, d.Height * 0.7 / h);
+            if (f >= 1 || _keySize <= 24) return;
+            _keySize = Math.Max(24, Math.Floor(_keySize * f));
+            _gap = Math.Round(Math.Max(2, _keySize * 0.10));
+            Build();
+            UpdateLayout();
+        }
+    }
+
+    /// <summary>
+    /// Park it bottom-centre, or -- once it has been dragged somewhere -- leave it there but keep it
+    /// on the screen: switching the number pad on grows it to the right. A new size or display
+    /// invalidates wherever it was dragged to, so that re-parks it.
+    /// </summary>
+    private void Place(bool repark)
+    {
+        if (_display is not { } d) return;
+        GetWindowRect(Handle, out var r);
+        int w = r.Right - r.Left, h = r.Bottom - r.Top;
+        if (_moved && !repark)
+        {
+            int x = Math.Clamp(r.Left, d.X, Math.Max(d.X, d.X + d.Width - w));
+            int y = Math.Clamp(r.Top, d.Y, Math.Max(d.Y, d.Y + d.Height - h));
+            if (x != r.Left || y != r.Top) MoveTo(x, y);
+            return;
+        }
+        _moved = false;
+        MoveTo(d.X + (d.Width - w) / 2, d.Y + d.Height - h - (int)(d.Height * 0.06));
+    }
+
+    /// <summary>The keyboard is up and its make-up changed: size, build, fit, and keep it on screen.</summary>
+    private void Relayout()
+    {
+        SizeKeys();
+        Build();
+        UpdateLayout();
+        FitToDisplay();
+        Place(repark: false);
+    }
+
+    // ---- building the board ----
+
+    private double Unit => _keySize + _gap;
+    private double BarHeight => Math.Round(_keySize * 0.8);
+
+    /// <summary>Top of a row. The bar is shorter than a key and stands a little apart from them.</summary>
+    private double RowTop(int row) => row == 0 ? 0 : BarHeight + Math.Round(_gap * 1.6) + (row - 1) * Unit;
 
     private void Build()
     {
-        Rows.Children.Clear();
-        _cells.Clear();
+        var keep = _focus?.Key;
+        _layout = _optionsPage ? KeyboardLayout.Options(_options) : KeyboardLayout.Keys(_options, _symbols);
+        Board.Children.Clear();
+        _barNote = null;
 
         Grip.Height = Math.Round(_keySize * 0.44);
         Grip.Margin = new Thickness(0, 0, 0, Math.Round(_keySize * 0.10));
@@ -267,63 +380,176 @@ public partial class KeyboardWindow : Window
         GripBar.Width = Math.Round(_keySize * 1.4);
         GripBar.Height = Math.Max(3, Math.Round(_keySize * 0.06));
 
-        for (int r = 0; r < _layout.Length; r++)
+        Board.Width = _layout.Width * Unit - _gap;
+        Board.Height = RowTop(_layout.Rows) - _gap;
+
+        // With no suggestion slots the bar says why: this is the options page, or suggestions are off.
+        if (!_layout.Slots.Any(s => s.Key.Action == KeyAction.Suggestion))
         {
-            var panel = new StackPanel
+            _barNote = new TextBlock
             {
-                Orientation = Orientation.Horizontal,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                Margin = new Thickness(0, r == 0 ? 0 : _gap, 0, 0),
+                Text = _optionsPage ? "Keyboard options" : "Word suggestions are off",
+                FontSize = Math.Round(_keySize * 0.26),
+                FontFamily = TextFont,
+                Foreground = NoteInk,
+                VerticalAlignment = VerticalAlignment.Center,
             };
-            var rowCells = new List<Border>();
-
-            for (int c = 0; c < _layout[r].Length; c++)
+            Board.Children.Add(new Border
             {
-                var key = _layout[r][c];
-                int rr = r, cc = c;
+                Width = Math.Max(0, (_layout.Width - 1) * Unit - _gap),
+                Height = BarHeight,
+                Padding = new Thickness(Math.Round(_keySize * 0.2), 0, 0, 0),
+                Child = _barNote,
+            });
+        }
 
-                // The arrows are single glyphs like a character key, so they get its type size --
-                // at the word-key size they read as specks.
-                bool glyph = key.Action is KeyAction.Char or KeyAction.CaretLeft or KeyAction.CaretRight;
-                var label = new TextBlock
+        foreach (var s in _layout.Slots)
+        {
+            var cell = MakeCell(s, s.W * Unit - _gap, s.Row == 0 ? BarHeight : s.RowSpan * Unit - _gap);
+            Canvas.SetLeft(cell, Math.Round(s.X * Unit));
+            Canvas.SetTop(cell, RowTop(s.Row));
+            Board.Children.Add(cell);
+        }
+
+        // Keep the highlight: on the same key if it is still there (letters and symbols share most
+        // of theirs), else on whatever is now at the same spot.
+        var same = keep is null ? null : _layout.Slots.FirstOrDefault(s => s.Key == keep);
+        if (same is not null)
+        {
+            _focus = same;
+            if (!same.Covers(_focusRow)) _focusRow = same.Row;
+        }
+        else if (_layout.Near(_focusRow, _wantX) is { } near)
+        {
+            _focus = near.Key;
+            _focusRow = near.Row;
+        }
+        Paint();
+    }
+
+    private Border MakeCell(Slot s, double w, double h)
+    {
+        var key = s.Key;
+        var content = new Grid();
+        var cell = new Border
+        {
+            Width = w,
+            Height = h,
+            CornerRadius = new CornerRadius(_keySize * 0.16),
+            BorderThickness = new Thickness(1),
+            Child = content,
+        };
+
+        switch (key.Action)
+        {
+            case KeyAction.Suggestion:
+                cell.CornerRadius = new CornerRadius(_keySize * 0.14);
+                s.Label = new TextBlock
+                {
+                    FontSize = Math.Round(_keySize * 0.30),
+                    FontFamily = TextFont,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                    Margin = new Thickness(Math.Round(_keySize * 0.3), 0, Math.Round(_keySize * 0.3), 0),
+                };
+                content.Children.Add(s.Label);
+                break;
+
+            case KeyAction.Options:
+                // Segoe Fluent Icons on Windows 11 and MDL2 Assets on 10 both have the gear at E713.
+                s.Label = new TextBlock
+                {
+                    Text = "",
+                    FontFamily = IconFont,
+                    FontSize = Math.Round(_keySize * 0.34),
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center,
+                };
+                content.Children.Add(s.Label);
+                break;
+
+            case KeyAction.Option:
+                BuildOption(s, content);
+                break;
+
+            default:
+                // One glyph -- a letter, a digit, an arrow -- gets the character size; at the
+                // word-key size an arrow reads as a speck.
+                bool glyph = key.Action == KeyAction.Char || key.Lower.Length == 1;
+                s.Label = new TextBlock
                 {
                     FontSize = glyph ? _keySize * 0.42 : _keySize * 0.26,
                     FontFamily = KeyFont,
                     HorizontalAlignment = HorizontalAlignment.Center,
                     VerticalAlignment = VerticalAlignment.Center,
                 };
-
-                var content = new Grid();
-                content.Children.Add(label);
-                if (key.Hint is { } hint) content.Children.Add(HintBadge(hint));
-
-                var cell = new Border
-                {
-                    Width = _keySize * key.Units + _gap * (key.Units - 1),
-                    Height = _keySize,
-                    CornerRadius = new CornerRadius(_keySize * 0.16),
-                    Margin = new Thickness(c == 0 ? 0 : _gap, 0, 0, 0),
-                    BorderThickness = new Thickness(1),
-                    Child = content,
-                    Tag = label,
-                };
-
-                // The pointer is a first-class way to drive this: hovering moves the highlight and
-                // a click presses, so the stick can type without the D-pad and vice versa.
-                cell.MouseEnter += (_, _) => { _row = rr; _col = cc; _wantCol = ColumnOf(rr, cc); SetPointerOnKey(true); Paint(); };
-                cell.MouseLeftButtonUp += (_, _) => { _row = rr; _col = cc; Press(); };
-
-                rowCells.Add(cell);
-                panel.Children.Add(cell);
-            }
-
-            _cells.Add(rowCells);
-            Rows.Children.Add(panel);
+                content.Children.Add(s.Label);
+                break;
         }
 
-        _row = Math.Clamp(_row, 0, _layout.Length - 1);
-        _col = Math.Clamp(_col, 0, _layout[_row].Length - 1);
-        Paint();
+        if (key.Hint is { } hint)
+        {
+            s.Badge = HintBadge(hint);
+            content.Children.Add(s.Badge);
+        }
+        s.Cell = cell;
+        cell.Tag = s;
+
+        // The pointer is a first-class way to drive this: hovering moves the highlight (see
+        // OnRootMouseMove) and a click presses, so the stick can type without the D-pad and vice versa.
+        cell.MouseLeftButtonUp += (_, _) => { FocusOn(s, s.Row); Press(); };
+        return cell;
+    }
+
+    /// <summary>An option row: its name and what it adds on the left, a switch on the right.</summary>
+    private void BuildOption(Slot s, Grid content)
+    {
+        content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        content.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        double inset = Math.Round(_keySize * 0.3);
+
+        var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(inset, 0, 0, 0) };
+        s.Label = new TextBlock
+        {
+            Text = s.Key.Lower,
+            FontSize = Math.Round(_keySize * 0.27),
+            FontFamily = TextFont,
+            FontWeight = FontWeights.SemiBold,
+        };
+        s.Detail = new TextBlock
+        {
+            Text = s.Key.Detail,
+            FontSize = Math.Round(_keySize * 0.19),
+            FontFamily = TextFont,
+            Margin = new Thickness(0, Math.Round(_keySize * 0.03), 0, 0),
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        };
+        text.Children.Add(s.Label);
+        text.Children.Add(s.Detail);
+
+        double th = Math.Round(_keySize * 0.40), pad = Math.Max(3, Math.Round(th * 0.14)), knob = th - 2 * pad;
+        s.Knob = new Border
+        {
+            Width = knob,
+            Height = knob,
+            CornerRadius = new CornerRadius(knob / 2),
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(pad - 1.5, 0, pad - 1.5, 0),
+        };
+        s.Track = new Border
+        {
+            Width = Math.Round(th * 1.8),
+            Height = th,
+            CornerRadius = new CornerRadius(th / 2),
+            BorderThickness = new Thickness(1.5),
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(inset, 0, inset, 0),
+            Child = s.Knob,
+        };
+        Grid.SetColumn(s.Track, 1);
+        content.Children.Add(text);
+        content.Children.Add(s.Track);
     }
 
     private string Face(KeyDef k) =>
@@ -333,6 +559,8 @@ public partial class KeyboardWindow : Window
     // were nearly the same value, so the grid read as one grey slab. Each key now carries its own
     // lighter fill and a visible edge.
     private static readonly FontFamily KeyFont = new("Segoe UI Symbol, Segoe UI");
+    private static readonly FontFamily TextFont = new("Segoe UI");
+    private static readonly FontFamily IconFont = new("Segoe Fluent Icons, Segoe MDL2 Assets");
     private static readonly Brush KeyFill = new SolidColorBrush(Color.FromRgb(0x3C, 0x3C, 0x48));
     private static readonly Brush KeyEdge = new SolidColorBrush(Color.FromRgb(0x7E, 0x7E, 0x92));
     private static readonly Brush KeyInk = new SolidColorBrush(Colors.White);
@@ -342,6 +570,14 @@ public partial class KeyboardWindow : Window
     private static readonly Brush LatchFill = new SolidColorBrush(Color.FromRgb(0x7A, 0x59, 0x36));
     private static readonly Brush PillFill = new SolidColorBrush(Color.FromArgb(0xB8, 0x14, 0x14, 0x18));
     private static readonly Brush PillInk = new SolidColorBrush(Color.FromRgb(0xF3, 0xF2, 0xF0));
+    // The bar sits between the window and the keys in value, so it reads as a strip rather than
+    // another row of keys -- which is what it is.
+    private static readonly Brush BarFill = new SolidColorBrush(Color.FromRgb(0x26, 0x26, 0x2E));
+    private static readonly Brush NoteInk = new SolidColorBrush(Color.FromArgb(0x8A, 0xF6, 0xF5, 0xF3));
+    private static readonly Brush DetailInk = new SolidColorBrush(Color.FromRgb(0xB4, 0xB4, 0xC2));
+    private static readonly Brush FocusDetail = new SolidColorBrush(Color.FromRgb(0x3A, 0x2A, 0x18));
+    private static readonly Brush TrackOff = new SolidColorBrush(Color.FromRgb(0x24, 0x24, 0x2B));
+    private static readonly Brush KnobOff = new SolidColorBrush(Color.FromRgb(0x9A, 0x9A, 0xA8));
 
     /// <summary>
     /// The pad button drawn in a key's corner. The face buttons get their real shape and colour
@@ -423,7 +659,7 @@ public partial class KeyboardWindow : Window
         }
     }
 
-    private UIElement HintBadge(string hint)
+    private FrameworkElement HintBadge(string hint)
     {
         var (text, disc, ink) = HintFace(hint);
         bool face = disc is not null;
@@ -458,75 +694,95 @@ public partial class KeyboardWindow : Window
         return badge;
     }
 
-    /// <summary>Repaint faces and the highlight without rebuilding the tree.</summary>
+    /// <summary>Repaint faces, suggestions, switches and the highlight without rebuilding the tree.</summary>
     private void Paint()
     {
         bool show = Armed;
-        for (int r = 0; r < _cells.Count; r++)
-            for (int c = 0; c < _cells[r].Count; c++)
-            {
-                var key = _layout[r][c];
-                var cell = _cells[r][c];
-                bool focused = show && r == _row && c == _col;
-                bool latched = key.Action == KeyAction.Shift && _shift;
+        foreach (var s in _layout.Slots)
+        {
+            if (s.Cell is not { } cell) continue;
+            var key = s.Key;
+            bool focused = show && s == _focus;
 
-                cell.Background = focused ? FocusFill : latched ? LatchFill : KeyFill;
-                cell.BorderBrush = focused ? FocusEdge : KeyEdge;
-                if (cell.Tag is TextBlock tb)
+            switch (key.Action)
+            {
+                case KeyAction.Suggestion:
                 {
-                    tb.Text = Face(key);
-                    tb.Foreground = focused ? FocusInk : KeyInk;
+                    string text = key.Index < _suggestions.Count ? _text.Display(_suggestions[key.Index], _shift) : "";
+                    cell.Background = focused ? FocusFill : BarFill;
+                    cell.BorderBrush = focused ? FocusEdge : Brushes.Transparent;
+                    s.Label!.Text = text;
+                    s.Label.Foreground = focused ? FocusInk : KeyInk;
+                    // RS takes the first suggestion; the badge only says so when there is one.
+                    if (s.Badge is { } b) b.Visibility = text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+                    continue;
+                }
+                case KeyAction.Option:
+                {
+                    // On is a filled track with the knob right; off is a hollow one with it left.
+                    // Over the orange of the highlight the fill flips to dark, so both still read.
+                    bool on = _options[key.Option];
+                    cell.Background = focused ? FocusFill : KeyFill;
+                    cell.BorderBrush = focused ? FocusEdge : KeyEdge;
+                    s.Label!.Foreground = focused ? FocusInk : KeyInk;
+                    s.Detail!.Foreground = focused ? FocusDetail : DetailInk;
+                    s.Track!.Background = on ? (focused ? FocusInk : FocusFill) : (focused ? Brushes.Transparent : TrackOff);
+                    s.Track.BorderBrush = on ? (focused ? FocusInk : FocusFill) : (focused ? FocusInk : KeyEdge);
+                    s.Knob!.Background = on ? (focused ? FocusFill : KeyInk) : (focused ? FocusInk : KnobOff);
+                    s.Knob.HorizontalAlignment = on ? HorizontalAlignment.Right : HorizontalAlignment.Left;
+                    continue;
                 }
             }
+
+            bool latched = key.Action switch
+            {
+                KeyAction.Shift => _shift,
+                KeyAction.Modifier => _mods.Contains(key.Vk),
+                KeyAction.Options => _optionsPage,
+                _ => false,
+            };
+            cell.Background = focused ? FocusFill : latched ? LatchFill : KeyFill;
+            cell.BorderBrush = focused ? FocusEdge : KeyEdge;
+            if (s.Label is { } tb)
+            {
+                if (key.Action != KeyAction.Options) tb.Text = Face(key);
+                tb.Foreground = focused ? FocusInk : KeyInk;
+            }
+        }
     }
 
     // ---- gamepad-facing API ----
 
-    /// <summary>Leftmost grid column a key occupies.</summary>
-    private int ColumnOf(int row, int col)
+    private void FocusOn(Slot s, int row)
     {
-        int x = 0;
-        for (int i = 0; i < col; i++) x += _layout[row][i].Units;
-        return x;
-    }
-
-    /// <summary>The key covering <paramref name="column"/> in a row. Every row spans all
-    /// <see cref="Columns"/> columns, so this always finds one.</summary>
-    private int KeyAtColumn(int row, int column)
-    {
-        column = Math.Clamp(column, 0, Columns - 1);
-        int x = 0;
-        for (int c = 0; c < _layout[row].Length; c++)
-        {
-            x += _layout[row][c].Units;
-            if (column < x) return c;
-        }
-        return _layout[row].Length - 1;
+        _focus = s;
+        _focusRow = row;
+        _wantX = s.Center;
     }
 
     public void Move(string dir)
     {
         // A D-pad press is the pad taking over from the pointer, exactly as in the launcher.
         _padMode = true;
-        switch (dir)
+        if (_focus is not null)
         {
-            case "Left":
-                _col = _col > 0 ? _col - 1 : _layout[_row].Length - 1;
-                _wantCol = ColumnOf(_row, _col);
-                break;
-            case "Right":
-                _col = _col < _layout[_row].Length - 1 ? _col + 1 : 0;
-                _wantCol = ColumnOf(_row, _col);
-                break;
-            case "Up":
-            case "Down":
-                _row = dir == "Up"
-                    ? (_row > 0 ? _row - 1 : _layout.Length - 1)
-                    : (_row < _layout.Length - 1 ? _row + 1 : 0);
-                // _wantCol is sticky, so passing through a wide key and out the other side
-                // returns to the column you started in rather than that key's left edge.
-                _col = KeyAtColumn(_row, _wantCol);
-                break;
+            switch (dir)
+            {
+                case "Left":
+                case "Right":
+                    FocusOn(_layout.Step(_focus, _focusRow, dir == "Left" ? -1 : 1), _focusRow);
+                    break;
+                case "Up":
+                case "Down":
+                    // _wantX is sticky, so passing through a wide key and out the other side
+                    // returns to the column you started in rather than that key's middle.
+                    if (_layout.Vertical(_focus, _focusRow, _wantX, dir == "Up" ? -1 : 1) is { } to)
+                    {
+                        _focus = to.Key;
+                        _focusRow = to.Row;
+                    }
+                    break;
+            }
         }
         Paint();
     }
@@ -534,42 +790,300 @@ public partial class KeyboardWindow : Window
     /// <summary>Press the highlighted key.</summary>
     public void Press()
     {
-        if (!Armed) return;
-        var key = _layout[_row][_col];
+        if (!Armed || _focus is null) return;
+        var key = _focus.Key;
         switch (key.Action)
         {
-            case KeyAction.Char:
-                NativeMethods.SendChar(Face(key)[0]);
-                // Shift is one-shot, like a phone keyboard: nobody wants to unlatch it by hand
-                // after every capital.
-                if (_shift) { _shift = false; Paint(); }
-                break;
+            case KeyAction.Options: ToggleOptionsPage(); return;
+            case KeyAction.Option:  SetOption(key.Option, !_options[key.Option]); return;
+        }
+        if (_optionsPage) return;
+
+        switch (key.Action)
+        {
+            case KeyAction.Char:       TypeChar(Face(key)[0]); break;
             case KeyAction.Shift:      ToggleShift(); break;
             case KeyAction.Layer:      ToggleLayer(); break;
             case KeyAction.Backspace:  Backspace(); break;
-            case KeyAction.Delete:     NativeMethods.SendVirtualKey(NativeMethods.VK_DELETE, extended: true); break;
+            // Delete only takes what is after the caret, so the word being typed is untouched.
+            case KeyAction.Delete:     TapKey(VK_DELETE, extended: true, takesShift: false, keepsWord: true); break;
             case KeyAction.Space:      Space(); break;
             case KeyAction.Enter:      Commit(); break;
-            case KeyAction.Tab:        NativeMethods.SendVirtualKey(NativeMethods.VK_TAB); break;
-            case KeyAction.Escape:     NativeMethods.SendVirtualKey(NativeMethods.VK_ESCAPE); break;
+            case KeyAction.Tab:        TapKey(VK_TAB, extended: false, takesShift: true); break;
+            case KeyAction.Escape:     TapKey(VK_ESCAPE, extended: false, takesShift: false); break;
             case KeyAction.CaretLeft:  CaretLeft(); break;
             case KeyAction.CaretRight: CaretRight(); break;
+            case KeyAction.Vk:         TapKey(key.Vk, key.Extended, key.TakesShift); break;
+            case KeyAction.Modifier:   ToggleModifier(key.Vk); break;
+            case KeyAction.Suggestion: AcceptSuggestion(key.Index); break;
         }
     }
 
-    public void Backspace() => NativeMethods.SendVirtualKey(NativeMethods.VK_BACK);
-    public void Space() => NativeMethods.SendChar(' ');
-    public void ToggleShift() { _shift = !_shift; Paint(); }
-    public void ToggleLayer() { _layout = _layout == Letters ? Symbols : Letters; _shift = false; Build(); }
-    public void CaretLeft() => NativeMethods.SendVirtualKey(NativeMethods.VK_LEFT, extended: true);
-    public void CaretRight() => NativeMethods.SendVirtualKey(NativeMethods.VK_RIGHT, extended: true);
+    /// <summary>
+    /// A character key. With Ctrl, Win or Alt latched it is a shortcut, and Ctrl then C has to
+    /// arrive as Ctrl+C: a character sent by code point with Ctrl held is not one to most apps. So
+    /// it goes as the key that types that character on the current layout, with the shift state the
+    /// layout needs for it -- Ctrl, Shift, Z for a latched Shift's "Z".
+    /// </summary>
+    private void TypeChar(char c)
+    {
+        CheckTarget();
+        if (_mods.Count > 0)
+        {
+            short scan = VkKeyScanW(c);
+            if (scan != -1)
+            {
+                var mods = new List<ushort>(_mods);
+                int state = (scan >> 8) & 0xFF;
+                if ((state & 1) != 0 && !mods.Contains(VK_SHIFT)) mods.Add(VK_SHIFT);
+                if ((state & 2) != 0 && !mods.Contains(VK_CONTROL)) mods.Add(VK_CONTROL);
+                if ((state & 4) != 0 && !mods.Contains(VK_MENU)) mods.Add(VK_MENU);
+                Output(KeyStroke.Tap((ushort)(scan & 0xFF), extended: false, mods.ToArray()));
+            }
+            else Output(KeyStroke.Chars(c.ToString()));
+            _mods.Clear();
+            _shift = false;
+            // A shortcut can do anything to the text -- select all, paste, undo.
+            _text.Reset();
+            Typed();
+            return;
+        }
 
-    /// <summary>Enter, then get out of the way -- the same thing Menu does on the Xbox keyboard.</summary>
+        if (_text.PunctuationSwap(c) is { } swapped)
+        {
+            Output(KeyStroke.Tap(VK_BACK));
+            Output(KeyStroke.Chars(swapped));
+            _text.Punctuated(swapped);
+        }
+        else
+        {
+            Output(KeyStroke.Chars(c.ToString()));
+            _text.Typed(c.ToString());
+        }
+        // Shift is one-shot, like a phone keyboard: nobody wants to unlatch it by hand after
+        // every capital.
+        _shift = false;
+        Typed();
+    }
+
+    /// <summary>
+    /// Tap a key with whatever is latched, then let the latches it used go. A latched Shift only
+    /// goes with keys that take it (Tab, the arrows, F-keys); Ctrl, Win and Alt go with anything.
+    /// Everything but Delete loses track of the word: the caret has moved, or might have.
+    /// </summary>
+    private void TapKey(ushort vk, bool extended, bool takesShift, bool keepsWord = false)
+    {
+        bool shift = takesShift && _shift;
+        bool combo = _mods.Count > 0;
+        var mods = new List<ushort>(_mods);
+        if (shift) mods.Add(VK_SHIFT);
+        CheckTarget();
+        Output(KeyStroke.Tap(vk, extended, mods.ToArray()));
+        if (shift) _shift = false;
+        _mods.Clear();
+        if (!keepsWord || combo) _text.Reset();
+        Typed();
+    }
+
+    /// <summary>After anything went to the app: re-arm the caret check, ask for suggestions, repaint.</summary>
+    private void Typed()
+    {
+        _settle.Stop();
+        _settle.Start();
+        RefreshSuggestions();
+        Paint();
+    }
+
+    public void Backspace()
+    {
+        if (_optionsPage) return;
+        CheckTarget();
+        bool combo = _mods.Count > 0;
+        // Ctrl+Backspace takes a whole word, which is worth having; it also means the tail no
+        // longer knows what is there.
+        Output(KeyStroke.Tap(VK_BACK, extended: false, _mods.ToArray()));
+        if (combo) { _mods.Clear(); _text.Reset(); }
+        else _text.Backspaced();
+        Typed();
+    }
+
+    public void Space()
+    {
+        if (_optionsPage) return;
+        if (_mods.Count > 0) { TapKey(VK_SPACE, extended: false, takesShift: false); return; }
+        CheckTarget();
+        Output(KeyStroke.Chars(" "));
+        _text.Typed(" ");
+        Typed();
+    }
+
+    public void ToggleShift()
+    {
+        if (_optionsPage) return;
+        _shift = !_shift;
+        // The suggestions follow: a latched Shift capitalises the one you pick.
+        Paint();
+    }
+
+    public void ToggleLayer()
+    {
+        if (_optionsPage) return;
+        _symbols = !_symbols;
+        _shift = false;
+        Build();
+    }
+
+    private void ToggleModifier(ushort vk)
+    {
+        if (!_mods.Remove(vk)) _mods.Add(vk);
+        Paint();
+    }
+
+    public void CaretLeft()
+    {
+        if (_optionsPage) return;
+        TapKey(VK_LEFT, extended: true, takesShift: true);
+    }
+
+    public void CaretRight()
+    {
+        if (_optionsPage) return;
+        TapKey(VK_RIGHT, extended: true, takesShift: true);
+    }
+
+    /// <summary>Enter, then get out of the way -- the same thing Menu does on the Xbox keyboard.
+    /// On the options page it only goes back to the keys.</summary>
     public void Commit()
     {
-        NativeMethods.SendVirtualKey(NativeMethods.VK_RETURN);
+        if (_optionsPage) { ToggleOptionsPage(); return; }
+        CheckTarget();
+        Output(KeyStroke.Tap(VK_RETURN, extended: false, _mods.ToArray()));
+        _mods.Clear();
+        _text.Reset();
         CloseRequested?.Invoke();
     }
 
     public void RequestClose() => CloseRequested?.Invoke();
+
+    // ---- suggestions ----
+
+    /// <summary>
+    /// Put a suggestion in place of the word being typed, with a space after it. RS takes the
+    /// first; A takes the highlighted one. Only the letters that differ are retyped.
+    /// </summary>
+    public void AcceptSuggestion(int index)
+    {
+        if (_optionsPage || index >= _suggestions.Count) return;
+        var candidate = _suggestions[index];
+        CheckTarget();
+        var (backspaces, insert) = _text.Replacement(candidate, _shift);
+        for (int i = 0; i < backspaces; i++) Output(KeyStroke.Tap(VK_BACK));
+        Output(KeyStroke.Chars(insert));
+        _text.Replaced(backspaces, insert);
+        _shift = false;
+        Typed();
+    }
+
+    /// <summary>
+    /// Ask for suggestions for the word as it now stands. The answer lands a few milliseconds later
+    /// and is dropped if anything was typed in between. The old ones stay up until then, so the bar
+    /// does not blink on every key.
+    /// </summary>
+    private void RefreshSuggestions()
+    {
+        int seq = ++_suggestSeq;
+        var word = _text.CurrentWord;
+        // A word with a digit in it is a code, a time or a gamertag -- nothing to finish.
+        if (!_options.Suggestions || _optionsPage || word.Any(char.IsDigit))
+        {
+            if (_suggestions.Count > 0) { _suggestions = Array.Empty<string>(); Paint(); }
+            return;
+        }
+        var previous = _text.PreviousWords(3);
+        int max = KeyboardLayout.SuggestionCount(KeyboardLayout.WidthFor(_options));
+        Task.Run(() => _predictor.SuggestAsync(word, previous, max)).ContinueWith(t =>
+        {
+            if (!t.IsCompletedSuccessfully) return;
+            Dispatcher.BeginInvoke(() =>
+            {
+                if (seq != _suggestSeq) return;
+                _suggestions = t.Result;
+                Paint();
+            });
+        }, TaskScheduler.Default);
+    }
+
+    /// <summary>
+    /// Before anything goes to the app: has its caret moved since the keyboard last looked? A
+    /// different focused window or control, or a caret that has left the spot it settled on after
+    /// the last key, means somebody clicked or used a real keyboard -- and the word the keyboard
+    /// thinks it is in is no longer under the caret. Replacing it then would delete whatever is.
+    /// Apps with no system caret (most games) are judged on focus alone.
+    /// </summary>
+    private void CheckTarget()
+    {
+        var now = Probe();
+        bool moved = now.Focus != _target.Focus
+            || (_targetSettled && now.CaretWindow != IntPtr.Zero
+                && (now.CaretWindow != _target.CaretWindow || now.CaretX != _target.CaretX || now.CaretY != _target.CaretY));
+        if (moved) _text.Reset();
+        _target = now;
+        _targetSettled = false;
+    }
+
+    /// <summary>The pad clicked somewhere while the keyboard was up: the caret may be anywhere now.</summary>
+    public void TargetClicked()
+    {
+        _text.Reset();
+        RefreshSuggestions();
+        Paint();
+    }
+
+    private static TargetState ProbeForeground()
+    {
+        var fg = GetForegroundWindow();
+        uint thread = GetWindowThreadProcessId(fg, out _);
+        var info = new GUITHREADINFO { cbSize = Marshal.SizeOf<GUITHREADINFO>() };
+        if (thread == 0 || !GetGUIThreadInfo(thread, ref info)) return new TargetState(fg, IntPtr.Zero, 0, 0);
+        return new TargetState(info.hwndFocus != IntPtr.Zero ? info.hwndFocus : fg,
+            info.hwndCaret, info.rcCaret.Left, info.rcCaret.Top);
+    }
+
+    private static void Deliver(KeyStroke s)
+    {
+        if (s.Text is { } text) SendText(text);
+        else SendKeyCombo(s.Vk, s.Extended, s.Mods);
+    }
+
+    // ---- the options page ----
+
+    /// <summary>
+    /// The gear swaps the keys for the options and back. Opening lands on the first switch;
+    /// closing lands back on the gear, so A, A is in and out again.
+    /// </summary>
+    private void ToggleOptionsPage()
+    {
+        _optionsPage = !_optionsPage;
+        _focus = null;
+        RefreshSuggestions();
+        Build();
+        var land = _layout.Slots.First(s => s.Key.Action == (_optionsPage ? KeyAction.Option : KeyAction.Options));
+        FocusOn(land, land.Row);
+        Paint();
+    }
+
+    /// <summary>B on the options page goes back to the keys rather than closing the keyboard.</summary>
+    public bool LeaveOptions()
+    {
+        if (!_optionsPage) return false;
+        ToggleOptionsPage();
+        return true;
+    }
+
+    private void SetOption(KeyboardOption option, bool on)
+    {
+        _options = _options.With(option, on);
+        OptionsChanged?.Invoke(_options);
+        Relayout();
+    }
 }

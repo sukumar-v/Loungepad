@@ -3457,6 +3457,20 @@ function allSettingsRows() {
   rows.push(sliderRow("Keyboard size", () => s.keyboardScale, 0.6, 1.6, 0.05,
     v => set(() => s.keyboardScale = v), v => Math.round(v * 100) + "%",
     "Scales the keys up or down from the size Loungepad picks for the TV"));
+  // The same five switches are on the keyboard itself, behind the gear at the right end of its
+  // suggestion bar. A change made there arrives here as a keyboardOptions message.
+  rows.push(toggleRow("Word suggestions",
+    "Finishes the word you are typing and guesses the next one, from Windows' own dictionary. " +
+    "[[RS]] takes the first suggestion. Also switched from the gear on the keyboard",
+    () => s.keyboardSuggestions !== false, v => set(() => s.keyboardSuggestions = v)));
+  rows.push(toggleRow("Function keys", "F1 to F12 along the top, with Print Screen, Scroll Lock and Pause over the navigation keys",
+    () => !!s.keyboardFunctionKeys, v => set(() => s.keyboardFunctionKeys = v)));
+  rows.push(toggleRow("Navigation keys", "Insert, Delete, Home, End, Page Up, Page Down and all four arrows, beside the letters",
+    () => !!s.keyboardNavKeys, v => set(() => s.keyboardNavKeys = v)));
+  rows.push(toggleRow("Number pad", "The number pad of a full-size keyboard. Games see real number-pad keys, so a binding to Num 8 works",
+    () => !!s.keyboardNumpad, v => set(() => s.keyboardNumpad = v)));
+  rows.push(toggleRow("Ctrl, Win and Alt", "On the bottom row. Each holds for the next key, like Shift, so Ctrl then C copies",
+    () => !!s.keyboardModifiers, v => set(() => s.keyboardModifiers = v)));
   rows.push(sliderRow("D-pad repeat delay", () => s.keyRepeatDelayMs, 120, 900, 10,
     v => set(() => s.keyRepeatDelayMs = v), v => Math.round(v) + " ms",
     "How long a direction is held before the highlight starts moving on its own"));
@@ -5481,6 +5495,12 @@ function handleHostMessage(m) {
       }
       break;
     }
+    // A switch flipped on the Loungepad keyboard's own options page. Merged, not replaced: the
+    // page's copy may hold a change of its own that has not been saved yet.
+    case "keyboardOptions":
+      if (S.settings && m.settings) Object.assign(S.settings, m.settings);
+      if (view === "settings") renderSettings();
+      break;
     case "scanning":
       S.scanning = m.busy;
       $("scanStatus").textContent = m.busy ? "SCANNING…" : "";
@@ -5853,6 +5873,8 @@ function mockHandle(msg) {
         minimizeCombo: "LS + RS",
         keyboardToggleButton: "Start", keyboardToggleHoldMs: 600,
         keyboardApp: "Builtin", keyboardScale: 1.0, keyRepeatDelayMs: 350, keyRepeatIntervalMs: 90,
+        keyboardSuggestions: true, keyboardFunctionKeys: false, keyboardNavKeys: false,
+        keyboardNumpad: false, keyboardModifiers: false,
         accentColor: "#F0A253", theme: "", cacheTrailers: true, ageRatingBoard: "ESRB",
         animationsEnabled: true, animationSpeed: 1.0, themeSettings: {},
       },

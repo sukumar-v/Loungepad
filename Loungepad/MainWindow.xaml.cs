@@ -666,11 +666,20 @@ public partial class MainWindow : Window
             // Menu commits and leaves, B just leaves; both come back through here so the pad
             // is handed back and the window hidden in one place.
             _kb.CloseRequested += () => Dispatcher.BeginInvoke(HideBuiltinKeyboard);
+            // A switch flipped on the keyboard's own options page. The keyboard has rebuilt itself
+            // already; this only keeps settings.json and the Settings screen in step with it.
+            _kb.OptionsChanged += options =>
+            {
+                options.WriteTo(_settings.Settings);
+                _settings.Save();
+                _bridge?.PushKeyboardOptions();
+            };
         }
         _kb.SetLayout(_gamepad.ActiveLayout);
         var target = (_settings.Settings.TvDeviceName is { } name ? _displays.GetDisplay(name) : null)
                      ?? _displays.GetDisplays().FirstOrDefault(d => d.IsPrimary);
-        if (target is not null) _kb.ShowOn(target, Math.Clamp(_settings.Settings.KeyboardScale, 0.6, 1.6));
+        if (target is not null)
+            _kb.ShowOn(target, Math.Clamp(_settings.Settings.KeyboardScale, 0.6, 1.6), KeyboardOptions.From(_settings.Settings));
         // Hand the pad over. Nothing else can read it until the keyboard closes, which is what
         // makes A "press this key" rather than "launch the highlighted game".
         _gamepad.KeyboardOwnsPad = true;
@@ -702,7 +711,11 @@ public partial class MainWindow : Window
             case "CaretLeft":  _kb.CaretLeft(); break;
             case "CaretRight": _kb.CaretRight(); break;
             case "Layer":      _kb.ToggleLayer(); break;
+            case "Suggest":    _kb.AcceptSuggestion(0); break;
+            case "PointerClick": _kb.TargetClicked(); break;
             case "Close":
+                // On the keyboard's options page, B goes back to the keys.
+                if (_kb.LeaveOptions()) break;
                 HideBuiltinKeyboard();
                 // Over the launcher, B also leaves the text field the keyboard was typing into.
                 // Over another app it only closes the keyboard.

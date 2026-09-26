@@ -1268,3 +1268,58 @@ Stop the scrolled grid from clipping through the All games header
   transitions multiply by `var(--motion, 1)`; the dock slide's base is the `--tv-slide` option.
 - Bumped Polish to 3.5 for this. Anything that changes a bundled theme has to bump it or nobody
   gets the change (see `SyncBuiltIn` above).
+
+## The Loungepad keyboard: blocks, suggestions, options
+
+- **The board is data** (`KeyboardLayout`): keys placed by row and column on a canvas, a column being
+  one key plus its gap, blocks half a column apart. Row 0 is always the suggestion bar; the keys
+  start on row 1. The main 12-column block is the old skeleton unchanged; F1-F12 go above it (one
+  per column, with PrtSc/ScrLk/Pause over the navigation block when both are on), the navigation
+  block and a real number pad (two-row + and Enter) to its right, Ctrl/Win/Alt on its bottom row
+  taking room from Space. Every block on is 20 columns; `FitToDisplay` shrinks the keys to 96% of
+  the display's width and 70% of its height.
+- **Navigation is by position, not index.** Up/Down go to the key under the column centre the
+  highlight is keeping (`_wantX`, sticky); a row with nothing within half a key of it is stepped
+  over (the navigation block's empty row, the space above the number pad) -- except the bar, which
+  always takes you. A two-row key is in both rows, so the highlight remembers which row it is in.
+- **Suggestions are Windows' own** (`Windows.Data.Text.TextPredictionGenerator`, the touch keyboard's
+  engine). It works unpackaged, keyless and offline, answers in 4-26 ms, and learns nothing -- the
+  keyboard stores nothing typed. Asked for `Predictions` only: "hel" → hello/help, "recieve" →
+  receive, and with previous words "see you" → tomorrow/soon. `Corrections` is for touch screens and
+  offers the NEIGHBOURS of what was typed ("hel" → yep, gel), so only its apostrophe fixes are taken
+  (dont → don't, im → I'm), which Predictions never offers. `None` throws 0x87B20803. The language
+  is the first Windows language in Latin script, since that is what the keys type.
+- The keyboard cannot read the field, so `KeyboardText` tracks what IT typed since it last lost track;
+  the word is the letters at the end. It loses track on caret/navigation keys, Enter, Tab, Esc, any
+  Ctrl/Win/Alt combo, a pad click (`PointerClick` from `GamepadService`), and `CheckTarget`: the
+  foreground's focused control (`GetGUIThreadInfo`) changed, or its system caret is not where it
+  settled 250 ms after the last key. **A reset only ever makes a suggestion insert instead of
+  replace**, so when in doubt it resets: replacing on a stale word deletes somebody's text. Games
+  have no system caret and are judged on focus alone.
+- Taking a suggestion retypes only what differs ("hel" → "lo ") and carries the typed capitals
+  ("Hel" → Hello, "HEL" → HELLO); a latched Shift capitalises it. Punctuation straight after a
+  suggestion's space goes in front of it, and keeps doing so, so "..." and "?!" work.
+- **RS takes the first suggestion, not RT**: RT is the pointer's boost button by default, and holding
+  it to cross the screen would type a word.
+- Keys other than characters go through `SendKeyCombo` with their scan code: a DirectInput or raw
+  input game sees only that, and those are the programs that bind F5 or Num 8. Pause and Num Lock
+  share 0x45, so Pause (and Print Screen, whose mapping varies) go by virtual key alone. A character
+  with Ctrl/Win/Alt latched is sent as the key that types it (`VkKeyScanW`), or Ctrl then C would
+  not be Ctrl+C.
+- **The gear** at the bar's right end swaps the keys for the five switches (`KeyboardLayout.Options`,
+  same size as the keys so nothing jumps). B and Menu go back to the keys there, X/Y/LB/RB/RS type
+  nothing. A switch raises `OptionsChanged`; `MainWindow` writes settings.json and the bridge pushes
+  `keyboardOptions`, which the page MERGES into `S.settings` rather than replacing it, or an unsaved
+  change on the page would be lost. The settings are `Keyboard{Suggestions,FunctionKeys,NavKeys,
+  Numpad,Modifiers}` in AppSettings, CopySettings and the mock.
+- A B badge on the gear sat on top of the icon (the bar is shorter than a key) and was removed.
+- **Hover is MouseMove on the root, not each key's MouseEnter.** WPF raises MouseEnter for a key
+  BUILT under a pointer that has not moved, so every rebuild dragged the D-pad's highlight to wherever
+  the hidden cursor was parked. MouseMove has the position guard.
+- **Test it with the harness**: a scratch WPF project that compiles `KeyboardWindow.xaml(.cs)`,
+  `KeyboardLayout.cs`, `Services/KeyboardText.cs`, `Services/WordPredictor.cs`,
+  `Interop/NativeMethods.cs` and `Models/AppSettings.cs` beside a stub `Log` and `DisplayInfo`.
+  `KeyboardWindow.Output` and `Probe` are replaceable, so it records strokes instead of typing into
+  whatever is in front, and a `DisplayInfo` at -6000,-6000 keeps the window off every real screen;
+  `RenderTargetBitmap` of `kb.Content` gives the pictures. Do not reference Loungepad.dll instead:
+  its `Log` writes the user's real loungepad.log. 83 checks pass (Sept 2026).

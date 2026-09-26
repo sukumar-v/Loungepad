@@ -177,4 +177,19 @@ public class AppSettings
     /// <summary>Multiplier on the Loungepad keyboard's key size, 0.6 .. 1.6. The base size is a
     /// fraction of the display height, so this only nudges it away from that.</summary>
     public double KeyboardScale { get; set; } = 1.0;
+    /// <summary>The bar of word suggestions above the Loungepad keyboard's keys. On by default: it
+    /// is the one addition that saves presses on every word, and it costs a strip of height.</summary>
+    public bool KeyboardSuggestions { get; set; } = true;
+    // The Loungepad keyboard's extra blocks. Off by default: letters and symbols are what most
+    // typing needs, and every block widens the keyboard over whatever it is covering. Also
+    // switched from the keyboard itself, behind the gear on its suggestion bar.
+    /// <summary>F1 to F12 across the top, with Print Screen, Scroll Lock and Pause over the
+    /// navigation block when that is on too.</summary>
+    public bool KeyboardFunctionKeys { get; set; }
+    /// <summary>Insert, Delete, Home, End, Page Up, Page Down and four arrows, right of the letters.</summary>
+    public bool KeyboardNavKeys { get; set; }
+    /// <summary>A number pad as on a full-size keyboard, sent as real number-pad keys.</summary>
+    public bool KeyboardNumpad { get; set; }
+    /// <summary>Ctrl, Win and Alt on the bottom row, each latching for the next key like Shift.</summary>
+    public bool KeyboardModifiers { get; set; }
 }
