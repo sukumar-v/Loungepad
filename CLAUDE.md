@@ -1438,3 +1438,162 @@ Stop the scrolled grid from clipping through the All games header
   whatever is in front, and a `DisplayInfo` at -6000,-6000 keeps the window off every real screen;
   `RenderTargetBitmap` of `kb.Content` gives the pictures. Do not reference Loungepad.dll instead:
   its `Log` writes the user's real loungepad.log. 83 checks pass (Sept 2026).
+
+## Play sessions and achievements
+
+- **The session is the launcher's, not the recorder's.** `GameLaunchService` raises
+  `SessionStarted` right after `GameStarted` and `SessionEnded(game, start, end, counted)` from its
+  `finally`, and `ActivityService` records exactly what those say. `counted` is the same
+  `MinSessionMinutes` (0.5) test that adds to `PlaytimeMinutes` and `Sessions`, so the three can
+  never disagree. The pid cache is cleared before `SessionEnded` fires: readings are taken during
+  the session (`TrackedPids`), never after it.
+- `activity.json` holds the rows with their averages; the readings are one file per session under
+  `activity\`, thinned to 720 points by averaging neighbours (`ActivityStore.Thin`), and only ever
+  opened for the session sheet. `LowFps` is the 5th percentile, which is what a "1% low" stands in
+  for at five-second sampling. The store takes its folder as a constructor argument so the harness
+  never touches the real one.
+- **`HardwareMonitor` needs nothing installed for CPU, RAM and GPU.** CPU is `GetSystemTimes`
+  deltas (the first reading only primes it and is thrown away); RAM is `GlobalMemoryStatusEx`; the
+  GPU is PDH's `\GPU Engine(*)\Utilization Percentage`, summed per engine type and then the busiest
+  type taken, which is Task Manager's number. The PDH item array is walked by hand: 24 bytes an
+  item on x64, the name pointer at 0, the status at +8, the double at +16. Verified on this PC by
+  the harness (own process's working set and a GPU percentage came back).
+- The three tools are read from their shared memory, opened lazily and retried every 30 s, and a
+  reader that throws is dropped and reopened rather than allowed to end the sampling loop.
+  RTSS `RTSSSharedMemoryV2`: header DWORDs, app entry size at 8, array offset at 12, count at 16;
+  in an entry pid at 0, tick0/tick1 at 268/272, frames at 276, frame time (µs) at 280, ticks on
+  `GetTickCount`'s clock. HWiNFO `Global\HWiNFO_SENS_SM2` is `pack(1)`: reading offsets 32/36/40
+  for the readings section, a reading's type at 0, labels at 12 and 140, unit at 268, value at 284.
+  Afterburner `MAHMSharedMemory`: the float sits at 1300 (five 260-byte strings first) or at 544
+  on the 2.0 layout, `FLT_MAX` is "no reading". None of the three was running on this PC, so
+  those three readers are unverified on hardware; the layouts are from the vendors' headers.
+- HWiNFO readings are matched by label (`CpuTempLabels` and friends), which is a heuristic on
+  purpose: the labels are the same on every PC and the sensor ids are not.
+- **Achievements are asked for by the store's own id, like the metadata**: Steam by app id,
+  Xbox by `XboxTitleId` (from the title history's `titleId`, matched to an installed game by PFN),
+  Epic by `EpicNamespace` (the manifest's `CatalogNamespace`, or the library service's
+  `namespace`), GOG by the numeric product id. Both new fields are carried in `MergeScanned` with
+  `??=`, since the manifest scan knows Epic's and not Xbox's. RetroAchievements is the one title
+  match, and only where the ROM's hash finds nothing (`RetroHash`; disc systems are never hashed).
+- **Steam goes through the proxy's `/v1/achievements`** (deployed Sept 2026, verified on this PC's
+  account: Hollow Knight 42/63 with rarity and icons) or the user's own key. **`GetPlayerAchievements`
+  answers 403 "Profile is not public" for an app the account has never started or does not own,
+  on a public profile too** (3DMark did, on this account, while Hollow Knight answered with its
+  unlocks). The worker asks for the schema first and answers an empty list without touching the
+  account when there is none; on a 403 it checks the profile's game-details visibility once
+  (`detailsPublic`, one bit in KV for an hour) and reads the 403 as "no unlocks" when the details
+  are readable. The direct route with the user's own key reads every 403 that way. The schema
+  and percentages are cached in KV per app; the unlocks never are.
+- **GOG's account page hands a bearer token to a signed-in browser session**
+  (`menu.gog.com/v1/account/basic`: `accessToken`, `accessTokenExpires`, `userId`) and
+  `gameplay.gog.com/clients/<GAME id>/users/<userId>/achievements` takes it -- "clients" is the
+  game, not an OAuth client. That is Galaxy's route without Galaxy's dead credentials. Kept on the
+  session (`GogSession`) and re-read near expiry. Epic is two GraphQL queries on
+  `launcher.store.epicgames.com/graphql` with `Authorization: bearer <eg1 token>`; Xbox is
+  `achievements.xboxlive.com` with contract version 2. All three are unverified live (no fetch was
+  made against a signed-in account here); the shapes are the ones Playnite's SuccessStory and
+  its CommonPluginsStores send.
+- A failed fetch keeps the last list and puts the reason in `Error`; a fetch that is blocked by
+  the account (not signed in, no key) is reported to the page and never written. The background
+  pass (`RefreshAllAsync`) runs after every non-quiet scan, newest-played first, paced 1.2 s, capped
+  at 400, and stops for a provider that has gone `Unavailable`. Freshness: 6 h for a page open,
+  24 h in the pass, 7 days for a game never played here and not installed.
+- **A first fetch announces nothing.** `NewlyUnlocked(before, now)` with `before == null` is an
+  empty list, or every achievement earned years ago would arrive as a card. The post-session fetch
+  waits 5 s for the store to hear from the client, and the cards wait for the `game` message with
+  `running: false` -- behind a game or under an overlay they would go unseen.
+- Icons are cached under `%LOCALAPPDATA%\Loungepad\achievements` by a hash of the URL and served
+  as `https://loungepad.data/achievements/<file>` (`DataRoots`); the page prefers the file when the
+  DTO names one. The set on disk never stores file names -- `IconFileIfCached` checks at push time.
+- **The feature is called Stats on screen** (the user's call, Sept 2026); the host's names
+  (`ActivityService`, `activity.json`, the `activity*` bridge commands, `ActivityTracking` and
+  friends in settings.json) predate that and were left alone, as was the page's `activity.js`.
+  It is not on the Power Wheel (it read as out of place there): the ways in are LB on the library
+  and **Open Stats**, the first row of Settings → Stats, whose section is `bare` (no heading, see
+  `settingsSectionEl`). `statsUi.from` remembers which, and B/LB on the categories go back to it.
+- **On the page, `achState`, `actState`, `sessionState`, `dayState`, `statsUi` and `statsData`
+  are declared in app.js**, not activity.js (the same temporal-dead-zone reason as the actions
+  variables). The library claims LB alongside View (`publishClaims`) so a keyboard toggle bound to
+  LB still opens the Stats screen. The screen is a view (`data-view="stats"`) on Settings' frame;
+  the sheets are overlays on the quick-card frame, so both themes get them for free -- Loungepad
+  only rounds them. `#overlay-day` comes BEFORE the other sheets in index.html: overlays stack in
+  document order, and the session and achievements sheets it opens have to paint over it.
+- **Unlocks and sessions are joined on the page, by time**: an unlock belongs to a session when it
+  is the same game and inside it give or take two minutes (`UNLOCK_SLACK_MS`, the host's
+  `SessionUnlockSlack`). `achievementsAll` carries `unlocksByDay` (every unlock on record as a
+  count per local day, for the pips on every playtime chart) and `recent` (every unlock of the
+  last 35 days in full, never fewer than 60, capped at 1500: `RecentUnlockDays`), which is why the
+  overview's day picker spans 28 days and a session's trophies are only drawn when it began inside
+  that window -- older ones would be missing, not absent. The `activity` message carries the
+  game's dated unlocks and `activitySession` the session's own.
+- **Unlock markers are near-white (`--trophy`), not gold and not the accent.** Gold was the first
+  choice and sat next to Ember, the default accent, so pips on bars read as more bar; the accent
+  presets go all the way round the wheel, so no hue is safe for everyone.
+- **Inside a Settings or Stats category the D-pad never leaves the rows** (`paneMove`): Up off the
+  first row comes round to the last, Down off the last to the first (nearest column in the Actions
+  grid), and Left/Right only move between tiles or adjust a value. B, or a click on a category, is
+  the only way back to the sidebar (the user's call, Sept 2026). `navMove(dir, within)` takes a
+  filter for this; the categories themselves still walk as before.
+- The preview's `key` action with `repeat: N` is dropped by the page's 85 ms pacing (only one press
+  lands): send separate presses. Its screenshots also lag the input it just sent -- read the state
+  with `javascript_tool` before concluding a key did nothing. `pulse()`'s riseIn and the row
+  transitions freeze there, so inject `* { transition: none; animation: none }` before a screenshot.
+- Rarity bands: ultra rare under 5%, rare under 10%, uncommon under 30% (SuccessStory's 30/10 with
+  its ultra-rare step on). The `ach` sort in the filter menu sorts by the unlocked share.
+- Loungepad theme 4.2: `.tv-ach` on the focused tile, from the `achievements` / `achPercent`
+  template fields, which the app leaves false while "Show on tiles" is off.
+- The harness is a scratch console project referencing `bin\Debug\...\Loungepad.dll`: hash rules,
+  thinning and summaries, the diff, the built-in readers, a session through `ActivityService`'s
+  handlers by reflection (a real launch would go through `LibraryStore.Save` and rewrite the real
+  library.json), and the Steam provider against the deployed service.
+- **Unlock icons on the charts are HTML over the SVG** (`.chart-pins`, positioned in percentages
+  of the same box), because an `<image>` in a `preserveAspectRatio="none"` SVG stretches with it.
+  `barChart` therefore gives its SVG an inline pixel height equal to its viewBox height, so the two
+  boxes agree; a CSS height on `.chart` for a bar chart would drift them apart. Narrow columns stack
+  tiles upward (`column-reverse`), wide ones line them up; **each tile carries an explicit
+  z-index** because Chrome painted the column-reverse stack with the earlier sibling on top, which
+  cut the "+n" tile's number in half. Icons come from `recent` (35 days), so a month bucket or an
+  older day falls back to one count tile.
+- **Hand edits to achievements live on the item** (`Edited`, `StoreUnlocked`, `StoreUnlockedAt`):
+  `Unlocked`/`UnlockedAt` are always what everything reads, and `AchievementStore.Put` carries every
+  edit onto a fresh fetch in place (reference checks skip a failed fetch, which hands back the
+  previous set itself). An edit equal to the store's answer is dropped. Hand-logged sessions are
+  `Origin = "manual"` and, when `Counted`, move the game's totals on log, edit and remove; recorded
+  sessions never do on removal, and imported ones never enter the totals.
+- **The form sheet** (`openForm` in app.js, `#overlay-form`) is Settings' rows on the quick-card
+  frame, for the editors and the import. It sits after the sheets and before the confirm and the
+  text field in index.html (overlays stack in document order) and before `sessionState` in
+  `handleInput`. Dates and times are ◂ ▸ to nudge, A on the row to type (`parseTypedDay`,
+  `parseTypedTime`, `parseTypedLength`); nothing can be set in the future.
+
+## The Playnite import
+
+- **Fill, never overwrite** (the user's rule, Sept 2026): the import only writes where Loungepad
+  has nothing. Playtime, play count and last played each fill only an empty field -- a bigger
+  Playnite number does NOT replace ours. Categories become new collections only; a name the user
+  already has gets " (Playnite)", and a collection the import made earlier is added to (the record
+  says which). SuccessStory lists only for games with no list and no working provider (`canFetch`
+  is provider present and not blocked), because a list Loungepad fetches is the store's answer and
+  is never edited by the import. Sessions overlapping a recorded one for the same game are
+  skipped. Settings only fill empty ones: the SteamGridDB key; Playnite's start-with-Windows is
+  NOT brought, since Loungepad's switch has a value even when off. Apply re-checks each change
+  against the data at that moment.
+- Playnite 10 keeps a **LiteDB v4** database (format byte 7, one collection per file under
+  `library\`, or wherever `config.json`'s `DatabasePath` points -- `%AppData%` style or
+  `{PlayniteDir}`). LiteDB 4.1.4 carries a critical advisory (GHSA-3x49-g6rc-c284), so the app uses
+  **LiteDB 5.0.21 with `Upgrade = true` on a copy in %TEMP%**; the source files are copied with
+  `FileShare.ReadWrite` (Playnite may be running) and never opened. Documents are read as
+  `BsonDocument` by field name -- no typed mapping. LiteDB returns dates in UTC.
+- Games match by the store's id (Steam `cb91dfc9…` → `steam:<GameId>`, GOG `aebe8b7c…`, Epic
+  `00000002-dbd1…` → `epic:<AppName>`, Xbox `7e4fbb5e…` by package family name), then a hand-added
+  game imported before (`manual:pn-<guid>`), then an exact title with exactly one hit. Hand-added
+  Playnite games come in only with a plain File action whose exe exists (`{InstallDir}` expanded).
+- GameActivity and SuccessStory keep one JSON per game under `ExtensionsData\<plugin>\GameActivity\`
+  and `...\SuccessStory\`, found by folder name. Neither is installed on this PC, so both readers
+  were written from the extensions' formats and checked against synthetic files only.
+  Playnite's Steam key is encrypted in the Steam plugin's `keys.dat` and is not read.
+- Every change goes into `playnite-import.json` (cumulative over imports); Undo walks it back where
+  it still stands, taking playtime down by the amount added rather than to the old value.
+- `LibraryStore` takes an optional file path now, for the harness: `harness2` in a scratch folder
+  reads the real Playnite data (checking its files' timestamps are unchanged) and runs plan,
+  apply, a second apply (nothing), and undo against scratch stores. 44 checks (Sept 2026).

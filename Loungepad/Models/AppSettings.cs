@@ -90,6 +90,30 @@ public class AppSettings
     /// folder, the uninstall entries, Program Files.</summary>
     public string VortexPath { get; set; } = "";
 
+    // Activity and achievements
+    /// <summary>Record every sitting with a game -- when, how long -- as the activity log behind the
+    /// playtime numbers. Off keeps the totals and records nothing more.</summary>
+    public bool ActivityTracking { get; set; } = true;
+    /// <summary>Take a hardware reading every few seconds while a game runs: CPU, GPU and memory
+    /// from Windows, frame rate and temperatures from RivaTuner, Afterburner or HWiNFO where one of
+    /// them is running. See HardwareMonitor.</summary>
+    public bool ActivityHardware { get; set; } = true;
+    /// <summary>Seconds between readings, 2 .. 30. Five is a reading every few frames of a chart
+    /// and a few kilobytes an hour.</summary>
+    public int ActivitySampleSeconds { get; set; } = 5;
+    /// <summary>Fetch each game's achievements from its store: Steam by app id through the metadata
+    /// service or the key below, Xbox, Epic and GOG through their sign-ins, ROMs through
+    /// RetroAchievements. Off fetches nothing and hides what was fetched.</summary>
+    public bool AchievementsEnabled { get; set; } = true;
+    /// <summary>A card for each achievement a session unlocked, shown once the game has closed.</summary>
+    public bool AchievementNotifications { get; set; } = true;
+    /// <summary>The unlocked share on library tiles and in the hero text, for games that have any.</summary>
+    public bool AchievementsOnTiles { get; set; } = true;
+    /// <summary>RetroAchievements username, for the achievements of emulated games. With the key
+    /// below, free from retroachievements.org/settings. Plain text in settings.json, like the rest.</summary>
+    public string RetroAchievementsUser { get; set; } = "";
+    public string RetroAchievementsKey { get; set; } = "";
+
     // Emulation
     /// <summary>Look for installed emulators and for ROMs on every scan -- RetroArch's playlists,
     /// an Emulation\roms layout, folders named after a system -- and add what is found. On by

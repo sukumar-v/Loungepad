@@ -4,8 +4,9 @@
     {
       "name": "ui-preview",
       "runtimeExecutable": "npx",
-      "runtimeArgs": ["--yes", "http-server", "Loungepad", "-p", "8930", "-c-1", "--silent"],
-      "port": 8930
+      "runtimeArgs": ["--yes", "http-server", "Loungepad", "-c-1", "--silent"],
+      "port": 8930,
+      "autoPort": true
     }
   ]
 }

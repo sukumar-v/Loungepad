@@ -69,6 +69,13 @@ public class Game
     /// <summary>Xbox only: the package family name, which is what an installed Xbox game and a
     /// catalogue entry for the same game have in common when nothing else matches.</summary>
     public string? PackageFamilyName { get; set; }
+    /// <summary>Xbox only: the title id Xbox Live files the game under, from the account's title
+    /// history. It is what the achievements service asks by; an installed game the account has
+    /// never played on any device has none yet.</summary>
+    public string? XboxTitleId { get; set; }
+    /// <summary>Epic only: the catalogue namespace ("sandbox") the game lives in, from the launcher's
+    /// manifest or the library service. Achievements are keyed by it, not by the app name.</summary>
+    public string? EpicNamespace { get; set; }
     /// <summary>Art the game's own store published, used as the last fallback after Steam and the
     /// service: Galaxy's GOG-hosted covers, the Microsoft Store's posters.</summary>
     public string? RemoteCoverUrl { get; set; }

@@ -47,6 +47,8 @@
       <div class="tv-img" style="background-image:url({{banner}})"></div>
       <span class="tv-star" data-if="favorite">★</span>
       <span class="tv-off" data-unless="installed">NOT INSTALLED</span>
+      <!-- The unlocked share, on the tile you are on only, like the caption. -->
+      <span class="tv-ach" data-if="achievements">{{achPercent}}%</span>
     </div>
     <div class="tv-name">{{title}}</div>
   </div>
@@ -59,6 +61,7 @@
       <div class="tv-bed" style="background-image:url({{banner}})"></div>
       <div class="tv-img" style="background-image:url({{banner}})"></div>
       <span class="tv-star" data-if="favorite">★</span>
+      <span class="tv-ach" data-if="achievements">{{achPercent}}%</span>
     </div>
     <div class="tv-name">{{title}}</div>
   </div>

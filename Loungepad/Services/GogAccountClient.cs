@@ -54,6 +54,42 @@ public class GogAccountClient : IStoreAccount
     {
         public List<CookieRecord> Cookies { get; set; } = new();
         public string? Username { get; set; }
+        /// <summary>The numeric account id, which the gameplay API keys its answers by.</summary>
+        public string? UserId { get; set; }
+        /// <summary>The bearer token the account page hands a signed-in session, for
+        /// gameplay.gog.com (the achievements). Short-lived; refreshed from the same page.</summary>
+        public string? AccessToken { get; set; }
+        public DateTime? AccessTokenExpires { get; set; }
+    }
+
+    /// <summary>What the account page said about the session, in one answer.</summary>
+    public sealed record GogAccount(string Username, string? UserId, string? AccessToken, DateTime? ExpiresAt);
+
+    /// <summary>
+    /// A fresh bearer token and the account id for gameplay.gog.com, or null when not signed in
+    /// or the session has gone. The account page issues the token to a signed-in browser session
+    /// and it lasts about an hour, so it is re-read when it is missing or near its end and kept
+    /// with the session otherwise.
+    /// </summary>
+    public async Task<(string UserId, string Token)?> GameplayAuthAsync(CancellationToken ct)
+    {
+        var s = _session;
+        if (s is null) return null;
+        if (s.AccessToken is { Length: > 0 } && s.UserId is { Length: > 0 }
+            && s.AccessTokenExpires is { } exp && DateTime.UtcNow < exp.AddMinutes(-5))
+            return (s.UserId, s.AccessToken);
+        var acct = await AccountAsync(s, ct);
+        if (acct?.AccessToken is null || acct.UserId is null)
+        {
+            if (acct is null) Status.Error = "The GOG session has expired. Sign in again";
+            return null;
+        }
+        s.Username = acct.Username;
+        s.UserId = acct.UserId;
+        s.AccessToken = acct.AccessToken;
+        s.AccessTokenExpires = acct.ExpiresAt;
+        AccountStore.SaveSecret(Store, s);
+        return (acct.UserId, acct.AccessToken);
     }
 
     /// <summary>Galaxy's install route beats a web page, but only when Galaxy is here to take it.</summary>
@@ -82,9 +118,12 @@ public class GogAccountClient : IStoreAccount
                 {
                     Cookies = cookies.Select(c => new CookieRecord { Name = c.Name, Value = c.Value, Domain = c.Domain, Path = c.Path }).ToList()
                 };
-                var user = await UsernameAsync(session, CancellationToken.None);
-                if (user is null) return false;
-                session.Username = user;
+                var acct = await AccountAsync(session, CancellationToken.None);
+                if (acct is null) return false;
+                session.Username = acct.Username;
+                session.UserId = acct.UserId;
+                session.AccessToken = acct.AccessToken;
+                session.AccessTokenExpires = acct.ExpiresAt;
                 captured = session;
                 return true;
             });
@@ -136,7 +175,9 @@ public class GogAccountClient : IStoreAccount
         return http;
     }
 
-    private static async Task<string?> UsernameAsync(GogSession session, CancellationToken ct)
+    /// <summary>The account page: who is signed in, their id, and the gameplay token it issues
+    /// (with its lifetime in seconds). Null when the session is not signed in any more.</summary>
+    private static async Task<GogAccount?> AccountAsync(GogSession session, CancellationToken ct)
     {
         try
         {
@@ -146,7 +187,11 @@ public class GogAccountClient : IStoreAccount
             using var doc = JsonDocument.Parse(await res.Content.ReadAsStringAsync(ct));
             var r = doc.RootElement;
             if (!(r.TryGetProperty("isLoggedIn", out var li) && li.ValueKind == JsonValueKind.True)) return null;
-            return Str(r, "username") ?? Str(r, "email") ?? "GOG user";
+            var name = Str(r, "username") ?? Str(r, "email") ?? "GOG user";
+            var userId = Str(r, "userId") ?? (JsonNum.Long(r, "userId") is { } n ? n.ToString() : null);
+            var token = Str(r, "accessToken");
+            DateTime? expires = JsonNum.Int(r, "accessTokenExpires") is { } secs && secs > 0 ? DateTime.UtcNow.AddSeconds(secs) : null;
+            return new GogAccount(name, userId, token, expires);
         }
         catch (Exception ex)
         {

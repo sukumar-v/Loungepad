@@ -12,6 +12,9 @@
  *   /v1/art?title=<title>     portrait / tile / hero / logo image URLs
  *   /v1/owned?steamid=<id>    the games a Steam account owns, for the uninstalled half of a
  *                             library -- the one route that is not cached, see ownedGames
+ *   /v1/achievements?steamid=<id>&appid=<id>
+ *                             one game's achievements for one account: the schema, the account's
+ *                             unlocks and the global rarity, in one answer; see steamAchievements
  *
  * The first two may answer 404, which means "no confident answer", not "something broke". The
  * launcher treats a 404 and a network failure identically: it keeps whatever art it already had.
@@ -41,6 +44,13 @@ export default {
       try { return await ownedGames(env, request, url); }
       catch (err) {
         console.error(`/v1/owned: ${err && err.message}`);
+        return json({ error: "upstream failed" }, 502);
+      }
+    }
+    if (url.pathname === "/v1/achievements") {
+      try { return await steamAchievements(env, request, url); }
+      catch (err) {
+        console.error(`/v1/achievements: ${err && err.message}`);
         return json({ error: "upstream failed" }, 502);
       }
     }
@@ -430,6 +440,140 @@ async function ownedGames(env, request, url) {
       })),
     },
   }, 200, { "Cache-Control": "private, no-store" });
+}
+
+/* --------------------------------------------------------- Steam achievements */
+
+/**
+ * One game's achievements for one account, in one answer: the schema (every achievement the game
+ * has, with names, descriptions, icons and the hidden flag), the account's unlocks, and the
+ * global unlock percentages the rarity chips are read off. Three upstream calls the launcher
+ * would otherwise have to make with a key of its own, which most people do not have.
+ *
+ * The schema and the percentages are about the game and are cached in KV, per app: a week for
+ * the schema, a day for the percentages. The unlocks are about the person and are never cached,
+ * and the whole answer is marked uncacheable for the edge. Rate limited like everything else.
+ *
+ * A private profile answers 403, as /v1/owned does, so the launcher can say what to change; a
+ * game without achievements answers an empty list, which is an answer and not an error.
+ */
+const SCHEMA_TTL = 60 * 60 * 24 * 7;
+const PERCENT_TTL = 60 * 60 * 24;
+
+async function steamAchievements(env, request, url) {
+  const steamid = (url.searchParams.get("steamid") || "").trim();
+  const appid = (url.searchParams.get("appid") || "").trim();
+  if (!/^7656\d{13}$/.test(steamid)) return json({ error: "steamid must be a 64-bit Steam id" }, 400);
+  if (!/^\d{1,10}$/.test(appid)) return json({ error: "appid must be a number" }, 400);
+  if (!env.STEAM_API_KEY) return json({ error: "steam achievements are not enabled on this service" }, 501);
+  if (await rateLimited(request, env))
+    return json({ error: "slow down" }, 429, { "Retry-After": String(RATE_WINDOW) });
+
+  // The schema first, and alone: an app with no achievements is answered from it without
+  // touching the account at all. GetPlayerAchievements says 403 for such an app as well as for a
+  // private profile, and only the body tells them apart, so it is not asked when it need not be.
+  const schema = await cachedJson(env, `ach:schema:v1:${appid}`, SCHEMA_TTL, () => steamSchema(env, appid));
+  if (!schema || schema.length === 0)
+    return json({ appid: Number(appid), hasAchievements: false, achievements: [] }, 200, { "Cache-Control": "private, no-store" });
+  const [percents, player] = await Promise.all([
+    cachedJson(env, `ach:pct:v1:${appid}`, PERCENT_TTL, () => steamPercents(appid)),
+    steamPlayer(env, steamid, appid),
+  ]);
+  if (player === "private") return json({ error: "private" }, 403, { "Cache-Control": "no-store" });
+
+  const unlocked = new Map((player || []).map(a => [a.apiname, a]));
+  const pct = new Map((percents || []).map(p => [p.name, parseFloat(p.percent)]));
+  const achievements = (schema || []).map(a => {
+    const u = unlocked.get(a.name);
+    const got = !!(u && Number(u.achieved) === 1);
+    const p = pct.get(a.name);
+    return {
+      id: a.name,
+      name: a.displayName || a.name,
+      description: a.description || null,
+      hidden: Number(a.hidden) === 1,
+      icon: a.icon || null,
+      iconGray: a.icongray || null,
+      percent: typeof p === "number" && !Number.isNaN(p) ? p : null,
+      unlocked: got,
+      unlockTime: got ? (u.unlocktime || 0) : 0,
+    };
+  });
+  return json({ appid: Number(appid), hasAchievements: achievements.length > 0, achievements }, 200,
+    { "Cache-Control": "private, no-store" });
+}
+
+/** KV first, else the fetcher's answer, kept for ttl seconds. */
+async function cachedJson(env, key, ttl, fetcher) {
+  const hit = await env.METADATA.get(key, "json");
+  if (hit !== null && hit !== undefined) return hit;
+  const value = await fetcher();
+  await env.METADATA.put(key, JSON.stringify(value), { expirationTtl: ttl });
+  return value;
+}
+
+/** The game's achievement definitions. Steam answers 400 for an app with no stats at all. */
+async function steamSchema(env, appid) {
+  const api = new URL("https://api.steampowered.com/ISteamUserStats/GetSchemaForGame/v2/");
+  api.search = new URLSearchParams({ key: env.STEAM_API_KEY, appid, l: "english" }).toString();
+  const res = await fetch(api);
+  if (res.status === 400 || res.status === 403) return [];
+  if (!res.ok) throw new Error(`steam schema ${res.status}`);
+  const body = await res.json();
+  const list = body && body.game && body.game.availableGameStats && body.game.availableGameStats.achievements;
+  if (!Array.isArray(list)) return [];
+  return list.map(a => ({
+    name: a.name, displayName: a.displayName, description: a.description || null,
+    hidden: a.hidden, icon: a.icon, icongray: a.icongray,
+  }));
+}
+
+/** Keyless: the share of players holding each achievement. */
+async function steamPercents(appid) {
+  const res = await fetch(`https://api.steampowered.com/ISteamUserStats/GetGlobalAchievementPercentagesForApp/v2/?gameid=${appid}&format=json`);
+  if (!res.ok) return [];
+  const body = await res.json();
+  const list = body && body.achievementpercentages && body.achievementpercentages.achievements;
+  return Array.isArray(list) ? list.map(p => ({ name: p.name, percent: p.percent })) : [];
+}
+
+/**
+ * Whether GetOwnedGames can read the profile's game details, kept for an hour under the SteamID.
+ * One bit, not the list: the list is the person's and /v1/owned promises not to keep it.
+ */
+async function detailsPublic(env, steamid) {
+  const key = `vis:v1:${steamid}`;
+  const hit = await env.METADATA.get(key);
+  if (hit !== null) return hit === "1";
+  const api = new URL("https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/");
+  api.search = new URLSearchParams({ key: env.STEAM_API_KEY, steamid, include_played_free_games: "1", format: "json" }).toString();
+  const res = await fetch(api);
+  if (!res.ok) throw new Error(`steam owned ${res.status}`);
+  const body = await res.json();
+  const pub = !!(body && body.response && Array.isArray(body.response.games));
+  await env.METADATA.put(key, pub ? "1" : "0", { expirationTtl: 3600 });
+  return pub;
+}
+
+/** The account's unlocks: a list, [] for a game with no stats, or "private". */
+async function steamPlayer(env, steamid, appid) {
+  const api = new URL("https://api.steampowered.com/ISteamUserStats/GetPlayerAchievements/v1/");
+  api.search = new URLSearchParams({ key: env.STEAM_API_KEY, steamid, appid }).toString();
+  const res = await fetch(api);
+  // A 403 "Profile is not public" is what Steam says for a private profile -- and ALSO for an
+  // app the account has never started or does not own, on a perfectly public one (checked Sept
+  // 2026: 3DMark answered it on this profile while Hollow Knight answered with its unlocks). The
+  // body cannot tell the two apart, so the profile's game-details visibility is checked once
+  // (detailsPublic, cached an hour) and a 403 on a readable profile means "no unlocks here".
+  if (res.status === 403 || res.status === 400) {
+    if (res.status === 400) return [];
+    return (await detailsPublic(env, steamid)) ? [] : "private";
+  }
+  if (!res.ok) throw new Error(`steam player achievements ${res.status}`);
+  const body = await res.json();
+  const stats = body && body.playerstats;
+  if (!stats || stats.success === false) return [];
+  return Array.isArray(stats.achievements) ? stats.achievements : [];
 }
 
 /* ------------------------------------------------------------- shared bits */

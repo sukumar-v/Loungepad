@@ -527,3 +527,23 @@ body[data-view="detail"]:has(#screen-library.under) #backdrop::after { backgroun
 
 .coll-card, .set-row, .quick-card, .guide-card { border-radius: 20px; }
 .grid-item { border-radius: var(--radius); }
+
+/* ------------------------------------------------------------ achievements --
+   The unlocked share, bottom left of the art and only on the tile under the highlight, the
+   way the caption is: a screenful of percentages would be the wall of captions this layout is
+   built to avoid. The app only writes the field while "Show on tiles" is on. */
+.tv-ach {
+  position: absolute; left: 10px; bottom: 8px;
+  padding: 3px 8px; border-radius: 8px;
+  font-family: "IBM Plex Mono", monospace; font-size: 12px; letter-spacing: 0.1em;
+  color: color-mix(in srgb, var(--ink) 88%, transparent);
+  background: color-mix(in srgb, var(--bg-deep) 72%, transparent);
+  opacity: 0; transition: opacity calc(180ms * var(--motion, 1)) linear;
+}
+.tv-tile.focused .tv-ach { opacity: 1; }
+.tv-tile.focused .tv-off { padding-left: 80px; }
+
+/* The Stats screen and its sheets are drawn from app.css, on the Settings frame and the
+   quick-card frame; the rounder corners the other cards get here apply to them too. */
+.stats-box { border-radius: 30px; }
+.ach-card, .act-card, .session-card { border-radius: 20px; }

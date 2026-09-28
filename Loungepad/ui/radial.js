@@ -273,6 +273,7 @@ function renderIngame() {
   const items = ingameItems();
   ingameIdx = Math.max(0, Math.min(ingameIdx, items.length - 1));
   $("ingameDesc").textContent = (items[ingameIdx] && items[ingameIdx].desc) || "";
+  renderIngameStats();
 
   const row = $("ingameList");
   row.innerHTML = "";

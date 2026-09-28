@@ -34,6 +34,9 @@ public static class Paths
     /// caches -- gigabytes of video have no business in a roaming profile -- and reached from the
     /// page as https://loungepad.data/trailers/…, which MainWindow routes here by hand.</summary>
     public static string TrailersDir { get; } = Path.Combine(LocalDir, "trailers");
+    /// <summary>Achievement icons, a few kilobytes each and a few thousand of them: a cache, under
+    /// Local like the trailers, reached from the page as https://loungepad.data/achievements/…</summary>
+    public static string AchievementIconsDir { get; } = Path.Combine(LocalDir, "achievements");
     public static string SettingsFile { get; } = Path.Combine(DataDir, "settings.json");
     public static string LibraryFile { get; } = Path.Combine(DataDir, "library.json");
     /// <summary>The last list of games the Steam account owned, so a start with no network keeps
@@ -168,6 +171,14 @@ public class LibraryStore
 {
     private static readonly JsonSerializerOptions JsonOpts = new() { WriteIndented = true };
     private readonly object _gate = new();
+    private readonly string _file;
+
+    /// <summary>The file is an argument so a harness can load and save a scratch library (the
+    /// Playnite import's apply and undo) without touching the real one.</summary>
+    public LibraryStore(string? file = null)
+    {
+        _file = file ?? Paths.LibraryFile;
+    }
 
     public List<Game> Games { get; private set; } = new();
     public List<CollectionDef> Collections { get; private set; } = new();
@@ -180,9 +191,9 @@ public class LibraryStore
     {
         try
         {
-            if (File.Exists(Paths.LibraryFile))
+            if (File.Exists(_file))
             {
-                var text = File.ReadAllText(Paths.LibraryFile);
+                var text = File.ReadAllText(_file);
                 if (text.TrimStart().StartsWith('['))
                 {
                     // pre-collections format: a bare game array
@@ -227,12 +238,13 @@ public class LibraryStore
         lock (_gate)
         {
             Paths.EnsureCreated();
+            Directory.CreateDirectory(Path.GetDirectoryName(_file)!);
             var data = new LibraryFileData
             {
                 Games = Games, Collections = Collections, Emulators = Emulators, RomFolders = RomFolders,
                 IgnoredEmulatorPaths = IgnoredEmulatorPaths, IgnoredRomFolderPaths = IgnoredRomFolderPaths,
             };
-            File.WriteAllText(Paths.LibraryFile, JsonSerializer.Serialize(data, JsonOpts));
+            File.WriteAllText(_file, JsonSerializer.Serialize(data, JsonOpts));
         }
     }
 
@@ -309,6 +321,11 @@ public class LibraryStore
                     // in the same sense as Args.
                     if (old.TitleEdited) { s.Title = old.Title; s.TitleEdited = true; }
                     if (old.EmulatorId is not null) s.EmulatorId = old.EmulatorId;
+                    // Store ids the scan cannot see: the manifest scan knows Epic's namespace but
+                    // not Xbox's title id, and an owned-games answer knows both; whichever this
+                    // scan lacked is kept from last time, or the achievements would go on every scan.
+                    s.XboxTitleId ??= old.XboxTitleId;
+                    s.EpicNamespace ??= old.EpicNamespace;
                 }
                 merged.Add(s);
             }
@@ -417,6 +434,13 @@ public class LibraryStore
     public Game? Find(string id)
     {
         lock (_gate) return Games.FirstOrDefault(g => g.Id == id);
+    }
+
+    /// <summary>Runs a change to the game or collection lists under the store's lock: the Playnite
+    /// import adds and removes games and collections in bulk.</summary>
+    public void Change(Action change)
+    {
+        lock (_gate) change();
     }
 
     public void AddManual(Game game)

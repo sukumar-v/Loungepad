@@ -27,6 +27,9 @@
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2739.15" />
     <!-- DPAPI, for the store sign-in tokens kept under %APPDATA%\Loungepad\accounts. -->
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
+    <!-- Reads Playnite's library for the import (Services/PlayniteImport.cs). 5.x, not the 4.1.4 Playnite
+         itself uses: 4.x carries a critical advisory, and 5 reads v4 files by upgrading a copy. -->
+    <PackageReference Include="LiteDB" Version="5.0.21" />
   </ItemGroup>
 
   <ItemGroup>

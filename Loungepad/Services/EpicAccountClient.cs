@@ -120,6 +120,9 @@ public class EpicAccountClient : IStoreAccount
         Status.Error = null;
     }
 
+    /// <summary>The account's Epic id, for the achievements service; null when not signed in.</summary>
+    public string? AccountId => _tokens?.AccountId;
+
     private async Task<EpicTokens?> ExchangeAsync(string form, CancellationToken ct)
     {
         try
@@ -158,7 +161,7 @@ public class EpicAccountClient : IStoreAccount
 
     /// <summary>A usable access token, refreshed when within ten minutes of expiry, or null when
     /// the refresh token has gone too -- which means signing in again.</summary>
-    private async Task<string?> AccessTokenAsync(CancellationToken ct)
+    public async Task<string?> AccessTokenAsync(CancellationToken ct)
     {
         if (_tokens is null) return null;
         if (DateTime.UtcNow < _tokens.ExpiresAt.AddMinutes(-10)) return _tokens.AccessToken;
@@ -218,6 +221,7 @@ public class EpicAccountClient : IStoreAccount
                     Installed = false,
                     LaunchUri = $"com.epicgames.launcher://apps/{rec.AppName}?action=launch&silent=true",
                     InstallUri = $"com.epicgames.launcher://apps/{rec.AppName}?action=install",
+                    EpicNamespace = rec.Namespace,
                     RemoteCoverUrl = KeyImage(item.Value, "DieselGameBoxTall") ?? KeyImage(item.Value, "OfferImageTall"),
                     RemoteBackdropUrl = KeyImage(item.Value, "DieselGameBox") ?? KeyImage(item.Value, "OfferImageWide"),
                 });
@@ -331,6 +335,7 @@ public class EpicAccountClient : IStoreAccount
         Id = g.Id, Title = g.Title, Platform = g.Platform, Installed = false,
         LaunchUri = g.LaunchUri, InstallUri = g.InstallUri, PackageFamilyName = g.PackageFamilyName,
         RemoteCoverUrl = g.RemoteCoverUrl, RemoteBackdropUrl = g.RemoteBackdropUrl, LastPlayed = g.LastPlayed,
+        XboxTitleId = g.XboxTitleId, EpicNamespace = g.EpicNamespace,
     };
 
     private static string? Str(JsonElement e, string key) =>

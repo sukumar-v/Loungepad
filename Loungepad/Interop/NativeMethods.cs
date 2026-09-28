@@ -825,4 +825,52 @@ internal static class NativeMethods
         }
         return XInputGetState910(userIndex, out state);
     }
+
+    // ---- Hardware readings for the activity log (HardwareMonitor) ----
+
+    /// <summary>Idle, kernel and user time as FILETIME ticks; the system CPU load is the change in
+    /// idle over the change in kernel plus user between two calls. What Task Manager reads.</summary>
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool GetSystemTimes(out long lpIdleTime, out long lpKernelTime, out long lpUserTime);
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MEMORYSTATUSEX
+    {
+        public uint dwLength;
+        public uint dwMemoryLoad;
+        public ulong ullTotalPhys;
+        public ulong ullAvailPhys;
+        public ulong ullTotalPageFile;
+        public ulong ullAvailPageFile;
+        public ulong ullTotalVirtual;
+        public ulong ullAvailVirtual;
+        public ulong ullAvailExtendedVirtual;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool GlobalMemoryStatusEx(ref MEMORYSTATUSEX lpBuffer);
+
+    // PDH, the performance counter library: the one place Windows publishes GPU utilisation
+    // without a vendor SDK (\GPU Engine(*)\Utilization Percentage, per process and engine, which
+    // is what Task Manager's GPU column is read from). The counter array is walked by hand:
+    // PDH_FMT_COUNTERVALUE_ITEM_W is a wide-string pointer followed by a 16-byte value union, 24
+    // bytes an item on x64, with the status at +8 and the double at +16.
+    public const uint PDH_FMT_DOUBLE = 0x00000200;
+    public const uint PDH_MORE_DATA = 0x800007D2;
+    public const int PDH_ITEM_SIZE = 24;
+
+    [DllImport("pdh.dll", CharSet = CharSet.Unicode)]
+    public static extern uint PdhOpenQueryW(string? szDataSource, IntPtr dwUserData, out IntPtr phQuery);
+
+    [DllImport("pdh.dll", CharSet = CharSet.Unicode)]
+    public static extern uint PdhAddEnglishCounterW(IntPtr hQuery, string szFullCounterPath, IntPtr dwUserData, out IntPtr phCounter);
+
+    [DllImport("pdh.dll")]
+    public static extern uint PdhCollectQueryData(IntPtr hQuery);
+
+    [DllImport("pdh.dll", CharSet = CharSet.Unicode)]
+    public static extern uint PdhGetFormattedCounterArrayW(IntPtr hCounter, uint dwFormat, ref uint lpdwBufferSize, out uint lpdwItemCount, IntPtr itemBuffer);
+
+    [DllImport("pdh.dll")]
+    public static extern uint PdhCloseQuery(IntPtr hQuery);
 }

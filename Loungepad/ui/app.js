@@ -29,6 +29,9 @@ let S = {
   actions: null,                         // { apps: [{ id, name, exes, icon, installed, custom, pinned, modified, actions: [...] }] } -- see actions.js
   xboxButton: null,                      // { gameBar, xboxMode, steam, steamRunning, steamBusy } -- who else reacts to the Xbox button; xboxMode/steam null where there is none
   padConnected: false,
+  achievements: {},                      // game id -> { unlocked, total, score, totalScore, lastUnlock, source, fetchedAt, error } -- see activity.js
+  sessionStart: null,                    // when the running game was started, for the "playing for" readout
+  telemetry: null,                       // the last hardware reading of the running session; pushed only under the in-game menu
 };
 
 let view = "library";                    // library | detail | settings
@@ -79,6 +82,7 @@ const SORTS = [
   { id: "sizeDesc", label: "Largest first" },
   { id: "sizeAsc", label: "Smallest first" },
   { id: "score", label: "Highest rated" },
+  { id: "ach", label: "Achievement progress" },
 ];
 
 function resetFilters() {
@@ -189,9 +193,15 @@ function repaintFocus() {
   else if (choiceState) renderChoice();
   else if (modsState) renderMods();
   else if (confirmState) renderConfirm();
+  else if (formState) renderForm();
+  else if (sessionState) { /* nothing on it takes the highlight */ }
+  else if (actState) paintActFocus();
+  else if (achState) paintAchFocus();
+  else if (dayState) paintDayFocus();
   else if (view === "library") updateLibraryFocus(true);
   else if (view === "detail") updateDetailFocus();
   else if (view === "settings") renderSettings();
+  else if (view === "stats") renderStats();
 }
 
 /* ============================== spatial focus ==============================
@@ -406,10 +416,11 @@ function animateScroll(sc, axis, to) {
   setTimeout(watch, 150);
 }
 
-/** Move the highlight one step. Returns false when there is nowhere to go. */
-function navMove(dir) {
+/** Move the highlight one step. Returns false when there is nowhere to go. `within`, when given,
+    narrows the candidates to the elements it accepts (see paneMove). */
+function navMove(dir, within) {
   const scope = Nav.activeScope();
-  const list = Nav.focusables(scope);
+  const list = within ? Nav.focusables(scope).filter(within) : Nav.focusables(scope);
   if (!list.length) return false;
 
   const cur = focusEl();
@@ -475,6 +486,31 @@ function navMove(dir) {
   // setScopeKey ends a run; this is a step within one, so put the anchor back.
   navAnchor = anchorNow;
   navAnchorAxis = axis;
+  afterFocusMove();
+  return true;
+}
+
+/*
+ * A step inside one pane of a two-pane screen (Settings, Stats): the highlight never leaves the
+ * category's own rows for the sidebar. Up off the first row comes round to the last and Down off
+ * the last to the first, in the nearest column for the Actions grid; Left and Right only move
+ * between tiles. The categories are reached with B, or a click. Walking off the top into the
+ * sidebar used to swap the category under the highlight, which read as the list vanishing.
+ */
+function paneMove(dir, inPane) {
+  const scope = Nav.activeScope();
+  const cur = focusEl(scope);
+  if (!cur || !inPane(cur)) return navMove(dir);
+  if (navMove(dir, inPane)) return true;
+  if (dir !== "Up" && dir !== "Down") return false;
+  const rows = Nav.focusables(scope).filter(el => inPane(el) && el !== cur && !el.hasAttribute("data-nav-skip"));
+  if (!rows.length) return false;
+  const rects = rows.map(el => ({ el, r: el.getBoundingClientRect() }));
+  const edge = dir === "Up" ? Math.max(...rects.map(x => x.r.top)) : Math.min(...rects.map(x => x.r.top));
+  const x = Nav.centre(cur.getBoundingClientRect()).x;
+  const band = rects.filter(o => Math.abs(o.r.top - edge) < 8);
+  const target = band.reduce((best, o) => Math.abs(Nav.centre(o.r).x - x) < Math.abs(Nav.centre(best.r).x - x) ? o : best).el;
+  setScopeKey(scope, Nav.keyOf(target));
   afterFocusMove();
   return true;
 }
@@ -670,7 +706,7 @@ function updateFocusDetail(g) {
   const panel = $("fdTitle");
   if (!panel) return;
   panel.textContent = g ? g.title : "";
-  $("fdMeta").textContent = g ? (g.installed ? shortMeta(g) : `${g.platform} · NOT INSTALLED`).toUpperCase() : "";
+  $("fdMeta").textContent = g ? ((g.installed ? shortMeta(g) : `${g.platform} · NOT INSTALLED`) + achievementMeta(g)).toUpperCase() : "";
   $("fdDesc").textContent = g && g.installDir ? g.installDir : "";
   $("fdPlaytime").textContent = g ? fmtPlaytime(g.playtimeMinutes) : "";
   $("fdLastPlayed").textContent = g ? fmtLastPlayed(g.lastPlayed) : "";
@@ -681,7 +717,7 @@ function updateFocusDetail(g) {
 function focusedGame() {
   if (view === "detail") return gameById(detailGameId);
   // Settings sits over the library, so the picture behind it stays the library's own.
-  const el = focusEl(view === "settings" ? document.getElementById("screen-library") : undefined);
+  const el = focusEl(view === "settings" || view === "stats" ? document.getElementById("screen-library") : undefined);
   return el && el.dataset.gameId ? gameById(el.dataset.gameId) : null;
 }
 
@@ -1111,7 +1147,7 @@ function legendItem(btn, label) {
   return `<div class="legend-item"${press}>${slot(btn)}<span>${esc(label)}</span></div>`;
 }
 
-const LIBRARY_LEGEND = [["A", "Launch"], ["X", "Filter"], ["Y", "Options"], ["View", "Search"], ["Menu", "Settings"]];
+const LIBRARY_LEGEND = [["A", "Launch"], ["X", "Filter"], ["Y", "Options"], ["View", "Search"], ["LB", "Stats"], ["Menu", "Settings"]];
 
 function renderLibraryLegend() {
   const el = $("libraryFoot");
@@ -1234,6 +1270,15 @@ let actionWheelOpen = false;
 let captureState = null;                 // { app, action, onDone, timer, note }
 let keyPick = null;                      // { onDone, mods: Set }
 let overlayTargetProcess = "";           // the exe behind the window a menu opened over; "" for none
+// The sheets and the screen activity.js draws. Declared here rather than there for the same
+// reason as the three above: app.js reads them while it boots.
+let achState = null;                     // { gameId, idx, filter, sort, set, head, reveal, from }
+let actState = null;                     // { gameId, idx, sessions }
+let sessionState = null;                 // { session, samples, unlocks, from }
+let dayState = null;                     // { key, idx } -- the Stats overview's Day sheet
+let formState = null;                    // { kind, kicker, title, sub, rows, idx, onClose } -- see openForm
+let statsUi = { tab: "overview", pane: "nav", idx: 0, period: "30d", achSort: "progress", from: "library", day: null };
+let statsData = { sessions: null, sources: null, ach: null };
 
 let settingsIdx = 0;
 let saveTimer = null;
@@ -1614,6 +1659,8 @@ function tickClock() {
   document.querySelectorAll(".clock").forEach(el => el.textContent = `${date} · ${time}`);
 }
 setInterval(tickClock, 10000);
+// The "playing for" readout on the resume card moves with the clock.
+setInterval(() => { if (S.gameRunning) updatePlayingMeta(); }, 30000);
 
 /* Battery indicator: only shown for controllers that actually run on a battery
    (wireless pads report ALKALINE/NIMH); wired pads and no-pad show nothing. */
@@ -2166,6 +2213,9 @@ function gameView(g) {
     year: releaseYear(g.releaseDate) || "",
     score: typeof g.criticScore === "number" ? String(g.criticScore) : "",
     pegi: typeof g.pegiRating === "number" ? String(g.pegiRating) : "",
+    // Achievements, for a template that wants to draw them: the counts as numbers, the share as
+    // a whole-number string, and `achievements` as the thing to test with data-if.
+    ...achievementView(g),
   };
 }
 
@@ -2207,7 +2257,7 @@ function makeGridTile(g, onHover, onClick, onDetails) {
   const label = document.createElement("div");
   label.className = "grid-label";
   const meta = g.installed ? shortMeta(g) : uninstalledMeta(g);
-  label.innerHTML = `<div class="grid-title">${esc(g.title)}</div><div class="grid-meta">${esc(meta)}</div>`;
+  label.innerHTML = `<div class="grid-title">${esc(g.title)}</div><div class="grid-meta">${esc(meta)}${achievementChip(g)}</div>`;
   item.appendChild(label);
 
   if (g.favorite) {
@@ -2240,6 +2290,8 @@ function sortGames(list) {
     // not a low score, but a wall of blanks at the top is not what "highest rated" is for.
     // Ties fall back to the title so the order is stable between renders.
     score: (a, b) => score(b) - score(a) || a.title.localeCompare(b.title),
+    // The unlocked share; a game with no achievements sorts last, like an unrated one above.
+    ach: (a, b) => achievementShare(b) - achievementShare(a) || a.title.localeCompare(b.title),
   }[F.sort] || ((a, b) => a.title.localeCompare(b.title));
   return [...list].sort(by);
 }
@@ -2439,7 +2491,7 @@ let hWheelAccum = 0;
 
 function overlayOpen() {
   return inputOpen || filterOpen || !!gameMenu || collectOpen || manageOpen || !!choiceState || !!modsState || !!confirmState || guideOpen || !!mediaView
-    || !!captureState || !!keyPick;
+    || !!captureState || !!keyPick || !!achState || !!actState || !!sessionState || !!dayState || !!formState;
 }
 
 window.addEventListener("wheel", (e) => {
@@ -2530,7 +2582,7 @@ function renderPlaying() {
   art.style.background = "";
   applyArt(g, art, bannerUrl(g));
   $("playingName").textContent = g.title;
-  $("playingMeta").textContent = (g.platform + " · RUNNING").toUpperCase();
+  updatePlayingMeta();
 
   const card = $("playingCard");
   // data-role tells libraryAccept this tile resumes rather than relaunches.
@@ -2574,7 +2626,7 @@ function renderLibrary() {
 
       const meta = document.createElement("div");
       meta.className = "cont-meta";
-      meta.innerHTML = `<div class="cont-title">${esc(g.title)}</div><div class="cont-sub">${esc(shortMeta(g))}</div>`;
+      meta.innerHTML = `<div class="cont-title">${esc(g.title)}</div><div class="cont-sub">${esc(shortMeta(g))}${achievementChip(g)}</div>`;
 
       item.appendChild(art); item.appendChild(meta);
     }
@@ -2696,6 +2748,9 @@ function libraryInput(btn) {
     // View is the button with the two squares, left of the guide button. LB and RB were free too,
     // but RB is the keyboard toggle by default and the pair is a minimize combo option.
     case "View": openSearch(); break;
+    // The Stats screen: play sessions and achievements across the library. LB was free (see
+    // above), and it is claimed like View so a keyboard toggle bound to it still reaches here.
+    case "LB": openStats("library"); break;
     // Settings lost its tab, so this is the way in. Menu is the pad's ☰ button; holding it is
     // still the keyboard toggle, and only a tap gets here.
     case "Menu": switchView("settings"); break;
@@ -2831,6 +2886,10 @@ function renderDetailStats(g) {
   add("AVG SESSION", g.sessions > 0 && g.playtimeMinutes > 0
     ? fmtPlaytime(g.playtimeMinutes / g.sessions) : null);
   add("LAST PLAYED", g.lastPlayed ? fmtLastPlayed(g.lastPlayed) : null);
+  // The unlocked share, with a hairline of progress under it: the one number on this page that
+  // says how far through the game you are rather than how long you have spent in it.
+  const ach = achievementSummary(g);
+  if (ach && ach.total > 0) stats.push({ label: "ACHIEVEMENTS", value: `${ach.unlocked} / ${ach.total}`, bar: ach.unlocked / ach.total });
   add("RELEASED", fmtReleased(g.releaseDate));
   // A game that was never installed has no size on record, and a dash in a stats row reads as
   // something missing rather than something unknowable.
@@ -2838,7 +2897,9 @@ function renderDetailStats(g) {
 
   el.innerHTML = stats.map(s =>
     `<div class="stat"><div class="stat-label mono">${esc(s.label)}</div>` +
-    `<div class="stat-value">${esc(s.value)}</div></div>`).join("");
+    `<div class="stat-value">${esc(s.value)}</div>` +
+    (s.bar !== undefined ? `<div class="stat-bar"><i style="width:${Math.round(s.bar * 100)}%"></i></div>` : "") +
+    `</div>`).join("");
 }
 
 /*
@@ -3026,6 +3087,13 @@ function renderDetail() {
   $("playLabel").textContent = !g.installed
     ? (canInstall(g) ? "Install" : "Not installed")
     : (g.playtimeMinutes > 0 ? "Continue" : "Play");
+  // Achievements only for a game that can have a list; Stats for every game, because its sheet is
+  // also where a session Loungepad did not see is logged by hand. Hidden elements are not
+  // focusables, so the highlight simply never lands on a missing one.
+  const achBtn = document.querySelector('#detailActions [data-act="achievements"]');
+  const actBtn = document.querySelector('#detailActions [data-act="activity"]');
+  if (achBtn) achBtn.hidden = !canHaveAchievements(g);
+  if (actBtn) actBtn.hidden = false;
 
   // The gallery under the blurb, then the art: the page's own, or the screenshot the gallery's
   // highlight is on. Rebuilt on every push, the strip keeps its place by focus key like the grid.
@@ -3277,7 +3345,7 @@ function mediaViewInput(btn) {
   }
 }
 
-const DETAIL_BTNS = ["play", "collect", "manage"];
+const DETAIL_BTNS = ["play", "collect", "manage", "achievements", "activity"];
 
 function updateDetailFocus() {
   const scope = document.getElementById("screen-detail");
@@ -3294,6 +3362,8 @@ function detailActivate() {
   if (act === "play" && g) { if (!g.installed) offerInstall(g); else launchGame(g); }
   else if (act === "collect") openCollect();
   else if (act === "manage") openManage();
+  else if (act === "achievements" && g) openAchievements(g.id, "detail");
+  else if (act === "activity" && g) openActivity(g.id, "detail");
 }
 
 function detailInput(btn) {
@@ -3694,11 +3764,21 @@ function allSettingsRows() {
       v => set(() => s.metadataEndpoint = v.trim())),
   });
 
+  // Play sessions and achievements: the Stats category, built in activity.js.
+  rows.push(...activitySettingsRows(s, set));
+
   rows.push({ section: "UPDATES", cat: "general" });
   rows.push(updateRow());
   rows.push(toggleRow("Update automatically",
     "Downloads new versions in the background and installs them the next time Loungepad starts. Off, nothing is checked until you ask",
     () => s.autoUpdate !== false, v => set(() => s.autoUpdate = v)));
+
+  rows.push({ section: "FROM PLAYNITE", cat: "general" });
+  rows.push({
+    name: "Import from Playnite",
+    hint: "Playtime, favourites, categories, games added by hand, GameActivity's sessions and SuccessStory's lists. Only fills what Loungepad has nothing for -- nothing here is overwritten -- and it can be undone",
+    type: "action", label: "Open", action: () => openPlayniteImport(),
+  });
 
   rows.push({ section: "STARTUP, WAKE & LOCK SCREEN", cat: "general" });
   rows.push(toggleRow("Launch Loungepad at login", "Registers a startup entry so the launcher is ready after wake or reboot",
@@ -3980,6 +4060,7 @@ const SETTINGS_TABS = [
   { id: "keyboard",   label: "Keyboard" },
   { id: "actions",    label: "Actions" },
   { id: "library",    label: "Library" },
+  { id: "stats",      label: "Stats" },
 ];
 let settingsTab = "general";
 /* Which half of the screen has the highlight. Settings opens on the sidebar, so the first thing
@@ -4094,7 +4175,7 @@ function renderSettings() {
   const nodes = [];
   let fi = -1;
   rows.forEach(r => {
-    if (r.section) { nodes.push({ section: r.section }); return; }
+    if (r.section) { nodes.push({ section: r.section, bare: !!r.bare }); return; }
     fi++;
     nodes.push({ row: r, idx: fi, html: r.tile ? actionsTileHtml(r) : settingsRowHtml(r) });
   });
@@ -4105,7 +4186,7 @@ function renderSettings() {
   if (scroll.__shape !== shape) {
     const keepTop = scroll.scrollTop;
     scroll.innerHTML = "";
-    nodes.forEach(n => scroll.appendChild(n.section !== undefined ? settingsSectionEl(n.section) : n.row.tile ? actionsTileEl(n.idx) : settingsRowEl(n.idx)));
+    nodes.forEach(n => scroll.appendChild(n.section !== undefined ? settingsSectionEl(n.section, n.bare) : n.row.tile ? actionsTileEl(n.idx) : settingsRowEl(n.idx)));
     scroll.scrollTop = keepTop;
     scroll.__shape = shape;
   }
@@ -4128,9 +4209,10 @@ function renderSettings() {
   if (cur && focusVisible()) revealFocus(cur);
 }
 
-function settingsSectionEl(text) {
+/* A `bare` section still starts its category but draws no heading (Settings → Stats' first row). */
+function settingsSectionEl(text, bare) {
   const el = document.createElement("div");
-  el.className = "set-section";
+  el.className = "set-section" + (bare ? " bare" : "");
   el.textContent = text;
   return el;
 }
@@ -4194,7 +4276,8 @@ function settingsRowHtml(r) {
 /* Settings keeps its two panes, but they are now just two groups of focusables in one
    scope: the categories on the left, the rows on the right. Movement is geometric, and
    the pane is derived from where the highlight actually landed rather than tracked by
-   hand -- which is what lets a theme stack them, or drop the sidebar entirely.
+   hand -- which is what lets a theme stack them, or drop the sidebar entirely. Only the way
+   OUT of the rows is not geometric: that is B (or a click on a category), never a direction.
 
    Left/Right are the exception to pure geometry: on a row they adjust the value, because
    that is what ◂ ▸ mean everywhere else in this UI. A row marks itself data-nav-lock. */
@@ -4205,14 +4288,17 @@ function settingsInput(btn) {
   const row = el && el.dataset.rowIndex !== undefined ? rows[parseInt(el.dataset.rowIndex, 10)] : null;
   const onTab = !!(el && el.dataset.settingsTab);
 
+  // Inside a category the highlight stays among its rows (paneMove); on the categories it walks
+  // them as before, and Right steps into the rows like A.
+  const inRows = (x) => x.dataset.rowIndex !== undefined;
   switch (btn) {
     case "Up": case "Down":
-      if (navMove(btn)) syncSettingsPane();
+      if (row ? paneMove(btn, inRows) : navMove(btn)) syncSettingsPane();
       break;
 
     case "Left": case "Right":
       if (row && el.dataset.navLock === "horizontal") { row.adjust(btn === "Right" ? 1 : -1); break; }
-      if (navMove(btn)) syncSettingsPane();
+      if (row ? paneMove(btn, inRows) : navMove(btn)) syncSettingsPane();
       break;
 
     case "A":
@@ -4471,6 +4557,11 @@ function gameMenuItems() {
   // business and an uninstalled game has nowhere to put them.
   if (canHaveMods(g)) items.push({ label: "Mods", icon: "chip", sub: "Switch mods on and off, remove them, find more — through Vortex",
     action: () => { closeGameMenu(); openMods(g.id); } });
+  // The achievements and the sessions, from the library too, so neither needs the page opened first.
+  if (canHaveAchievements(g)) items.push({ label: "Achievements", icon: "trophy", sub: achievementMenuSub(g),
+    action: () => { const f = gameMenu.from; closeGameMenu(); openAchievements(g.id, f); } });
+  items.push({ label: "Stats", icon: "chart", sub: g.sessions > 0 || g.playtimeMinutes > 0 ? `${g.sessions || 0} session${g.sessions === 1 ? "" : "s"} · ${fmtPlaytime(g.playtimeMinutes)}` : "Nothing yet · log a session played elsewhere",
+    action: () => { const f = gameMenu.from; closeGameMenu(); openActivity(g.id, f); } });
   items.push(
     // Hiding is done to the whole game: hiding only the Steam copy would just bring the Xbox one
     // out from behind it as a tile of its own.
@@ -5247,10 +5338,11 @@ let claimedButtons = "";
 function publishClaims() {
   const overlayUp = overlayOpen() || radialOpen || !!radialSub || actionWheelOpen || ingameOpen
     || document.body.classList.contains("overlay-mode");
-  const want = view === "library" && !overlayUp && !searchOpen ? "View" : "";
+  // View for search and LB for the Stats screen, both on the library only.
+  const want = view === "library" && !overlayUp && !searchOpen ? "View,LB" : "";
   if (want === claimedButtons) return;
   claimedButtons = want;
-  send({ cmd: "claimButtons", buttons: want ? [want] : [] });
+  send({ cmd: "claimButtons", buttons: want ? want.split(",") : [] });
 }
 setInterval(publishClaims, 400);
 
@@ -5426,9 +5518,165 @@ function switchView(v) {
   if (v === "detail") renderDetail();
   // Always land on the categories, never mid-list in whatever was open last time.
   if (v === "settings") { settingsPane = "nav"; settingsIdx = 0; renderSettings(); }
+  if (v === "stats") openStatsView(prev);
   syncTrailers();
 }
 
+
+/* ============================== the form sheet ==============================
+   A short list of Settings-style rows over whatever is open, for the few things that are edited
+   rather than picked from a menu: an achievement's unlock, a logged session, the Playnite import.
+   The rows are Settings' own (settingsRowHtml), so a toggle, a ◂ ▸ value and an action look and
+   answer exactly as they do there, and like there the highlight comes round at the ends. `rows`
+   is a function, asked again after every change; a row may also be { section } or { note }, which
+   take no highlight. `title` and `sub` may be functions too. */
+function openForm(spec) {
+  formState = { ...spec, idx: 0 };
+  showOverlay("overlay-form");      // active before rendered, or the first row is never lit
+  renderForm();
+}
+
+function closeForm() {
+  if (!formState) return;
+  const f = formState;
+  formState = null;
+  hideOverlay("overlay-form");
+  if (f.onClose) f.onClose();
+  repaintFocus();
+}
+
+function formRows() { return formState ? formState.rows() : []; }
+function formFocusables(rows) { return rows.filter(r => !r.section && r.note === undefined); }
+
+function renderForm() {
+  if (!formState) return;
+  const val = (v) => (typeof v === "function" ? v() : v) || "";
+  $("formKicker").textContent = val(formState.kicker);
+  $("formTitle").textContent = val(formState.title);
+  const sub = val(formState.sub);
+  $("formSub").textContent = sub;
+  $("formSub").hidden = !sub;
+  const rows = formRows();
+  const focusables = formFocusables(rows);
+  formState.idx = Math.max(0, Math.min(formState.idx, focusables.length - 1));
+  const list = $("formList");
+  const shape = (formState.kind || "") + "|" + rows.map(r => r.section ? "s:" + r.section : r.note !== undefined ? "n" : "r").join("|");
+  if (list.__shape !== shape) {
+    const keepTop = list.scrollTop;
+    list.innerHTML = "";
+    let fi = -1;
+    rows.forEach(r => {
+      if (r.section) { list.appendChild(settingsSectionEl(r.section)); return; }
+      if (r.note !== undefined) { const n = document.createElement("div"); n.className = "form-note"; list.appendChild(n); return; }
+      fi++;
+      list.appendChild(formRowEl(fi));
+    });
+    list.scrollTop = keepTop;
+    list.__shape = shape;
+  }
+  let fi = -1;
+  rows.forEach((r, i) => {
+    const el = list.children[i];
+    if (r.section) return;
+    if (r.note !== undefined) { if (el.__note !== r.note) { el.textContent = r.note; el.__note = r.note; } return; }
+    fi++;
+    el.dataset.focusKey = "form:" + fi;
+    if (r.adjust) el.dataset.navLock = "horizontal"; else delete el.dataset.navLock;
+    el.classList.toggle("muted", !!r.muted);
+    const html = settingsRowHtml(r);
+    if (el.__html !== html) { el.innerHTML = html; el.__html = html; }
+  });
+  const cur = focusables[formState.idx];
+  $("formFoot").innerHTML = foot(
+    ...(cur && !cur.muted && (cur.action || cur.adjust) ? [["A", cur.aLabel || (cur.type === "toggle" ? "Switch" : cur.type === "action" ? cur.label || "Select" : "Type")]] : []),
+    ...(cur && cur.adjust && !cur.muted ? [["DpadH", "Adjust"]] : []),
+    ["B", formState.backLabel || "Back"]);
+  const scope = $("overlay-form");
+  setScopeKey(scope, cur ? "form:" + formState.idx : null);
+  const el = focusEl(scope);
+  const show = focusVisible();
+  Nav.focusables(scope).forEach(x => x.classList.toggle("focused", show && x === el));
+  if (el && show) revealFocus(el);
+}
+
+function formRowEl(idx) {
+  const el = document.createElement("div");
+  el.className = "set-row";
+  el.dataset.focusable = "";
+  el.dataset.rowIndex = idx;
+  el.addEventListener("mouseenter", () => {
+    if (!hoverEnabled() || !formState || formState.idx === idx) return;
+    formState.idx = idx; renderForm();
+  });
+  el.addEventListener("click", (e) => {
+    if (!formState) return;
+    formState.idx = idx;
+    const row = formFocusables(formRows())[idx];
+    if (!row || row.muted) { renderForm(); return; }
+    const arrow = e.target instanceof Element ? e.target.closest(".arrow") : null;
+    if (arrow && row.adjust) row.adjust(parseInt(arrow.dataset.dir, 10) || 1);
+    else if (row.action) row.action(); else if (row.adjust) row.adjust(1);
+    renderForm();
+  });
+  return el;
+}
+
+function formInput(btn) {
+  const row = formFocusables(formRows())[formState.idx];
+  const inRows = (x) => x.dataset.rowIndex !== undefined;
+  switch (btn) {
+    case "Up": case "Down":
+      if (paneMove(btn, inRows)) {
+        const el = focusEl();
+        if (el && el.dataset.rowIndex !== undefined) formState.idx = parseInt(el.dataset.rowIndex, 10);
+        renderForm();
+      }
+      break;
+    case "Left": case "Right":
+      if (row && row.adjust && !row.muted) { row.adjust(btn === "Right" ? 1 : -1); renderForm(); }
+      break;
+    case "A":
+      if (!focusVisible() || !row || row.muted) break;
+      if (row.action) row.action(); else if (row.adjust) row.adjust(1);
+      renderForm();
+      break;
+    case "B": closeForm(); break;
+  }
+}
+
+/* ---- dates and times on a pad ----
+   ◂ ▸ nudge a value, and A on the row types one exactly (the on-screen keyboard comes up with the
+   field). These read what was typed. */
+function parseTypedDay(text) {
+  const t = String(text || "").trim();
+  const iso = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(t);
+  if (iso) { const d = new Date(+iso[1], +iso[2] - 1, +iso[3]); return isNaN(d) ? null : d; }
+  const dmy = /^(\d{1,2})[/.](\d{1,2})[/.](\d{4})$/.exec(t);
+  if (dmy) { const d = new Date(+dmy[3], +dmy[2] - 1, +dmy[1]); return isNaN(d) ? null : d; }
+  const parsed = Date.parse(t);
+  if (isNaN(parsed)) return null;
+  const d = new Date(parsed);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+function parseTypedTime(text) {
+  const m = /^(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)?$/i.exec(String(text || "").trim());
+  if (!m) return null;
+  let h = +m[1];
+  const min = m[2] ? +m[2] : 0;
+  if (m[3]) { const pm = m[3].toLowerCase() === "pm"; if (h === 12) h = pm ? 12 : 0; else if (pm) h += 12; }
+  return h < 24 && min < 60 ? { h, min } : null;
+}
+/* "90", "1:30", "1h 30m", "2h", "45m" -- minutes out. */
+function parseTypedLength(text) {
+  const t = String(text || "").trim().toLowerCase();
+  if (/^\d+$/.test(t)) return +t;
+  const hm = /^(\d+):(\d{1,2})$/.exec(t);
+  if (hm) return +hm[1] * 60 + +hm[2];
+  const h = /(\d+(?:\.\d+)?)\s*h/.exec(t), m = /(\d+)\s*m/.exec(t);
+  if (!h && !m) return null;
+  return Math.round((h ? +h[1] * 60 : 0) + (m ? +m[1] : 0));
+}
+function isoDay(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
 
 /* ============================== input routing ============================== */
 
@@ -5457,10 +5705,19 @@ function handleInput(btn, src) {
   if (manageOpen) { manageInput(btn); return; }
   if (choiceState) { choiceInput(btn); return; }
   if (modsState) { modsInput(btn); return; }
+  // The session's charts sit over a game's Stats sheet or a day's timeline; the achievements
+  // sheet can sit over either of those. A day's timeline is only ever opened from the screen.
+  // The form sheet is opened from those sheets (and from Settings), so it comes before them.
+  if (formState) { formInput(btn); return; }
+  if (sessionState) { sessionInput(btn); return; }
+  if (actState) { actInput(btn); return; }
+  if (achState) { achInput(btn); return; }
+  if (dayState) { dayInput(btn); return; }
 
   if (view === "library") libraryInput(btn);
   else if (view === "detail") detailInput(btn);
   else if (view === "settings") settingsInput(btn);
+  else if (view === "stats") statsInput(btn);
 }
 
 // After every press, so the claim follows the screen the press just led to.
@@ -5592,6 +5849,8 @@ function handleHostMessage(m) {
       S.actions = withActionIcons(m.actions, S.actions);
       S.xboxButton = m.xboxButton || null;
       S.update = m.update || S.update;
+      S.achievements = m.achievements || {};
+      S.sessionStart = m.sessionStart || null;
       if (S.settings) S.settings.launchOnStartup = m.startupRegistered;
       applyTheme();
       // First real library: let clampFocus drop the highlight onto the first game rather
@@ -5606,6 +5865,9 @@ function handleHostMessage(m) {
       if (filterOpen) renderFilter();
       if (choiceState) renderChoice();
       if (modsState) renderMods();
+      if (view === "stats") renderStats();
+      if (achState) renderAchievements();
+      if (actState) renderActivity();
       if (firstState && S.settings && !S.settings.tvDeviceName && S.displays.length > 1) {
         switchView("settings");
         toast("Welcome — pick which display is your TV");
@@ -5722,8 +5984,25 @@ function handleHostMessage(m) {
     case "game":
       S.gameRunning = m.running;
       S.runningGameId = m.id;
+      S.sessionStart = m.since || null;
+      // The cards for what the session unlocked wait for the launcher to be back on the TV.
+      if (!m.running) { S.telemetry = null; setTimeout(drainUnlocks, 800); }
       renderLibrary();
       break;
+    // Play sessions and achievements: see activity.js for every one of these.
+    case "telemetry":
+      S.telemetry = m;
+      if (ingameOpen) renderIngameStats();
+      break;
+    case "activity": onActivityMessage(m); break;
+    case "activitySession": onSessionMessage(m); break;
+    case "activityAll": onActivityAll(m); break;
+    case "activityRecorded": onActivityRecorded(m); break;
+    case "playnite": onPlayniteMessage(m); break;
+    case "achievements": onAchievementsMessage(m); break;
+    case "achievementsSummary": onAchievementsSummary(m); break;
+    case "achievementsAll": onAchievementsAll(m); break;
+    case "achievementsUnlocked": onAchievementsUnlocked(m); break;
     // A trailer landed on disk. One field on one game, in place: a state push here would rebuild
     // the library under somebody browsing it, for a change nothing on screen shows.
     case "trailerCached": {
@@ -5952,6 +6231,160 @@ function mockUpdateStep(patch, delay) {
   }, delay);
 }
 
+/* Play sessions and achievements, as the host would answer them. Deterministic, so a reload
+   shows the same numbers: sessions over the last two months for the games that have playtime,
+   and a list per game for a handful of them -- one complete, one untouched, one a ROM's from
+   RetroAchievements with points, one Xbox's with gamerscore. Most unlocks land inside one of the
+   game's sessions, the way they do for real, so the Day sheet and the session charts have
+   something to join. */
+const mockAct = (() => {
+  let seed = 7;
+  const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+  const ids = {};
+  const sessions = [];
+  const id = (t, p) => p.toLowerCase() + ":" + t.toLowerCase().replace(/[^a-z]/g, "");
+  const plan = [
+    ["Hollowmark: Second Ascent", "Steam", 41, true], ["Ridgeline 84", "Epic", 9, false], ["Salt & Tide", "GOG", 30, true],
+    ["Foundry Nine", "Manual", 5, false], ["Cassette Run", "Steam", 3, false], ["Nightpost", "Steam", 2, false],
+    ["Umber Fields", "Steam", 4, false], ["Marrow", "GOG", 7, false], ["Super Mario World", "Super Nintendo", 6, false],
+    ["Forza Horizon 5", "Xbox", 18, true],
+  ];
+  const now = Date.now();
+  plan.forEach(([title, platform, count, rich], gi) => {
+    const gameId = id(title, platform);
+    ids[title] = gameId;
+    for (let i = 0; i < count; i++) {
+      const daysAgo = Math.floor(rnd() * 60);
+      const start = new Date(now - daysAgo * 86400000 - Math.floor(rnd() * 6) * 3600000 - 3600000 * 2);
+      const seconds = Math.round((15 + rnd() * 150) * 60);
+      const fps = rich ? Math.round(55 + rnd() * 70) : null;
+      sessions.push({
+        id: "s" + gi + "_" + i, gameId, start: start.toISOString(), end: new Date(start.getTime() + seconds * 1000).toISOString(),
+        seconds, samples: Math.min(720, Math.floor(seconds / 5)),
+        avgFps: fps, lowFps: fps ? Math.round(fps * 0.72) : null,
+        avgCpu: Math.round(25 + rnd() * 40), avgGpu: Math.round(60 + rnd() * 38), avgRam: Math.round(45 + rnd() * 30), peakRamMb: Math.round(9000 + rnd() * 6000),
+        avgCpuTemp: rich ? Math.round(55 + rnd() * 20) : null, maxCpuTemp: rich ? Math.round(78 + rnd() * 12) : null,
+        avgGpuTemp: rich ? Math.round(60 + rnd() * 15) : null, maxGpuTemp: rich ? Math.round(76 + rnd() * 10) : null,
+        avgCpuPower: rich ? Math.round(60 + rnd() * 50) : null, avgGpuPower: rich ? Math.round(180 + rnd() * 120) : null,
+        sources: rich ? "RivaTuner Statistics Server, HWiNFO" : null,
+      });
+    }
+  });
+  const sets = {};
+  const unlockTime = (gameId) => {
+    const mine = sessions.filter(s => s.gameId === gameId);
+    if (mine.length && rnd() < 0.75) {
+      const s = mine[Math.floor(rnd() * mine.length)];
+      return new Date(new Date(s.start).getTime() + rnd() * s.seconds * 1000).toISOString();
+    }
+    return new Date(now - Math.floor(rnd() * 240) * 86400000 - Math.floor(rnd() * 86400000)).toISOString();
+  };
+  const makeSet = (title, source, total, unlocked, opts = {}) => {
+    const gameId = ids[title] || id(title, opts.platform || "Steam");
+    const seedName = title.toLowerCase().replace(/[^a-z]/g, "");
+    const items = [];
+    for (let i = 0; i < total; i++) {
+      const got = i < unlocked;
+      const pct = Math.round((got ? 4 + rnd() * 80 : 0.3 + rnd() * 25) * 10) / 10;
+      items.push({
+        id: seedName + "_" + i, name: `${opts.names ? opts.names[i % opts.names.length] : "Achievement"} ${i + 1}`,
+        description: i % 7 === 3 ? null : `A placeholder description for what number ${i + 1} takes, long enough to wrap to a second line on the wider rows.`,
+        hidden: i % 6 === 5, unlocked: got,
+        unlockedAt: got ? unlockTime(gameId) : null,
+        percent: pct, score: source === "xbox" ? (i % 5 === 0 ? 50 : 15) : source === "retro" ? (i % 4 === 0 ? 25 : 5) : source === "epic" ? 10 : null,
+        icon: `https://picsum.photos/seed/${seedName}a${i}/128/128`, iconLocked: null, iconFile: null, iconLockedFile: null,
+      });
+    }
+    sets[gameId] = { gameId, source, sourceGameId: null, sourceName: opts.sourceName || null, fetchedAt: new Date(now - 7 * 60000).toISOString(), error: opts.error || null,
+      unlocked, total, score: items.filter(a => a.unlocked).reduce((n, a) => n + (a.score || 0), 0), totalScore: items.reduce((n, a) => n + (a.score || 0), 0), items };
+  };
+  const names = ["First Steps", "Deep Breath", "Untouchable", "Collector", "Night Owl", "Speedrunner", "Pacifist", "Hoarder"];
+  makeSet("Hollowmark: Second Ascent", "steam", 63, 41, { names });
+  makeSet("Salt & Tide", "gog", 12, 12, { names });
+  makeSet("Cassette Run", "steam", 20, 0, { names });
+  makeSet("Nightpost", "steam", 30, 5, { names });
+  makeSet("Ridgeline 84", "epic", 25, 3, { names });
+  makeSet("Forza Horizon 5", "xbox", 50, 20, { names, platform: "Xbox" });
+  makeSet("Super Mario World", "retro", 30, 8, { names, platform: "Super Nintendo", sourceName: "Super Mario World" });
+  return { sessions, sets, ids };
+})();
+function mockAchSummaries() {
+  const out = {};
+  Object.values(mockAct.sets).forEach(s => { if (s.total > 0) out[s.gameId] = { unlocked: s.unlocked, total: s.total, score: s.score, totalScore: s.totalScore, lastUnlock: s.items.filter(a => a.unlockedAt).map(a => a.unlockedAt).sort().pop() || null, source: s.source, fetchedAt: s.fetchedAt, error: s.error }; });
+  return out;
+}
+function mockSamples(session) {
+  const out = [];
+  const n = Math.min(300, Math.max(12, Math.floor(session.seconds / 5)));
+  for (let i = 0; i < n; i++) {
+    const t = Math.round(session.seconds * i / (n - 1));
+    const wave = Math.sin(i / 9) * 0.5 + Math.sin(i / 3.7) * 0.3;
+    out.push({
+      t, fps: session.avgFps ? Math.round(session.avgFps + wave * 18 + (i % 23 === 0 ? -25 : 0)) : null,
+      cpu: Math.round(session.avgCpu + wave * 14), gameCpu: Math.round(session.avgCpu * 0.6 + wave * 10),
+      gpu: Math.round(Math.min(100, session.avgGpu + wave * 12)), ram: Math.round(session.avgRam + i / n * 8), ramMb: session.peakRamMb - 800 + Math.round(i / n * 800),
+      cpuTemp: session.avgCpuTemp ? Math.round(session.avgCpuTemp + wave * 6 + i / n * 4) : null, gpuTemp: session.avgGpuTemp ? Math.round(session.avgGpuTemp + wave * 4 + i / n * 6) : null,
+      cpuPower: session.avgCpuPower ? Math.round(session.avgCpuPower + wave * 20) : null, gpuPower: session.avgGpuPower ? Math.round(session.avgGpuPower + wave * 40) : null,
+    });
+  }
+  return out;
+}
+/* One game's dated unlocks, oldest first, as UiBridge.UnlocksFor sends them. */
+function mockUnlocks(gameId) {
+  const set = mockAct.sets[gameId];
+  return set ? set.items.filter(a => a.unlocked && a.unlockedAt).map(a => ({ at: a.unlockedAt, item: a })).sort((a, b) => new Date(a.at) - new Date(b.at)) : [];
+}
+function mockAchAll() {
+  const sets = Object.values(mockAct.sets);
+  const title = (id) => (S.games.find(g => g.id === id) || {}).title || id;
+  const dated = sets.flatMap(s => s.items.filter(a => a.unlocked && a.unlockedAt).map(a => ({ gameId: s.gameId, title: title(s.gameId), item: a, at: a.unlockedAt })))
+    .sort((a, b) => new Date(b.at) - new Date(a.at));
+  const since = new Date(); since.setHours(0, 0, 0, 0); since.setDate(since.getDate() - 35);
+  const recent = dated.filter((x, i) => i < 60 || new Date(x.at) >= since).slice(0, 1500);
+  const unlocksByDay = {};
+  dated.forEach(x => { const k = dayKey(new Date(x.at)); unlocksByDay[k] = (unlocksByDay[k] || 0) + 1; });
+  const months = [];
+  const nowD = new Date();
+  for (let i = 11; i >= 0; i--) { const d = new Date(nowD.getFullYear(), nowD.getMonth() - i, 1); months.push({ key: monthKey(d), label: `${d.toLocaleString("en", { month: "short" })} ${String(d.getFullYear()).slice(2)}`, value: 0 }); }
+  sets.forEach(s => s.items.forEach(a => { if (!a.unlockedAt) return; const m = months.find(x => x.key === monthKey(new Date(a.unlockedAt))); if (m) m.value++; }));
+  return {
+    type: "achievementsAll",
+    games: sets.map(s => ({ gameId: s.gameId, title: title(s.gameId), summary: mockAchSummaries()[s.gameId] || { unlocked: 0, total: 0, score: 0, totalScore: 0, lastUnlock: null, source: s.source, fetchedAt: s.fetchedAt, error: null } })),
+    recent,
+    unlocksByDay,
+    unlockedPercents: sets.flatMap(s => s.items.filter(a => a.unlocked).map(a => a.percent)),
+    unlocksByMonth: months,
+    providers: [{ source: "steam", blocked: null, games: 8 }, { source: "xbox", blocked: "Sign in to Xbox under Settings → Library to see achievements", games: 4 },
+      { source: "epic", blocked: null, games: 3 }, { source: "gog", blocked: "Sign in to GOG under Settings → Library to see achievements", games: 2 }, { source: "retro", blocked: null, games: 4 }],
+  };
+}
+
+/* Preview only: U shows an unlock card, I opens the in-game menu over a "running" Hollowmark with
+   live readings, K closes that game. */
+if (!HOST) window.addEventListener("keydown", (e) => {
+  if (inputOpen || keyPick || captureState || e.ctrlKey || e.altKey || e.metaKey) return;
+  const hollow = mockAct.ids["Hollowmark: Second Ascent"];
+  if (e.key === "u") {
+    const set = mockAct.sets[hollow];
+    handleHostMessage({ type: "achievementsUnlocked", id: hollow, title: "Hollowmark: Second Ascent", items: set.items.slice(41, 43).map(a => ({ ...a, unlocked: true })) });
+  }
+  if (e.key === "i" && !overlayMode) {
+    mockHandle._running = hollow;
+    const since = new Date(Date.now() - 72 * 60000).toISOString();
+    handleHostMessage({ type: "game", running: true, id: hollow, since });
+    handleHostMessage({ type: "overlay", mode: "ingame", targetTitle: "Hollowmark", targetProcess: "hollowmark", shot: null, windows: mockWindows, runningGameId: hollow });
+    clearInterval(mockHandle._telemetry);
+    let tick = 0;
+    const push = () => handleHostMessage({ type: "telemetry", id: hollow, since, sample: { t: 4320 + tick * 2, fps: 118 + Math.round(Math.sin(tick / 2) * 9), cpu: 41 + (tick % 5), gpu: 93 - (tick % 4), ram: 61, gpuTemp: 71, cpuTemp: 64 }, fpsSource: "RivaTuner Statistics Server", sensorSource: "HWiNFO" });
+    push();
+    mockHandle._telemetry = setInterval(() => { tick++; if (!ingameOpen) { clearInterval(mockHandle._telemetry); return; } push(); }, 2000);
+  }
+  if (e.key === "k" && mockHandle._running) {
+    mockHandle._running = null;
+    handleHostMessage({ type: "game", running: false, id: null });
+  }
+});
+
 function mockHandle(msg) {
   const pushState = () => {
     const seedW = (t) => `https://picsum.photos/seed/${t.toLowerCase().replace(/[^a-z]/g, "")}w/600/340`;
@@ -6049,6 +6482,8 @@ function mockHandle(msg) {
       type: "state",
       games,
       collections: mockCollections,
+      achievements: mockAchSummaries(),
+      sessionStart: mockHandle._running ? new Date(Date.now() - 72 * 60000).toISOString() : null,
       steamAccount: { steamId: "76561198000000000", personaName: "couchplayer", ownedCount: 212,
         fetchedAt: new Date().toISOString(), error: null },
       stores: {
@@ -6077,6 +6512,9 @@ function mockHandle(msg) {
         keyboardSuggestions: true, keyboardFunctionKeys: false, keyboardNavKeys: false,
         keyboardNumpad: false, keyboardModifiers: false,
         accentColor: "#F0A253", theme: "", cacheTrailers: true, ageRatingBoard: "ESRB",
+        activityTracking: true, activityHardware: true, activitySampleSeconds: 5,
+        achievementsEnabled: true, achievementNotifications: true, achievementsOnTiles: true,
+        retroAchievementsUser: "", retroAchievementsKey: "",
         animationsEnabled: true, animationSpeed: 1.0, themeSettings: {},
       },
       displays: [
@@ -6305,10 +6743,104 @@ function mockHandle(msg) {
       setTimeout(() => { mockXboxButton.steam = all ? false : !!msg.on; mockXboxButton.steamBusy = false; pushState(); toast("(preview) Steam restarted"); }, 1200);
     }
     pushState();
+  } else if (msg.cmd === "activityOpen") {
+    setTimeout(() => handleHostMessage({ type: "activity", id: msg.id, sessions: mockAct.sessions.filter(s => s.gameId === msg.id), unlocks: mockUnlocks(msg.id) }), 250);
+  } else if (msg.cmd === "activitySession") {
+    const s = mockAct.sessions.find(x => x.id === msg.id);
+    const slack = 2 * 60000;
+    const unlocks = s ? mockUnlocks(s.gameId).filter(u => new Date(u.at) >= new Date(s.start).getTime() - slack && new Date(u.at) <= new Date(s.end).getTime() + slack) : [];
+    if (s) setTimeout(() => handleHostMessage({ type: "activitySession", id: s.id, session: s, samples: s.samples ? mockSamples(s) : [], unlocks }), 350);
+  } else if (msg.cmd === "activityAll") {
+    setTimeout(() => handleHostMessage({ type: "activityAll", sessions: mockAct.sessions.slice(), sources: { gpu: true, fps: "RivaTuner Statistics Server", sensors: null } }), 300);
+  } else if (msg.cmd === "activityDelete") {
+    const i = mockAct.sessions.findIndex(x => x.id === msg.id);
+    const gameId = i >= 0 ? mockAct.sessions[i].gameId : null;
+    if (i >= 0) mockAct.sessions.splice(i, 1);
+    toast("Session removed");
+    if (gameId) handleHostMessage({ type: "activity", id: gameId, sessions: mockAct.sessions.filter(s => s.gameId === gameId), unlocks: mockUnlocks(gameId) });
+  } else if (msg.cmd === "activityClear") {
+    const n = mockAct.sessions.length;
+    mockAct.sessions.length = 0;
+    toast(`Cleared ${n} sessions`);
+    handleHostMessage({ type: "activityAll", sessions: [], sources: null });
+  } else if (msg.cmd === "achievementsOpen") {
+    const g = S.games.find(x => x.id === msg.id);
+    const set = mockAct.sets[msg.id];
+    const blocked = g && g.platform === "Xbox" && !set ? "Xbox has not seen this game played on this account yet" : null;
+    handleHostMessage({ type: "achievements", id: msg.id, head: { blocked, fetching: !set && !blocked, provider: g && g.platform === "Steam" ? "steam" : "xbox", id: msg.id }, set: set || null });
+    if (!set && !blocked) setTimeout(() => handleHostMessage({ type: "achievements", id: msg.id, head: null, set: { gameId: msg.id, source: "steam", fetchedAt: new Date().toISOString(), error: null, unlocked: 0, total: 0, score: 0, totalScore: 0, items: [] } }), 900);
+  } else if (msg.cmd === "achievementsClose") {
+    /* nothing to release in the preview */
+  } else if (msg.cmd === "achievementsRefresh") {
+    toast(msg.id ? "(preview) would fetch this game's list again" : "Refreshing achievements in the background");
+  } else if (msg.cmd === "achievementsAll") {
+    setTimeout(() => handleHostMessage(mockAchAll()), 200);
   } else if (msg.cmd === "actionsRefresh") {
     /* detection is the host's; the preview's list is what it is */
+  } else if (msg.cmd === "achievementEdit" || msg.cmd === "achievementUnedit") {
+    // AchievementStore.Edit / Unedit, on the mock's list.
+    const set = mockAct.sets[msg.id];
+    const a = set && set.items.find(x => x.id === msg.achievementId);
+    if (!a) return;
+    if (msg.cmd === "achievementEdit") {
+      if (!a.edited) { a.storeUnlocked = a.unlocked; a.storeUnlockedAt = a.unlockedAt; }
+      a.unlocked = msg.unlocked; a.unlockedAt = msg.unlocked ? msg.at : null; a.edited = true;
+    } else if (a.edited) {
+      a.unlocked = a.storeUnlocked; a.unlockedAt = a.storeUnlockedAt; a.edited = null; a.storeUnlocked = null; a.storeUnlockedAt = null;
+    }
+    set.unlocked = set.items.filter(x => x.unlocked).length;
+    handleHostMessage({ type: "achievementsSummary", id: msg.id, summary: mockAchSummaries()[msg.id] });
+    handleHostMessage({ type: "achievements", id: msg.id, head: null, set });
+    toast(msg.cmd === "achievementEdit" ? "Achievement saved" : "Back to what the store says");
+  } else if (msg.cmd === "activityLog" || msg.cmd === "activityEdit") {
+    const start = new Date(msg.start);
+    const fields = { start: start.toISOString(), end: new Date(start.getTime() + msg.seconds * 1000).toISOString(), seconds: msg.seconds, counted: msg.counted || null };
+    let gameId = msg.id;
+    if (msg.cmd === "activityLog") mockAct.sessions.push({ id: "m" + Date.now().toString(16), gameId, samples: 0, origin: "manual", ...fields });
+    else { const s = mockAct.sessions.find(x => x.id === msg.id); if (!s) return; Object.assign(s, fields); gameId = s.gameId; }
+    handleHostMessage({ type: "activity", id: gameId, sessions: mockAct.sessions.filter(s => s.gameId === gameId), unlocks: mockUnlocks(gameId) });
+    toast(msg.cmd === "activityLog" ? "Session logged" : "Session saved");
+  } else if (msg.cmd === "playniteScan" || msg.cmd === "playnitePick") {
+    handleHostMessage({ type: "playnite", state: "reading", dir: mockPlaynite.dir, record: mockPlaynite.record });
+    setTimeout(() => handleHostMessage(mockPlaynite.message("ready", null)), 500);
+  } else if (msg.cmd === "playniteImport") {
+    const plan = mockPlaynite.plan();
+    const outcome = { playtime: 0, flags: 0, collections: 0, games: 0, sessions: 0, achievements: 0, settings: 0 };
+    (msg.parts || []).forEach(p => { if (plan[p]) outcome[p] = plan[p].count; });
+    outcome.total = Object.values(outcome).reduce((a, b) => a + b, 0);
+    (msg.parts || []).forEach(p => mockPlaynite.done.add(p));
+    if (outcome.total) mockPlaynite.record = { at: new Date().toISOString(), ...outcome };
+    setTimeout(() => handleHostMessage(mockPlaynite.message("done", outcome)), 400);
+  } else if (msg.cmd === "playniteUndo") {
+    const outcome = { ...(mockPlaynite.record || {}), total: 1 };
+    mockPlaynite.record = null;
+    mockPlaynite.done.clear();
+    setTimeout(() => handleHostMessage(mockPlaynite.message("undone", outcome)), 400);
   }
 }
+
+/* The Playnite import as the host would plan it for a small library: every part has something,
+   except that SuccessStory is not installed. What has been imported reads as nothing left. */
+const mockPlaynite = {
+  dir: "C:\\Users\\you\\AppData\\Roaming\\Playnite",
+  record: null,
+  done: new Set(),
+  plan() {
+    const zero = (p, extra) => (this.done.has(p) ? { count: 0, ...extra } : null);
+    return {
+      playtime: zero("playtime") || { count: 6, minutes: 5230, titles: ["Hollowmark: Second Ascent", "Salt & Tide", "Marrow"] },
+      flags: zero("flags") || { count: 3, favorites: 2, hidden: 1 },
+      collections: zero("collections") || { count: 2, names: ["Couch co-op", "Backlog (Playnite)"] },
+      games: zero("games") || { count: 1, titles: ["Dolphin Test Build"] },
+      sessions: zero("sessions", { available: true, games: 0 }) || { count: 48, available: true, games: 5 },
+      achievements: { count: 0, available: false, unlocked: 0 },
+      settings: zero("settings", { labels: [] }) || { count: 1, labels: ["SteamGridDB key"] },
+    };
+  },
+  message(state, outcome) {
+    return { type: "playnite", state, dir: this.dir, version: "10.56", games: 22, matched: 18, parts: this.plan(), outcome, record: this.record };
+  },
+};
 
 /* ============================== boot ============================== */
 

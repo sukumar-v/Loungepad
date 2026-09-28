@@ -391,6 +391,37 @@ public class XboxAccountClient : IStoreAccount
         }
     }
 
+    /// <summary>The account's xuid, for the achievements service; null when not signed in.</summary>
+    public string? Xuid => _tokens?.Xuid;
+
+    /// <summary>The title id Xbox Live files a package family name under, from the last title
+    /// history answer. Null for a game the account has never played on any device.</summary>
+    public string? TitleIdFor(string? pfn) =>
+        pfn is null ? null : Cached()?.Games.FirstOrDefault(g => g.PackageFamilyName == pfn)?.XboxTitleId;
+
+    /// <summary>
+    /// A GET on an Xbox Live service as this account, with the XSTS token refreshed first when
+    /// it has to be. Null when not signed in or when the sign-in has expired -- the caller says
+    /// so; a status and a body otherwise, whatever the status.
+    /// </summary>
+    public async Task<(int Status, string Body)?> GetAsync(string url, int contractVersion, CancellationToken ct)
+    {
+        if (_tokens is null) return null;
+        if (!await EnsureAccessAsync(ct)) return null;
+        if (_tokens.XstsToken is null || DateTime.UtcNow > _tokens.XstsExpiresAt.AddMinutes(-10))
+        {
+            await XstsAsync(_tokens, ct);
+            AccountStore.SaveSecret(Store, _tokens);
+        }
+        using var req = new HttpRequestMessage(HttpMethod.Get, url);
+        req.Headers.TryAddWithoutValidation("Authorization", $"XBL3.0 x={_tokens.UserHash};{_tokens.XstsToken}");
+        req.Headers.TryAddWithoutValidation("x-xbl-contract-version", contractVersion.ToString());
+        req.Headers.TryAddWithoutValidation("Accept-Language", "en-US");
+        req.Headers.TryAddWithoutValidation("Accept", "application/json");
+        using var res = await Http.SendAsync(req, ct);
+        return ((int)res.StatusCode, await res.Content.ReadAsStringAsync(ct));
+    }
+
     private static async Task<List<Game>> TitleHistoryAsync(XboxTokens t, CancellationToken ct)
     {
         // "image" is not a decoration every deployment knows; "detail" alone still carries the
@@ -417,6 +448,7 @@ public class XboxAccountClient : IStoreAccount
         {
             var pfn = Str(title, "pfn");
             var name = Str(title, "name");
+            var titleId = Str(title, "titleId");
             if (string.IsNullOrWhiteSpace(pfn) || string.IsNullOrWhiteSpace(name)) continue;
             if (Str(title, "type") is { } type && !type.Equals("Game", StringComparison.OrdinalIgnoreCase)) continue;
             if (title.TryGetProperty("devices", out var devices) && devices.ValueKind == JsonValueKind.Array
@@ -445,6 +477,7 @@ public class XboxAccountClient : IStoreAccount
                 Installed = false,
                 PackageFamilyName = pfn,
                 InstallUri = $"ms-windows-store://pdp/?PFN={Uri.EscapeDataString(pfn)}",
+                XboxTitleId = titleId,
                 RemoteCoverUrl = poster,
                 RemoteBackdropUrl = hero,
                 LastPlayed = lastPlayed,

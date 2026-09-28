@@ -568,6 +568,7 @@ public class LibraryScanner
                     Platform = "Epic",
                     LaunchUri = $"com.epicgames.launcher://apps/{appName}?action=launch&silent=true",
                     ExePath = Path.Combine(installLocation, launchExe),
+                    EpicNamespace = S("CatalogNamespace") ?? S("MainGameCatalogNamespace"),
                     InstallDir = installLocation,
                     SizeBytes = size,
                     Installed = Directory.Exists(installLocation)

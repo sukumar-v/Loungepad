@@ -474,6 +474,14 @@ Loungepad/
     StartupService.cs     HKCU Run key registration
     UpdateService.cs      Checks GitHub releases, downloads, swaps the files in place, restarts
     TrailerCache.cs       Keeps a copy of each trailer the page plays, capped, oldest out first
+    ActivityStore.cs      The play sessions: activity.json, plus one readings file per session
+    ActivityService.cs    Records each sitting and samples the hardware while the game runs
+    HardwareMonitor.cs    CPU, GPU and memory from Windows; frame rate, temperatures and power
+                          from RivaTuner Statistics Server, MSI Afterburner or HWiNFO when running
+    AchievementStore.cs   The achievement lists, one JSON per game under achievements\
+    AchievementService.cs Fetches lists, refreshes after each session, announces the difference
+    AchievementProviders.cs  Steam, Xbox, Epic, GOG and RetroAchievements, each asked by its own id
+    RetroHash.cs          The hash RetroAchievements identifies a ROM by (header rules per system)
     Storage.cs            JSON persistence in %APPDATA%\Loungepad (settings, library, log, covers)
   TrayIcon.cs             The notification-area icon: show, update, quit
   Interop/NativeMethods.cs   All P/Invoke declarations
@@ -525,6 +533,61 @@ Loungepad/
   the box, so the D-pad is arrow keys on the desktop. A pack's defaults are never overwritten:
   `actions.json` holds only what differs, so a new default arrives with the next build and
   **Reset to defaults** puts one app back.
+- **Stats** — every sitting with a game is recorded: when, how long, and how the PC did.
+  While a game runs a reading is taken every few seconds (Settings → Stats): CPU, GPU and
+  memory from Windows itself, and the frame rate, temperatures and power from RivaTuner
+  Statistics Server, MSI Afterburner or HWiNFO when one of them is running -- nothing to set up,
+  whichever is there is used. A game's page has a **Stats** button (and its Y menu an entry)
+  with its sessions, a bar a day for the last month and each session's averages; **A** on a
+  session draws its readings as charts. **LB** on the library, or **Open Stats** at the top of
+  Settings → Stats, opens the Stats screen: playtime today, this week and overall, by day or
+  month, by game and by store over a chosen period, the latest sessions and the latest
+  achievements. The in-game menu shows how long the sitting has been going and the live
+  readings. Sessions live in `activity.json` with the readings under `activity\`; a session can
+  be removed from its sheet and every session cleared from Settings. Playtime totals on the games
+  are the launcher's own count and are not changed by any of this.
+- **Achievements on the timeline** — every chart of playtime carries the day's unlocks over its
+  bar as the achievements' own icons, rarest first, with a **+n** tile when there are more than
+  the column has room for (a month, or a day older than the last five weeks, shows the count).
+  The day timeline puts them at the moment they happened. An achievement is tied to the session
+  it was earned in (same game, inside the session give or take two minutes). The Stats
+  overview's chart is a day picker: **◂ ▸** walk the last four weeks and the picked day's
+  unlocks are listed under it with their times; **A** opens the day as a timeline -- each
+  session with what it unlocked under it, anything unlocked away from a recorded session at its
+  own time, **◂ ▸** to the next day with anything in it. A game's session rows show what each
+  unlocked, and a session's charts mark every unlock at the moment it happened.
+- **Achievements** — each game's list from its own store, asked by the id the library already
+  has, never by title: Steam by app id through the metadata service (or your own Web API key
+  under Library, if the profile keeps its game details private), Xbox by title id, Epic by
+  catalogue namespace and GOG by product id through their sign-ins, and ROMs through
+  RetroAchievements (username and web API key under Settings → Stats), matched by the ROM's
+  hash where the system allows it and by title otherwise. Lists are fetched in the background
+  after a scan, again a few seconds after a session ends -- the difference is what the unlock
+  cards announce once the game has closed -- and whenever a game's page opens with a stale one.
+  The page shows the unlocked share as a stat, the **Achievements** button opens the list with
+  icons, descriptions, unlock dates and rarity (ultra rare under 5%, rare under 10%, uncommon
+  under 30%), filtered with **X** and ordered with **Y**; hidden ones stay hidden until they are
+  unlocked, or until **A** reveals one. Tiles carry the share (Settings → Stats → Show on
+  tiles), the filter menu can sort by it, and the Stats screen's Achievements category has the
+  totals, the rarity breakdown, unlocks by month and every game by progress. Lists are kept under
+  `achievements\`, icons are cached under `%LOCALAPPDATA%\Loungepad\achievements\`.
+- **Editing by hand** — on a game's Achievements sheet **A** edits the highlighted one: unlocked
+  or locked, and when (◂ ▸ a day or a quarter hour, **A** on the row to type it). The store's
+  own answer is kept, every refresh keeps the edit, and **Undo my edit** puts it back; an edited
+  one is marked EDITED. On a game's Stats sheet **Y** logs a session Loungepad did not see --
+  another PC, or the launcher closed -- with its day, start and length, counted toward the
+  game's playtime unless switched off; **A** edits a logged one and **X** removes it (taking its
+  time back off the total). Every game's page has the Stats button for this.
+- **Import from Playnite** (Settings → General) — reads Playnite's library from a copy (Playnite
+  itself is never changed) and brings in playtime and play counts, favourites and hidden games,
+  categories as collections, games added to Playnite by hand, GameActivity's sessions with their
+  readings, SuccessStory's lists and the SteamGridDB key. **It only fills what Loungepad has
+  nothing for**: a playtime, collection, list or setting Loungepad already has is left exactly
+  as it is, a category whose name you already use comes in as "Name (Playnite)", and a session
+  that overlaps one Loungepad recorded is skipped. The sheet shows what each part would bring
+  first; a second import brings nothing the first did, and **Undo the import** takes back
+  exactly what it brought, keeping anything changed since. Needs LiteDB 5, which reads
+  Playnite's v4 database by upgrading the copy.
 - **Adding games** — a **+ Add game** tile sits at the end of the library grid, and the same
   action lives under Settings → Library. File dialogs drop always-on-top while open, otherwise
   they open *behind* the full-screen launcher and appear to do nothing.
@@ -613,16 +676,19 @@ Loungepad/
   launcher re-activates itself (Settings → "Keep launcher focused"). Alt-Tab still works.
 
 Data lives in `%APPDATA%\Loungepad\` (`settings.json`, `library.json`, `actions.json`, `covers\`,
-`loungepad.log`). Delete `library.json` to force a clean rescan. Trailers are kept apart, under
-`%LOCALAPPDATA%\Loungepad\trailers\`, and that folder can be deleted at any time.
+`activity.json` and `activity\`, `achievements\`, `playnite-import.json` after an import,
+`loungepad.log`). Delete `library.json` to force
+a clean rescan. Trailers and achievement icons are kept apart, under `%LOCALAPPDATA%\Loungepad\`
+(`trailers\`, `achievements\`), and both folders can be deleted at any time.
 
 ## Design → native mapping (flagged deviations)
 
 The imported design is the source of truth for palette, type, spacing, focus motion, backdrop
 behaviour and screen structure. Things that could not map 1:1 to local desktop reality:
 
-1. **ACHIEVEMENTS stat** (detail screen) — achievements aren't available offline for
-   Steam/Epic/GOG without authenticated web APIs. Replaced with **SESSIONS** (locally tracked).
+1. **ACHIEVEMENTS stat** (detail screen) — now real: fetched from each store by the game's own
+   id (see Achievements above). It sits beside **SESSIONS**, which is still counted locally, and
+   is left out for a game whose store has no list rather than shown as a dash.
 2. **"Y Screenshots & saves"** legend on the detail screen — no portable local source for
    screenshots/cloud-save state. Replaced by the Manage menu (cover art, launch arguments,
    direct-exe override).

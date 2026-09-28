@@ -1553,3 +1553,344 @@ body.no-motion .capture-icon { animation: none; }
   box-shadow: 0 0 0 3px var(--accent), 0 0 30px 4px color-mix(in srgb, var(--accent) 26%, transparent);
 }
 .kp-tip { margin-left: auto; font-size: 17px; color: color-mix(in srgb, var(--ink) 42%, transparent); }
+
+/* ---- Stats: play sessions and achievements (activity.js) ----
+   Three sheets on the quick-card frame and a screen on the Settings frame. Every colour is a
+   token and every duration goes through --motion, like the rest of the file. */
+
+/* The unlocked share on a Shelf tile's meta line: the cup and a number, a step brighter than the
+   meta text around it so it reads at a glance without becoming a badge. */
+.tile-ach {
+  display: inline-flex; align-items: center; gap: 4px; margin-left: 8px;
+  color: color-mix(in srgb, var(--ink) 62%, transparent); white-space: nowrap;
+}
+.tile-ach .ov-icon { width: 14px; height: 14px; color: inherit; }
+.tile-ach.done { color: var(--accent); }
+.cont-sub .tile-ach { margin-left: 6px; }
+
+/* The progress hairline under the ACHIEVEMENTS stat on a game's page. */
+.stat-bar { width: 120px; height: 3px; border-radius: 2px; margin-top: 4px; background: color-mix(in srgb, var(--ink) 14%, transparent); overflow: hidden; }
+.stat-bar > i { display: block; height: 100%; background: var(--accent); border-radius: 2px; }
+
+/* The readings under the in-game menu's title. */
+.ingame-stats { font-size: 15px; letter-spacing: 0.14em; color: color-mix(in srgb, var(--ink) 58%, transparent); }
+.ingame-stats[hidden] { display: none; }
+
+/* ---- the sheets' shared frame ---- */
+.ach-card { width: 1180px; max-height: 960px; }
+.act-card { width: 1180px; max-height: 960px; }
+.session-card { width: 1320px; max-height: 980px; }
+.ach-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 40px; }
+.ach-head-text { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.ach-game { font-size: 34px; font-weight: 650; letter-spacing: -0.015em; line-height: 1.15; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ach-source { font-size: 14px; letter-spacing: 0.14em; color: color-mix(in srgb, var(--ink) 42%, transparent); }
+.ach-source:empty { display: none; }
+
+/* The share at the top right: the number large, a bar under it, the counts under that. */
+.ach-progress { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; flex: 0 0 auto; width: 300px; }
+.ach-progress[hidden] { display: none; }
+.ach-pct { font-size: 46px; font-weight: 700; letter-spacing: -0.03em; line-height: 1; font-variant-numeric: tabular-nums; }
+.ach-pct.done { color: var(--accent); }
+.ach-bar { width: 100%; height: 6px; border-radius: 3px; background: color-mix(in srgb, var(--ink) 12%, transparent); overflow: hidden; }
+.ach-bar > i { display: block; height: 100%; border-radius: 3px; background: var(--accent); transition: width var(--t-slide) var(--ease); }
+.ach-counts { font-size: 15px; letter-spacing: 0.1em; color: color-mix(in srgb, var(--ink) 60%, transparent); }
+
+.ach-note { font-size: 19px; line-height: 1.5; color: color-mix(in srgb, var(--ink) 66%, transparent); }
+.ach-note[hidden] { display: none; }
+
+/* The filter tabs and the order, as words: the buttons that change them are in the legend. */
+.ach-toolbar { display: flex; align-items: center; gap: 26px; font-size: 14px; letter-spacing: 0.14em; color: color-mix(in srgb, var(--ink) 42%, transparent); }
+.ach-tab b { font-weight: 500; color: color-mix(in srgb, var(--ink) 62%, transparent); margin-left: 4px; }
+.ach-tab.on { color: var(--accent); }
+.ach-tab.on b { color: var(--accent); }
+.ach-sort { margin-left: auto; }
+
+.ach-scroll { max-height: 600px; gap: 8px; }
+.ach-row {
+  position: relative; display: flex; align-items: center; gap: 22px;
+  min-height: 92px; padding: 12px 22px 12px 14px; border-radius: 14px;
+  transition: transform var(--t-focus) var(--ease), background var(--t-focus) linear;
+}
+.ach-row.focused {
+  background: var(--surface); transform: scale(1.012); z-index: 2;
+  box-shadow: 0 0 0 3px var(--accent), 0 0 44px 6px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.ach-icon {
+  flex: 0 0 auto; width: 68px; height: 68px; border-radius: 10px;
+  background-size: cover; background-position: center;
+  background-color: color-mix(in srgb, var(--ink) 8%, transparent);
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--edge) 10%, transparent);
+}
+.ach-icon .ov-icon { width: 30px; height: 30px; color: color-mix(in srgb, var(--ink) 40%, transparent); }
+.ach-icon.small { width: 48px; height: 48px; border-radius: 8px; }
+.ach-icon.small .ov-icon { width: 22px; height: 22px; }
+/* Locked: the store's greyed icon where it has one, and ours greyed where it has not. Either
+   way a step quieter than an unlocked row, so the list reads as what is done and what is left. */
+.ach-row.locked .ach-icon { filter: grayscale(1) brightness(0.55); }
+.ach-row.locked .ach-name { color: color-mix(in srgb, var(--ink) 62%, transparent); }
+.ach-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.ach-name { font-size: 22px; font-weight: 500; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ach-desc { font-size: 16px; line-height: 1.4; color: color-mix(in srgb, var(--ink) 48%, transparent); display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.ach-row.secret .ach-name { font-style: italic; }
+.ach-right { flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-end; gap: 7px; font-size: 13px; letter-spacing: 0.1em; }
+.ach-when { color: color-mix(in srgb, var(--ink) 52%, transparent); }
+.ach-when.ach-locked { color: color-mix(in srgb, var(--ink) 32%, transparent); }
+/* The rarity chip in the band's colour: quiet for common, warmer the rarer. The colours are the
+   accent and the ink at different strengths rather than a second palette, except the top band,
+   which earns a colour of its own. */
+.ach-rarity { display: inline-flex; align-items: center; height: 24px; padding: 0 10px; border-radius: 12px; white-space: nowrap; }
+.ach-rarity[data-band="common"] { color: color-mix(in srgb, var(--ink) 55%, transparent); background: color-mix(in srgb, var(--ink) 7%, transparent); }
+.ach-rarity[data-band="uncommon"] { color: color-mix(in srgb, var(--ink) 80%, transparent); background: color-mix(in srgb, var(--ink) 11%, transparent); }
+.ach-rarity[data-band="rare"] { color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.ach-rarity[data-band="ultra"] { color: #E9C46A; background: color-mix(in srgb, #E9C46A 18%, transparent); }
+.ach-empty { padding: 30px 12px; font-size: 20px; line-height: 1.5; text-align: center; color: color-mix(in srgb, var(--ink) 45%, transparent); }
+
+/* ---- a game's sessions ---- */
+.act-summary, .stats-tiles { display: flex; flex-wrap: wrap; gap: 14px; }
+.stat-tile {
+  flex: 1 1 180px; min-width: 180px; display: flex; flex-direction: column; gap: 6px;
+  padding: 18px 22px; border-radius: 14px;
+  background: color-mix(in srgb, var(--ink) 5%, transparent); border: 1px solid color-mix(in srgb, var(--edge) 6%, transparent);
+}
+.stat-tile-value { font-size: 30px; font-weight: 650; letter-spacing: -0.02em; line-height: 1.1; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stat-tile-sub { font-size: 14px; color: color-mix(in srgb, var(--ink) 45%, transparent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.act-chart:empty { display: none; }
+.act-scroll { max-height: 400px; gap: 8px; }
+.act-row {
+  position: relative; display: flex; align-items: center; gap: 26px;
+  min-height: 80px; padding: 12px 22px; border-radius: 14px;
+  transition: transform var(--t-focus) var(--ease), background var(--t-focus) linear;
+}
+.act-row.focused {
+  background: var(--surface); transform: scale(1.012); z-index: 2;
+  box-shadow: 0 0 0 3px var(--accent), 0 0 44px 6px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.act-when { flex: 0 0 240px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.act-date { font-size: 21px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.act-sub { font-size: 13px; letter-spacing: 0.12em; color: color-mix(in srgb, var(--ink) 42%, transparent); }
+.act-dur { flex: 0 0 120px; font-size: 24px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.act-chips { flex: 1; display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.act-chip {
+  display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 11px; border-radius: 14px;
+  font-family: "IBM Plex Mono", Consolas, monospace; font-size: 14px; letter-spacing: 0.04em; white-space: nowrap;
+  color: color-mix(in srgb, var(--ink) 70%, transparent); background: color-mix(in srgb, var(--ink) 8%, transparent);
+}
+.act-chip.fps { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.act-chip.fps i { font-style: normal; color: color-mix(in srgb, var(--accent) 70%, transparent); }
+.act-chip.none { color: color-mix(in srgb, var(--ink) 35%, transparent); background: none; padding: 0; }
+.act-row .arrow { color: color-mix(in srgb, var(--ink) 35%, transparent); font-size: 19px; }
+.act-row.focused .arrow { color: var(--accent); }
+
+/* ---- charts ---- */
+.chart { display: block; width: 100%; height: auto; overflow: visible; }
+.chart-bar { fill: var(--accent); opacity: 0.85; }
+.chart-bar.empty { fill: color-mix(in srgb, var(--ink) 14%, transparent); opacity: 1; }
+.chart-grid { stroke: color-mix(in srgb, var(--ink) 12%, transparent); stroke-width: 1; }
+.chart-line { fill: none; stroke: var(--accent); stroke-width: 2.5; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.chart-line.cpu { stroke: #7C9BE6; }
+.chart-line.gpu { stroke: var(--accent); }
+.chart-line.ram { stroke: #63C58F; }
+.chart-line.fps { stroke: var(--accent); }
+.chart-line.game { stroke: color-mix(in srgb, #7C9BE6 55%, transparent); stroke-dasharray: 6 5; }
+.chart-text { fill: color-mix(in srgb, var(--ink) 42%, transparent); font-family: "IBM Plex Mono", Consolas, monospace; font-size: 13px; letter-spacing: 0.08em; }
+.chart-text.head { fill: color-mix(in srgb, var(--ink) 48%, transparent); }
+.chart-text.cpu { fill: #7C9BE6; }
+.chart-text.gpu { fill: var(--accent); }
+.chart-text.game { fill: color-mix(in srgb, #7C9BE6 70%, transparent); }
+/* A chart's text is drawn in viewBox units and the box is stretched, so the text would stretch
+   too. The charts are all drawn at a 1000-wide box into boxes of about that width, which keeps
+   the distortion invisible; the session grid's two-up boxes are drawn taller to match. */
+.session-charts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px 22px; max-height: 560px; overflow-y: auto; scrollbar-width: none; padding: 4px; }
+.session-charts::-webkit-scrollbar { display: none; }
+.session-chart { padding: 14px 16px 8px; border-radius: 14px; background: color-mix(in srgb, var(--ink) 4%, transparent); border: 1px solid color-mix(in srgb, var(--edge) 6%, transparent); }
+.session-chart .chart { height: 170px; }
+.session-charts > .ach-empty { grid-column: 1 / -1; }
+
+/* ---- the Stats screen ----
+   Settings' box and its rows; only the tiles, the charts and the bars are its own. */
+body[data-view="stats"] #screen-library,
+body[data-view="stats"] #backdrop { filter: blur(22px) saturate(0.85) brightness(0.7); }
+#screen-stats {
+  align-items: center; justify-content: center;
+  background: color-mix(in srgb, var(--bg) 50%, transparent);
+}
+#screen-stats.active { animation: fadeIn var(--t-menu) linear backwards; }
+#screen-stats.closing { animation: fadeOut var(--t-menu-out) linear forwards; }
+#screen-stats.active .settings-box { animation: cardIn var(--t-menu) var(--ease) backwards; }
+#screen-stats.closing .settings-box { animation: cardOut var(--t-menu-out) var(--ease-in) forwards; }
+.stats-scroll .stats-tiles { padding: 4px 0 8px; }
+.stats-scroll .stat-tile { padding: 22px 26px; }
+.stats-chart { padding: 18px 22px 10px; border-radius: 14px; background: color-mix(in srgb, var(--ink) 4%, transparent); border: 1px solid color-mix(in srgb, var(--edge) 6%, transparent); }
+.stats-note { font-size: 18px; line-height: 1.5; color: color-mix(in srgb, var(--ink) 55%, transparent); padding: 4px 8px; }
+.stats-plat { display: flex; align-items: center; gap: 22px; }
+.stats-plat b { flex: 0 0 200px; font-weight: 500; color: color-mix(in srgb, var(--ink) 80%, transparent); }
+.stats-row .ach-icon { margin-right: -4px; }
+.stats-row .set-value { gap: 18px; }
+.stats-bar { display: inline-block; width: 240px; height: 6px; border-radius: 3px; background: color-mix(in srgb, var(--ink) 12%, transparent); overflow: hidden; }
+.stats-bar > i { display: block; height: 100%; border-radius: 3px; background: var(--accent); }
+.stats-bar.done > i { background: color-mix(in srgb, var(--accent) 100%, transparent); box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 60%, transparent); }
+.stats-bar-text { font-family: "IBM Plex Mono", Consolas, monospace; font-size: 16px; min-width: 150px; text-align: right; color: color-mix(in srgb, var(--ink) 70%, transparent); white-space: nowrap; }
+.stats-row .act-chips { justify-content: flex-end; }
+
+/* ---- achievements on the timeline ----
+   Unlocks are drawn in one colour wherever they meet playtime -- the pips over a day's bar, the
+   rules down a session's charts, the diamonds on a day's timeline -- so the two kinds of number
+   never read as one. Not the accent, which the bars already are, and not any hue at all: the
+   accent presets go all the way round the wheel (Ember, the default, is next to gold), so any
+   colour here would match somebody's. Near-white, like a badge. */
+:root { --trophy: #F3EFE7; }
+.chart-mark { fill: var(--trophy); }
+.chart-mark-text { fill: #262626; font-family: "IBM Plex Mono", Consolas, monospace; font-size: 11px; font-weight: 700; }
+.chart-text.mark { fill: var(--trophy); }
+.chart-mark-line { stroke: color-mix(in srgb, var(--trophy) 75%, transparent); stroke-width: 1.5; stroke-dasharray: 4 4; vector-effect: non-scaling-stroke; }
+.chart-hit { fill: transparent; }
+.chart-sel { fill: color-mix(in srgb, var(--ink) 9%, transparent); }
+.chart-bar.sel { opacity: 1; }
+.chart-text.sel { fill: var(--ink); font-weight: 600; }
+
+.act-chip.ach { color: var(--trophy); background: color-mix(in srgb, var(--trophy) 15%, transparent); }
+.act-chip .ov-icon { width: 15px; height: 15px; color: inherit; }
+.ach-icon.tiny { width: 34px; height: 34px; border-radius: 7px; }
+.ach-icon.tiny .ov-icon { width: 16px; height: 16px; }
+.unlock-icons { flex: 0 0 auto; display: flex; align-items: center; }
+.unlock-icons .ach-icon + .ach-icon { margin-left: -9px; }
+.unlock-icons .ach-icon { box-shadow: 0 0 0 2px var(--card); }
+.unlock-icons b { margin-left: 8px; font-family: "IBM Plex Mono", Consolas, monospace; font-size: 13px; font-weight: 500; color: color-mix(in srgb, var(--ink) 55%, transparent); }
+
+/* An unlock as a chip: the day picker's row, and the session sheet's strip. */
+.day-unlock {
+  display: inline-flex; align-items: center; gap: 12px; height: 54px; max-width: 330px;
+  padding: 0 16px 0 9px; border-radius: 12px; background: color-mix(in srgb, var(--ink) 6%, transparent);
+}
+.day-unlock-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.day-unlock-name { font-size: 17px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.day-unlock-sub { font-size: 12px; letter-spacing: 0.1em; color: color-mix(in srgb, var(--ink) 45%, transparent); white-space: nowrap; }
+.day-more { align-self: center; padding: 0 8px; font-size: 13px; letter-spacing: 0.12em; color: color-mix(in srgb, var(--ink) 50%, transparent); }
+
+/* The overview's day picker: a chart and the picked day under it, as one row. */
+.stats-row.stats-daypick { display: block; padding: 20px 26px 22px; }
+.stats-daypick .chart-hit { cursor: pointer; }
+.daypick-head { display: flex; align-items: center; justify-content: space-between; gap: 30px; margin-top: 14px; }
+.daypick-text { min-width: 0; }
+.daypick-count { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; color: var(--trophy); }
+.daypick-count .ov-icon { width: 24px; height: 24px; color: inherit; }
+.daypick-count b { font-size: 30px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.daypick-count .mono { font-size: 14px; letter-spacing: 0.14em; }
+.daypick-count.none { color: color-mix(in srgb, var(--ink) 35%, transparent); }
+.daypick-unlocks { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+
+/* The session sheet's strip of what it unlocked, over its charts. */
+.session-unlocks { display: flex; flex-direction: column; gap: 10px; }
+.session-unlocks[hidden] { display: none; }
+.session-unlocks-head { display: flex; align-items: center; gap: 8px; font-size: 13px; letter-spacing: 0.14em; color: var(--trophy); }
+.session-unlocks-head .ov-icon { width: 16px; height: 16px; color: inherit; }
+.session-unlock-list { display: flex; flex-wrap: wrap; gap: 10px; }
+
+/* ---- a day's timeline ----
+   The times in a column, a rail through the middle with a dot for each session and a gold
+   diamond for each unlock (hollow for one earned away from a recorded session), and the unlocks
+   stepped in under the session they belong to. */
+.day-card { width: 1240px; }
+.day-list { max-height: 430px; }
+.day-row {
+  position: relative; display: flex; align-items: center; gap: 18px;
+  min-height: 74px; padding: 10px 22px 10px 14px; border-radius: 14px;
+  transition: transform var(--t-focus) var(--ease), background var(--t-focus) linear;
+}
+.day-row.focused {
+  background: var(--surface); transform: scale(1.012); z-index: 2;
+  box-shadow: 0 0 0 3px var(--accent), 0 0 44px 6px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.day-time { flex: 0 0 62px; display: flex; flex-direction: column; gap: 2px; font-size: 16px; letter-spacing: 0.06em; color: color-mix(in srgb, var(--ink) 72%, transparent); }
+.day-time i { font-style: normal; font-size: 13px; color: color-mix(in srgb, var(--ink) 38%, transparent); }
+.day-rail { position: relative; flex: 0 0 16px; align-self: stretch; margin: -10px 0; }
+.day-rail::before { content: ""; position: absolute; left: 7px; top: -4px; bottom: -4px; width: 2px; background: color-mix(in srgb, var(--ink) 12%, transparent); }
+.day-row:first-child .day-rail::before { top: 50%; }
+.day-row:last-child .day-rail::before { bottom: 50%; }
+.day-rail > i { position: absolute; left: 2px; top: 50%; width: 12px; height: 12px; margin-top: -6px; border-radius: 50%; background: var(--accent); }
+.day-row.unlock .day-rail > i { left: 3px; width: 10px; height: 10px; margin-top: -5px; border-radius: 2px; transform: rotate(45deg); background: var(--trophy); }
+.day-row.unlock.loose .day-rail > i { background: none; box-shadow: inset 0 0 0 2px var(--trophy); }
+.day-row.unlock:not(.loose) .ach-icon { margin-left: 22px; }
+.day-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.day-name { font-size: 21px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.day-row.unlock .day-name { font-size: 19px; }
+.day-sub { font-size: 15px; color: color-mix(in srgb, var(--ink) 46%, transparent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.day-row .act-chips { flex: 0 1 auto; justify-content: flex-end; }
+.day-row .ach-rarity { flex: 0 0 auto; font-size: 12px; letter-spacing: 0.1em; }
+.day-row .arrow { color: color-mix(in srgb, var(--ink) 35%, transparent); font-size: 19px; }
+.day-row.focused .arrow { color: var(--accent); }
+
+/* A section that starts a category without a heading (Settings → Stats' Open Stats row). */
+.set-section.bare { display: none; }
+
+/* ---- achievement icons on the timelines ----
+   HTML tiles laid over a chart's SVG, anchored at the top of a bar (or at a moment on the day
+   strip) and grown upwards. A narrow column stacks them, a wide one lines them up; each overlaps
+   the last and is ringed in the card's colour so the edges stay readable. The "+n" and count
+   tiles are the trophy colour, like the pips they replaced. */
+.chart-box { position: relative; }
+.chart-pins { position: absolute; inset: 0; pointer-events: none; }
+.chart-pin {
+  position: absolute; transform: translate(-50%, -100%);
+  display: flex; align-items: center; pointer-events: auto; cursor: default;
+}
+.chart-pin.v { flex-direction: column-reverse; }
+.stats-daypick .chart-pin { cursor: pointer; }
+.pin-tile {
+  position: relative; flex: 0 0 auto; display: flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; border-radius: 6px;
+  background-size: cover; background-position: center;
+  background-color: color-mix(in srgb, var(--ink) 10%, transparent);
+  box-shadow: 0 0 0 2px var(--card);
+}
+.chart-pin.v .pin-tile + .pin-tile { margin-bottom: -9px; }
+.chart-pin:not(.v) .pin-tile + .pin-tile { margin-left: -9px; }
+.pin-tile .ov-icon { width: 14px; height: 14px; color: color-mix(in srgb, var(--ink) 55%, transparent); }
+.pin-tile.more, .pin-tile.count {
+  background: var(--trophy); color: #262626;
+  font-family: "IBM Plex Mono", Consolas, monospace; font-size: 11px; font-weight: 700; letter-spacing: -0.02em;
+}
+.chart-pin.sel .pin-tile { box-shadow: 0 0 0 2px var(--surface); }
+.stats-row.focused .pin-tile { box-shadow: 0 0 0 2px var(--surface); }
+
+/* ---- the form sheet (openForm) ----
+   Settings' rows on the quick-card frame: the same toggles, ◂ ▸ values and actions. */
+.form-card { width: 1040px; max-height: 900px; }
+.form-list { max-height: 640px; gap: 10px; }
+.form-list .set-row { flex: 0 0 auto; }
+.form-list .set-section { margin-top: 10px; }
+.form-list .set-section:first-child { margin-top: 0; }
+.form-note { font-size: 18px; line-height: 1.5; color: color-mix(in srgb, var(--ink) 66%, transparent); padding: 2px 4px 6px; }
+#formSub[hidden] { display: none; }
+
+/* An achievement edited by hand, and a session that was not recorded here. */
+.ach-edited { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 11px; color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.act-chip.origin { color: color-mix(in srgb, var(--ink) 80%, transparent); background: none; box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--ink) 28%, transparent); }
+
+/* ---- the unlock card ----
+   Top right, over everything, in and out from the edge. It is the one thing the launcher shows
+   uninvited, so it is quiet: the icon, two lines, the accent on the kicker and nothing else. */
+.unlock-card {
+  position: absolute; top: 48px; right: 56px; z-index: 300;
+  display: flex; align-items: center; gap: 18px;
+  width: 560px; padding: 16px 22px 16px 16px; border-radius: 18px;
+  background: color-mix(in srgb, var(--card) 96%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  box-shadow: 0 30px 80px -20px rgba(0, 0, 0, 0.7), 0 0 60px -10px color-mix(in srgb, var(--accent) 30%, transparent);
+  animation: unlockIn calc(420ms * var(--motion)) var(--ease) backwards;
+}
+.unlock-card[hidden] { display: none; }
+.unlock-card.leaving { animation: unlockOut calc(280ms * var(--motion)) var(--ease-in) forwards; }
+@keyframes unlockIn { from { opacity: 0; transform: translateX(60px); } }
+@keyframes unlockOut { to { opacity: 0; transform: translateX(40px); } }
+.unlock-icon {
+  flex: 0 0 auto; width: 76px; height: 76px; border-radius: 12px;
+  background-size: cover; background-position: center; background-color: color-mix(in srgb, var(--accent) 14%, transparent);
+  display: flex; align-items: center; justify-content: center; color: var(--accent);
+}
+.unlock-icon .ov-icon { width: 34px; height: 34px; color: inherit; }
+.unlock-text { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.unlock-kicker { font-size: 13px; letter-spacing: 0.18em; color: var(--accent); }
+.unlock-name { font-size: 24px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.unlock-sub { font-size: 15px; color: color-mix(in srgb, var(--ink) 55%, transparent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

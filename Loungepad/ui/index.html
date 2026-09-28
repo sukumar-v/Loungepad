@@ -151,6 +151,10 @@
           </div>
           <div class="pill-btn pill-secondary" data-act="collect" data-focusable data-focus-key="detail:collect">Add to Collection</div>
           <div class="pill-btn pill-secondary" data-act="manage" data-focusable data-focus-key="detail:manage">Manage</div>
+            <!-- The two sheets this page opens: hidden until the game has a list or a session to
+                 show, so a game with neither keeps the row it had. -->
+            <div class="pill-btn pill-secondary" data-act="achievements" data-focusable data-focus-key="detail:achievements" hidden>Achievements</div>
+            <div class="pill-btn pill-secondary" data-act="activity" data-focusable data-focus-key="detail:activity" hidden>Stats</div>
         </div>
       </div>
 
@@ -179,6 +183,29 @@
       </div>
 
       <footer class="legend" id="settingsFoot"></footer>
+    </div>
+  </div>
+
+  <!-- ============ STATS (the library) ============
+       Play sessions and achievements across everything, as a box over the blurred library like
+       Settings: the categories on the left, the numbers, charts and lists on the right. LB from
+       the library opens it, and so does the top row of Settings → Stats. Built by activity.js. -->
+  <div class="screen" id="screen-stats" data-focus-scope>
+    <div class="settings-box stats-box">
+      <header class="topbar">
+        <div class="settings-title">Stats</div>
+        <div class="topbar-left"></div>
+        <div class="topbar-right mono">
+          <span class="clock">—</span>
+        </div>
+      </header>
+
+      <div class="settings-body">
+        <nav class="settings-nav" id="statsNav"></nav>
+        <div class="settings-scroll stats-scroll" id="statsScroll"></div>
+      </div>
+
+      <footer class="legend" id="statsFoot"></footer>
     </div>
   </div>
 
@@ -259,6 +286,106 @@
     </div>
   </div>
 
+  <!-- ============ DAY ============
+       One day from the Stats overview, as a timeline: a strip of the 24 hours with each session
+       and each unlock on it, then the list in order -- every session with the achievements earned
+       during it under it, and anything unlocked away from a recorded session at its own time.
+       ◂ ▸ step to the next day with anything in it. Built by activity.js. It is stacked
+       under the session and achievements sheets it opens, so it comes before them. -->
+  <div class="overlay" id="overlay-day" data-focus-scope>
+    <div class="quick-card act-card day-card">
+      <div class="ach-head">
+        <div class="ach-head-text">
+          <div class="quick-title mono">DAY</div>
+          <div class="ach-game" id="dayTitle"></div>
+          <div class="ach-source mono" id="dayWhen"></div>
+        </div>
+      </div>
+      <div class="act-summary" id="daySummary"></div>
+      <div class="act-chart day-strip" id="dayChart"></div>
+      <div class="ov-scroll act-scroll day-list" id="dayList"></div>
+      <div class="ov-foot" id="dayFoot"></div>
+    </div>
+  </div>
+
+  <!-- ============ ACHIEVEMENTS ============
+       One game's achievements: the count and the share at the top, then the list -- an icon, the
+       name and description, and on the right how rare it is and when it was unlocked. X cycles
+       the filter, Y the order; a hidden one keeps its name until it is unlocked, unless A reveals
+       it. Built by activity.js. -->
+  <div class="overlay" id="overlay-achievements" data-focus-scope>
+    <div class="quick-card ach-card">
+      <div class="ach-head">
+        <div class="ach-head-text">
+          <div class="quick-title mono" id="achTitle">ACHIEVEMENTS</div>
+          <div class="ach-game" id="achGame"></div>
+          <div class="ach-source mono" id="achSource"></div>
+        </div>
+        <div class="ach-progress" id="achProgress"></div>
+      </div>
+      <div class="ach-note" id="achNote" hidden></div>
+      <div class="ach-toolbar mono" id="achToolbar"></div>
+      <div class="ov-scroll ach-scroll" id="achList"></div>
+      <div class="ov-foot" id="achFoot"></div>
+    </div>
+  </div>
+
+  <!-- ============ STATS (one game) ============
+       Its sessions: the totals, a bar a day for the last month with the day's unlocks over it,
+       then the list newest first with each session's averages and what it unlocked. A on a
+       session opens its readings; X removes one. -->
+  <div class="overlay" id="overlay-activity" data-focus-scope>
+    <div class="quick-card act-card">
+      <div class="ach-head">
+        <div class="ach-head-text">
+          <div class="quick-title mono">STATS</div>
+          <div class="ach-game" id="actGame"></div>
+        </div>
+      </div>
+      <div class="act-summary" id="actSummary"></div>
+      <div class="act-chart" id="actChart"></div>
+      <div class="ov-scroll act-scroll" id="actList"></div>
+      <div class="ov-foot" id="actFoot"></div>
+    </div>
+  </div>
+
+  <!-- ============ SESSION ============
+       One session's readings over its length: frame rate, CPU, GPU and memory, temperatures where
+       a tool supplied them. -->
+  <div class="overlay" id="overlay-session" data-focus-scope>
+    <div class="quick-card session-card">
+      <div class="ach-head">
+        <div class="ach-head-text">
+          <div class="quick-title mono">SESSION</div>
+          <div class="ach-game" id="sessionGame"></div>
+          <div class="ach-source mono" id="sessionWhen"></div>
+        </div>
+      </div>
+      <div class="act-summary" id="sessionSummary"></div>
+      <div class="session-unlocks" id="sessionUnlocks" hidden></div>
+      <div class="session-charts" id="sessionCharts"></div>
+      <div class="ov-foot" id="sessionFoot"></div>
+    </div>
+  </div>
+
+  <!-- ============ FORM ============
+       A few Settings-style rows over whatever is open: editing an achievement's unlock, logging
+       or editing a session, the Playnite import. After the sheets it is opened from and before
+       the confirm and the text field, which open over it. Built by openForm in app.js. -->
+  <div class="overlay" id="overlay-form" data-focus-scope>
+    <div class="quick-card form-card">
+      <div class="ach-head">
+        <div class="ach-head-text">
+          <div class="quick-title mono" id="formKicker"></div>
+          <div class="ach-game" id="formTitle"></div>
+          <div class="ach-source mono" id="formSub"></div>
+        </div>
+      </div>
+      <div class="ov-scroll form-list" id="formList"></div>
+      <div class="ov-foot" id="formFoot"></div>
+    </div>
+  </div>
+
   <!-- ============ CONFIRM ============ -->
   <!-- A dialog rather than a menu: the details, then A to go ahead and B to back out. -->
   <div class="overlay" id="overlay-confirm">
@@ -323,6 +450,8 @@
       <div class="ingame-head">
         <div class="ingame-title" id="ingameTitle">PLAYING</div>
         <div class="ingame-desc" id="ingameDesc"></div>
+        <!-- How long, and how the PC is doing: filled from the telemetry the host pushes while this is up. -->
+        <div class="ingame-stats mono" id="ingameStats"></div>
       </div>
       <div class="ingame-row" id="ingameList"></div>
       <div class="ov-foot ingame-foot" id="ingameFoot"></div>
@@ -378,6 +507,17 @@
     </div>
   </div>
 
+  <!-- The achievement a session unlocked, one card at a time at the top right: the icon, the
+       name and how rare it is. Shown once the game has closed and the launcher is back. -->
+  <div id="unlockCard" class="unlock-card" hidden>
+    <div class="unlock-icon" id="unlockIcon"></div>
+    <div class="unlock-text">
+      <div class="unlock-kicker mono" id="unlockKicker">ACHIEVEMENT UNLOCKED</div>
+      <div class="unlock-name" id="unlockName"></div>
+      <div class="unlock-sub" id="unlockSub"></div>
+    </div>
+  </div>
+
   <div id="toast" class="mono"></div>
 </div>
 
@@ -388,5 +528,9 @@
 <script src="app.js"></script>
 <script src="radial.js"></script>
 <script src="actions.js"></script>
+<!-- Play sessions, achievements and the Stats screen, after the rest: it reads app.js's globals. -->
+<script src="activity.js"></script>
+<!-- Settings → General → Import from Playnite. -->
+<script src="playnite.js"></script>
 </body>
 </html>

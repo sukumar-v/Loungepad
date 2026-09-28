@@ -55,6 +55,15 @@ public class UiBridge
     /// <summary>Games whose gallery is being fetched on demand, so a page reopened while one is in
     /// flight does not ask twice.</summary>
     private readonly HashSet<string> _mediaFetching = new();
+    /// <summary>The play sessions and their readings, and the service that records them.</summary>
+    private readonly ActivityStore _activityStore;
+    private readonly ActivityService _activity;
+    /// <summary>The achievement lists and the service that fetches them.</summary>
+    private readonly AchievementStore _achievementStore;
+    private readonly AchievementService _achievements;
+    /// <summary>The game whose achievements the page has open, so a fetch that lands while it is
+    /// up is pushed to it and one for a page since closed is not.</summary>
+    private string? _achievementsOpenId;
 
     public UiBridge(MainWindow window, CoreWebView2 core, SettingsStore settings, LibraryStore library,
         DisplayService displays, LibraryScanner scanner, GameLaunchService launcher, VirtualKeyboardService keyboard, WindowService windows, ThemeService themes,
@@ -86,6 +95,46 @@ public class UiBridge
             Push(new { type = "trailerCached", id = g.Id, file = g.TrailerFile }));
         _trailers.Prune();
         StartInstallWatcher();
+
+        _activityStore = new ActivityStore();
+        _activityStore.Load();
+        _activityStore.Prune();
+        _activity = new ActivityService(_activityStore, _launcher, () => _settings.Settings);
+        // A session landed: one message with the row, not a state push -- the exit already
+        // pushed the playtime, and the library is not rebuilt for a row nothing on screen shows.
+        _activity.SessionRecorded += s => _window.Dispatcher.BeginInvoke(() => Push(new { type = "activityRecorded", session = s }));
+        // The live readout on the in-game menu, and nowhere else: pushed only while an overlay is
+        // up over a running game, so the page is never woken every few seconds for nothing.
+        _activity.Sampled += live =>
+        {
+            if (_window.OverlayActive && _launcher.GameRunning) _window.Dispatcher.BeginInvoke(() => PushTelemetry(live));
+        };
+
+        _achievementStore = new AchievementStore();
+        _achievementStore.Load();
+        _achievements = new AchievementService(_achievementStore, _library, () => _settings.Settings,
+            new IAchievementProvider[]
+            {
+                new SteamAchievementProvider(() => _settings.Settings),
+                new XboxAchievementProvider((XboxAccountClient)_accounts["xbox"]),
+                new EpicAchievementProvider((EpicAccountClient)_accounts["epic"]),
+                new GogAchievementProvider((GogAccountClient)_accounts["gog"]),
+                new RetroAchievementProvider(() => _settings.Settings, _achievementStore.Dir),
+            }, _launcher);
+        _achievements.Fetched += set => _window.Dispatcher.BeginInvoke(() => OnAchievementsFetched(set));
+        _achievements.Unlocked += (game, items) => _window.Dispatcher.BeginInvoke(() =>
+            Push(new { type = "achievementsUnlocked", id = game.Id, title = game.Title, items = items.Select(AchievementDto) }));
+        _achievements.IconsCached += id => _window.Dispatcher.BeginInvoke(() =>
+        {
+            if (_achievementsOpenId == id && _achievements.Get(id) is { } set) PushAchievements(set, null);
+        });
+    }
+
+    /// <summary>The window is closing: stop the sampling loop and any pass in flight.</summary>
+    public void Shutdown()
+    {
+        _activity.Dispose();
+        _achievements.Dispose();
     }
 
     public void OnWebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
@@ -274,10 +323,15 @@ public class UiBridge
                                     || incoming.DetectEmulators != cur.DetectEmulators;
                 // Turned on: look now, rather than leave the row saying nothing for six hours.
                 var autoUpdateOn = incoming.AutoUpdate && !cur.AutoUpdate;
+                // A key added, or achievements switched on: ask now rather than on the next scan.
+                var achievementsChanged = (incoming.AchievementsEnabled && !cur.AchievementsEnabled)
+                                          || (incoming.RetroAchievementsUser ?? "").Trim() != cur.RetroAchievementsUser
+                                          || (incoming.RetroAchievementsKey ?? "").Trim() != cur.RetroAchievementsKey;
                 CopySettings(incoming);
                 _settings.Save();
                 if (storesChanged) StartScan(force: true);
                 if (autoUpdateOn) _ = _updates.CheckAsync(userAsked: false);
+                if (achievementsChanged && !storesChanged) _ = _achievements.RefreshAllAsync(force: false);
                 if (startupChanged)
                 {
                     try { StartupService.SetRegistered(incoming.LaunchOnStartup); }
@@ -723,6 +777,249 @@ public class UiBridge
             case "exitApp":
                 _window.ExitApp();
                 break;
+
+            // ---- activity: the play sessions ----
+
+            // A game's sessions, newest last, for its Stats sheet, with every dated unlock of its
+            // list so the sheet can put each one on the day and the session it happened in. The
+            // rows carry the averages; a session's readings are asked for on their own below.
+            case "activityOpen":
+            {
+                var id = msg["id"]?.GetValue<string>();
+                if (id is null) break;
+                PushGameActivity(id);
+                break;
+            }
+
+            case "activitySession":
+            {
+                var id = msg["id"]?.GetValue<string>();
+                if (id is null) break;
+                var session = _activityStore.Find(id);
+                // What the sitting unlocked, for the markers on its charts and the strip above them.
+                var unlocks = session is null ? [] : UnlocksFor(session.GameId)
+                    .Where(u => u.At >= session.Start - SessionUnlockSlack && u.At <= session.End + SessionUnlockSlack)
+                    .Select(u => u.Dto).ToList();
+                _ = Task.Run(() =>
+                {
+                    var samples = _activityStore.LoadSamples(id);
+                    _ = _window.Dispatcher.BeginInvoke(() => Push(new { type = "activitySession", id, session, samples, unlocks }));
+                });
+                break;
+            }
+
+            // Everything, for the Stats screen. Probing the tools opens their shared memory,
+            // which is quick but is still done off the UI thread.
+            case "activityAll":
+                _ = Task.Run(() =>
+                {
+                    var sessions = _activityStore.All();
+                    HardwareMonitor.Sources? sources = null;
+                    try { sources = _activity.Sources(); } catch (Exception ex) { Log.Info($"Activity: probe failed ({ex.Message})"); }
+                    _ = _window.Dispatcher.BeginInvoke(() => Push(new { type = "activityAll", sessions, sources }));
+                });
+                break;
+
+            case "activityDelete":
+            {
+                var id = msg["id"]?.GetValue<string>();
+                var session = id is null ? null : _activityStore.Find(id);
+                if (session is null) break;
+                _activityStore.Remove(session.Id);
+                if (session is { Origin: "manual", Counted: true } && _library.Find(session.GameId) is { } owner)
+                {
+                    AddToTotals(owner, session, -1);
+                    _library.Save();
+                    PushState();
+                }
+                PushGameActivity(session.GameId);
+                Push(new { type = "toast", message = "Session removed" });
+                break;
+            }
+
+            // A sitting the launcher did not see -- another PC, or Loungepad not running -- logged
+            // by hand on the game's Stats sheet. Counted (the default) puts it in the game's totals
+            // the way a recorded one is; editing or removing it later moves them back.
+            case "activityLog":
+            {
+                var id = msg["id"]?.GetValue<string>();
+                var game = id is null ? null : _library.Find(id);
+                if (game is null || !ReadSessionTimes(msg, out var start, out var seconds)) break;
+                var session = new PlaySession
+                {
+                    Id = ActivityStore.NewId(), GameId = game.Id, Start = start, End = start.AddSeconds(seconds), Seconds = seconds,
+                    Origin = "manual", Counted = msg["counted"]?.GetValue<bool>() ?? true,
+                };
+                _activityStore.Add(session, null);
+                if (session.Counted)
+                {
+                    AddToTotals(game, session, +1);
+                    _library.Save();
+                    PushState();
+                }
+                PushGameActivity(game.Id);
+                Push(new { type = "toast", message = "Session logged" });
+                break;
+            }
+
+            // Only a hand-logged session can be edited: a recorded one's times are what its readings
+            // were taken against.
+            case "activityEdit":
+            {
+                var old = msg["id"]?.GetValue<string>() is { } editId ? _activityStore.Find(editId) : null;
+                if (old is not { Origin: "manual" } || !ReadSessionTimes(msg, out var start, out var seconds)) break;
+                var edited = new PlaySession
+                {
+                    Id = old.Id, GameId = old.GameId, Start = start, End = start.AddSeconds(seconds), Seconds = seconds,
+                    Origin = "manual", Counted = msg["counted"]?.GetValue<bool>() ?? old.Counted,
+                };
+                _activityStore.Update(edited);
+                if ((old.Counted || edited.Counted) && _library.Find(old.GameId) is { } owner)
+                {
+                    if (old.Counted) AddToTotals(owner, old, -1);
+                    if (edited.Counted) AddToTotals(owner, edited, +1);
+                    _library.Save();
+                    PushState();
+                }
+                PushGameActivity(old.GameId);
+                Push(new { type = "toast", message = "Session saved" });
+                break;
+            }
+
+            // Every session of one game, or of every game. The playtime totals on the games are
+            // left as they are: they are the launcher's own count and were never derived from this.
+            case "activityClear":
+            {
+                var id = msg["id"]?.GetValue<string>();
+                var n = _activityStore.Clear(id);
+                Push(new { type = "toast", message = n == 0 ? "Nothing to clear" : $"Cleared {n} session{(n == 1 ? "" : "s")}" });
+                if (id is not null) PushGameActivity(id);
+                else Push(new { type = "activityAll", sessions = _activityStore.All(), sources = (HardwareMonitor.Sources?)null });
+                break;
+            }
+
+            // ---- achievements ----
+
+            // A game's list. What is on record goes at once, with why nothing can be fetched when
+            // that is the case; a stale or missing list is fetched behind it and pushed when it
+            // lands (see OnAchievementsFetched), then its icons are cached for next time.
+            case "achievementsOpen":
+            {
+                var id = msg["id"]?.GetValue<string>();
+                var game = id is null ? null : _library.Find(id);
+                if (game is null) break;
+                _achievementsOpenId = game.Id;
+                var set = _achievements.Get(game.Id);
+                var blocked = _achievements.Enabled ? _achievements.Blocked(game) : "Achievements are turned off under Settings → Stats";
+                // Only a game with a provider can be fetching: a list brought from Playnite for a
+                // game no store here serves would otherwise say FETCHING… for good.
+                var fetching = _achievements.Enabled && _achievements.ProviderFor(game) is not null && blocked is null && !AchievementService.IsFresh(set);
+                PushAchievements(set, new { blocked, fetching, provider = _achievements.ProviderFor(game)?.Source, id = game.Id });
+                if (fetching) _ = _achievements.RefreshAsync(game, force: false);
+                if (set is not null) _ = _achievements.CacheIconsAsync(set);
+                break;
+            }
+
+            case "achievementsClose":
+                _achievementsOpenId = null;
+                break;
+
+            // Fetch again now: one game, or the whole library in the background pass.
+            case "achievementsRefresh":
+            {
+                var id = msg["id"]?.GetValue<string>();
+                if (!_achievements.Enabled) { Push(new { type = "toast", message = "Achievements are turned off under Settings → Stats" }); break; }
+                if (id is not null)
+                {
+                    var game = _library.Find(id);
+                    if (game is null) break;
+                    if (_achievements.Blocked(game) is { } why) { Push(new { type = "toast", message = why }); break; }
+                    _ = _achievements.RefreshAsync(game, force: true);
+                }
+                else
+                {
+                    Push(new { type = "toast", message = "Refreshing achievements in the background" });
+                    _ = _achievements.RefreshAllAsync(force: true);
+                }
+                break;
+            }
+
+            // Every list's summary and the unlocks by day across the library, for the Stats screen.
+            case "achievementsAll":
+                Push(AchievementsAllPayload());
+                break;
+
+            // An achievement's state set by hand on the game's Achievements sheet: what the store
+            // says is kept aside, and every later fetch carries the edit over (AchievementStore.Put).
+            case "achievementEdit":
+            {
+                var id = msg["id"]?.GetValue<string>();
+                var achId = msg["achievementId"]?.GetValue<string>();
+                if (id is null || achId is null) break;
+                var unlocked = msg["unlocked"]?.GetValue<bool>() ?? true;
+                var at = LocalTime(msg["at"]) ?? DateTime.Now;
+                if (unlocked && at > DateTime.Now.AddMinutes(1)) { Push(new { type = "toast", message = "That date is still to come" }); break; }
+                if (!_achievementStore.Edit(id, achId, unlocked, unlocked ? at : null)) break;
+                if (_achievementStore.Get(id) is { } set) OnAchievementsFetched(set);
+                Push(new { type = "toast", message = "Achievement saved" });
+                break;
+            }
+
+            case "achievementUnedit":
+            {
+                var id = msg["id"]?.GetValue<string>();
+                var achId = msg["achievementId"]?.GetValue<string>();
+                if (id is null || achId is null || !_achievementStore.Unedit(id, achId)) break;
+                if (_achievementStore.Get(id) is { } set) OnAchievementsFetched(set);
+                Push(new { type = "toast", message = "Back to what the store says" });
+                break;
+            }
+
+            // ---- importing from Playnite (see PlayniteImport) ----
+
+            // Where Playnite is and what the import would bring; read off the UI thread, since it
+            // copies and opens a database, then planned against the stores here.
+            case "playniteScan":
+                ScanPlaynite(msg["dir"]?.GetValue<string>());
+                break;
+
+            case "playnitePick":
+            {
+                var dlg = new Microsoft.Win32.OpenFolderDialog { Title = "Choose Playnite's folder -- the one with library inside it" };
+                if (!ShowDialog(dlg)) break;
+                var dir = PlayniteImport.NormaliseDataDir(dlg.FolderName);
+                if (dir is null) { Push(new { type = "toast", message = "There is no Playnite library in that folder" }); break; }
+                ScanPlaynite(dir);
+                break;
+            }
+
+            // The plan is made again at this moment rather than reused, and Apply checks every change
+            // once more as it goes: only what Loungepad still has nothing for is filled.
+            case "playniteImport":
+            {
+                if (_playniteData is null) break;
+                var parts = (msg["parts"] as JsonArray)?.Select(n => n?.GetValue<string>()).OfType<string>().ToHashSet() ?? new HashSet<string>();
+                var outcome = PlayniteImport.Apply(MakePlaynitePlan(_playniteData), parts, _library, _activityStore, _achievementStore, _settings.Settings);
+                if (outcome.Settings > 0) _settings.Save();
+                foreach (var gid in outcome.AchievementGames)
+                    if (_achievementStore.Get(gid) is { } set) OnAchievementsFetched(set);
+                Log.Info($"Playnite import from {_playniteData.Dir}: {outcome.Total} change(s) -- playtime {outcome.Playtime}, marks {outcome.Flags}, collections {outcome.Collections}, games {outcome.Games}, sessions {outcome.Sessions}, lists {outcome.Achievements}, settings {outcome.Settings}");
+                PushState();
+                PushPlaynite("done", outcome);
+                break;
+            }
+
+            case "playniteUndo":
+            {
+                var outcome = PlayniteImport.Undo(_library, _activityStore, _achievementStore, _settings.Settings);
+                if (outcome.Settings > 0) _settings.Save();
+                foreach (var gid in outcome.AchievementGames)
+                    Push(new { type = "achievementsSummary", id = gid, summary = new AchievementSummary() });
+                Log.Info($"Playnite import undone: {outcome.Total} change(s) taken back");
+                PushState();
+                PushPlaynite("undone", outcome);
+                break;
+            }
 
             case "log":
                 Log.Info($"UI: {msg["msg"]?.GetValue<string>()}");
@@ -1406,6 +1703,14 @@ public class UiBridge
         t.KeyboardNavKeys = s.KeyboardNavKeys;
         t.KeyboardNumpad = s.KeyboardNumpad;
         t.KeyboardModifiers = s.KeyboardModifiers;
+        t.ActivityTracking = s.ActivityTracking;
+        t.ActivityHardware = s.ActivityHardware;
+        t.ActivitySampleSeconds = Math.Clamp(s.ActivitySampleSeconds <= 0 ? 5 : s.ActivitySampleSeconds, 2, 30);
+        t.AchievementsEnabled = s.AchievementsEnabled;
+        t.AchievementNotifications = s.AchievementNotifications;
+        t.AchievementsOnTiles = s.AchievementsOnTiles;
+        t.RetroAchievementsUser = (s.RetroAchievementsUser ?? "").Trim();
+        t.RetroAchievementsKey = (s.RetroAchievementsKey ?? "").Trim();
     }
 
 
@@ -1498,6 +1803,10 @@ public class UiBridge
             }
 
             await EnrichMetadata();
+            // The achievement lists, after the art: the pass is paced and the library is already
+            // on screen, so nothing waits on it. A quiet scan is a manifest write mid-download,
+            // which is no reason to walk the library again.
+            if (!quiet) await _achievements.RefreshAllAsync(force: false);
         });
     }
 
@@ -1833,6 +2142,11 @@ public class UiBridge
             themes = _themes.List(),
             gameRunning = _launcher.GameRunning,
             runningGameId = _launcher.RunningGameId,
+            // When the running game was started, for the "playing for" readout.
+            sessionStart = _activity.Current?.Start,
+            // Per game: unlocked, total, score, the last unlock. Enough for a tile and a stats
+            // row; the lists themselves are asked for by page.
+            achievements = _achievements.Summaries(),
             scanning = _scanning,
             steamAccount = _steam.Status,
             actions = ActionsPayload(icons: false),
@@ -1989,7 +2303,222 @@ public class UiBridge
     public void PushToast(string message) => Push(new { type = "toast", message });
 
     public void PushGameState() =>
-        Push(new { type = "game", running = _launcher.GameRunning, id = _launcher.RunningGameId });
+        Push(new { type = "game", running = _launcher.GameRunning, id = _launcher.RunningGameId, since = _activity.Current?.Start });
+
+    /// <summary>The latest reading during a session, for the in-game menu's readout.</summary>
+    private void PushTelemetry(ActivityService.Live live) =>
+        Push(new
+        {
+            type = "telemetry", id = live.GameId, since = live.Start, sample = live.Sample,
+            fpsSource = live.Sources.Fps, sensorSource = live.Sources.Sensors,
+        });
+
+    /// <summary>One game's list as the page reads it: the set's numbers, then every item with
+    /// its icon URLs and, where one is on disk, the cached file's name.</summary>
+    private void PushAchievements(GameAchievements? set, object? head)
+    {
+        Push(new
+        {
+            type = "achievements",
+            id = set?.GameId ?? _achievementsOpenId,
+            head,
+            set = set is null ? null : AchievementSetDto(set),
+        });
+    }
+
+    private static object AchievementSetDto(GameAchievements set) => new
+    {
+        gameId = set.GameId, source = set.Source, sourceGameId = set.SourceGameId, sourceName = set.SourceName,
+        fetchedAt = set.FetchedAt == default ? (DateTime?)null : set.FetchedAt, error = set.Error,
+        unlocked = set.Unlocked, total = set.Total, score = set.Score, totalScore = set.TotalScore,
+        items = set.Items.Select(AchievementDto),
+    };
+
+    private static object AchievementDto(Achievement a) => new
+    {
+        a.Id, a.Name, a.Description, a.Hidden, a.Unlocked, a.UnlockedAt, a.Percent, a.Score,
+        // An edit by hand, and what the store said before it, for the sheet to show both.
+        edited = a.Edited ? true : (bool?)null,
+        storeUnlocked = a.Edited ? a.StoreUnlocked : (bool?)null,
+        storeUnlockedAt = a.Edited ? a.StoreUnlockedAt : null,
+        icon = a.IconUrl, iconLocked = a.IconLockedUrl,
+        iconFile = AchievementService.IconFileIfCached(a.IconUrl),
+        iconLockedFile = AchievementService.IconFileIfCached(a.IconLockedUrl),
+    };
+
+    /// <summary>A fetch landed: the summary goes to everyone (tiles, the stats screen), the list
+    /// only to a page that has this game open.</summary>
+    private void OnAchievementsFetched(GameAchievements set)
+    {
+        Push(new { type = "achievementsSummary", id = set.GameId, summary = AchievementSummary.Of(set) });
+        if (_achievementsOpenId == set.GameId) PushAchievements(set, null);
+    }
+
+    /// <summary>An unlock can be stamped a little either side of the session it happened in: the
+    /// store's clock against this PC's, and a game that writes its stats on the way out.</summary>
+    private static readonly TimeSpan SessionUnlockSlack = TimeSpan.FromMinutes(2);
+
+    /// <summary>How far back the Stats screen's overview gets every unlock in full. Older ones
+    /// arrive only as counts per day (<c>unlocksByDay</c>), which is what the charts need.</summary>
+    private const int RecentUnlockDays = 35;
+    private const int RecentUnlockCap = 1500;
+
+    private record DatedUnlock(DateTime At, object Dto);
+
+    /// <summary>One game's dated unlocks, oldest first, as the page reads them.</summary>
+    private List<DatedUnlock> UnlocksFor(string gameId)
+    {
+        var set = _achievements.Get(gameId);
+        if (set is null) return [];
+        return set.Items.Where(a => a.Unlocked && a.UnlockedAt is not null)
+            .OrderBy(a => a.UnlockedAt)
+            .Select(a => new DatedUnlock(a.UnlockedAt!.Value, new { at = a.UnlockedAt, item = AchievementDto(a) }))
+            .ToList();
+    }
+
+    /// <summary>A hand-logged session's time put into (+1) or taken out of (-1) the game's totals.</summary>
+    private static void AddToTotals(Game game, PlaySession s, int sign)
+    {
+        game.PlaytimeMinutes = Math.Max(0, game.PlaytimeMinutes + sign * s.Seconds / 60.0);
+        game.Sessions = Math.Max(0, game.Sessions + sign);
+        if (sign > 0 && (game.LastPlayed is null || s.End > game.LastPlayed)) game.LastPlayed = s.End;
+    }
+
+    /// <summary>A time from the page: ISO, usually with a Z. Local time out.</summary>
+    private static DateTime? LocalTime(JsonNode? n)
+    {
+        var s = n is JsonValue v && v.TryGetValue<string>(out var str) ? str : null;
+        if (s is null || !DateTime.TryParse(s, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind, out var d)) return null;
+        return d.Kind == DateTimeKind.Utc ? d.ToLocalTime() : DateTime.SpecifyKind(d, DateTimeKind.Local);
+    }
+
+    /// <summary>A logged session's start and length, checked: a minute to a day long, and begun
+    /// by now. Says why on the page when they are not.</summary>
+    private bool ReadSessionTimes(JsonNode msg, out DateTime start, out int seconds)
+    {
+        start = LocalTime(msg["start"]) ?? default;
+        var secs = msg["seconds"] is JsonValue v && v.TryGetValue<double>(out var d) ? d : 0;
+        seconds = (int)Math.Round(secs);
+        if (start == default || seconds < 60 || seconds > 24 * 3600) { Push(new { type = "toast", message = "A session is between a minute and a day long" }); return false; }
+        if (start > DateTime.Now) { Push(new { type = "toast", message = "That session starts in the future" }); return false; }
+        return true;
+    }
+
+    // ---- the Playnite import ----
+
+    private PlayniteImport.PnData? _playniteData;
+
+    private void ScanPlaynite(string? dir)
+    {
+        dir ??= _playniteData?.Dir ?? PlayniteImport.FindDataDir();
+        if (dir is null) { Push(new { type = "playnite", state = "missing", record = PlayniteRecordDto() }); return; }
+        Push(new { type = "playnite", state = "reading", dir, record = PlayniteRecordDto() });
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                var data = PlayniteImport.Read(dir);
+                _ = _window.Dispatcher.BeginInvoke(() => { _playniteData = data; PushPlaynite("ready", null); });
+            }
+            catch (Exception ex)
+            {
+                Log.Info($"Playnite import: reading {dir} failed: {ex.Message}");
+                _ = _window.Dispatcher.BeginInvoke(() => Push(new { type = "playnite", state = "error", dir, error = ex.Message, record = PlayniteRecordDto() }));
+            }
+        });
+    }
+
+    private PlayniteImport.Plan MakePlaynitePlan(PlayniteImport.PnData data) =>
+        PlayniteImport.MakePlan(data, _library.Games, _library.Collections, _activityStore.All(), _achievementStore, _settings.Settings,
+            g => _achievements.ProviderFor(g) is not null && _achievements.Blocked(g) is null, PlayniteImport.LoadRecord());
+
+    /// <summary>The import sheet's whole state: where Playnite is, what each part would bring
+    /// (planned afresh, so after an import every count reads what is left), what the last run
+    /// did, and whether there is an import to undo.</summary>
+    private void PushPlaynite(string state, PlayniteImport.Outcome? outcome)
+    {
+        var data = _playniteData;
+        object? parts = null;
+        var matched = 0;
+        if (data is not null)
+        {
+            var plan = MakePlaynitePlan(data);
+            matched = plan.Matched;
+            string Title(string id) => _library.Find(id)?.Title ?? plan.Games.FirstOrDefault(g => g.Id == id)?.Title ?? id;
+            parts = new
+            {
+                playtime = new { count = plan.Playtime.Count, minutes = Math.Round(plan.Playtime.Sum(c => c.MinutesAfter - c.MinutesBefore)), titles = plan.Playtime.Take(3).Select(c => Title(c.GameId)) },
+                flags = new { count = plan.Flags.Count, favorites = plan.Flags.Count(f => f.Favorite), hidden = plan.Flags.Count(f => f.Hidden) },
+                collections = new { count = plan.Collections.Count, names = plan.Collections.Select(c => c.Name) },
+                games = new { count = plan.Games.Count, titles = plan.Games.Take(3).Select(g => g.Title) },
+                sessions = new { count = plan.Sessions.Count, available = data.HasGameActivity, games = plan.Sessions.Select(s => s.Session.GameId).Distinct().Count() },
+                achievements = new { count = plan.Achievements.Count, available = data.HasSuccessStory, unlocked = plan.Achievements.Sum(a => a.Items.Count(i => i.Unlocked)) },
+                settings = new { count = plan.Settings.Count, labels = plan.Settings.Select(s => s.Label) },
+            };
+        }
+        Push(new
+        {
+            type = "playnite", state, dir = data?.Dir, version = data?.Version,
+            games = data?.Games.Count ?? 0, matched, parts, outcome, record = PlayniteRecordDto(),
+        });
+    }
+
+    private static object? PlayniteRecordDto()
+    {
+        var r = PlayniteImport.LoadRecord();
+        return r is null || r.IsEmpty ? null : new
+        {
+            at = r.At, playtime = r.Playtime.Count, flags = r.Flags.Count, collections = r.Collections.Count,
+            games = r.Games.Count, sessions = r.Sessions.Count, achievements = r.Achievements.Count, settings = r.Settings.Count,
+        };
+    }
+
+    private void PushGameActivity(string id) =>
+        Push(new { type = "activity", id, sessions = _activityStore.ForGame(id), unlocks = UnlocksFor(id).Select(u => u.Dto) });
+
+    private object AchievementsAllPayload()
+    {
+        var sets = _achievementStore.All();
+        var titles = _library.Games.ToDictionary(g => g.Id, g => g.Title, StringComparer.Ordinal);
+        var dated = sets.SelectMany(s => s.Items.Where(a => a.Unlocked && a.UnlockedAt is not null).Select(a => (set: s, a, at: a.UnlockedAt!.Value)))
+            .OrderByDescending(x => x.at).ToList();
+        // In full for the last few weeks (and never fewer than 60), newest first: the overview's
+        // day picker and a day's timeline show each one with its icon and its time.
+        var since = DateTime.Today.AddDays(-RecentUnlockDays);
+        var recent = dated.Where((x, i) => i < 60 || x.at >= since).Take(RecentUnlockCap)
+            .Select(x => new { gameId = x.set.GameId, title = titles.GetValueOrDefault(x.set.GameId, x.set.GameId), item = AchievementDto(x.a), at = x.at })
+            .ToList();
+        // Every unlock on record as a count per local day, for the playtime charts' markers.
+        var unlocksByDay = dated.GroupBy(x => x.at.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture))
+            .ToDictionary(g => g.Key, g => g.Count());
+        // The rarity of every unlocked achievement, for the breakdown, without shipping the lists.
+        var unlockedPercents = sets.SelectMany(s => s.Items.Where(a => a.Unlocked).Select(a => a.Percent)).ToList();
+        // Unlocks per month for the last year, oldest first, for the chart.
+        var now = DateTime.Now;
+        var months = Enumerable.Range(0, 12).Select(i => new DateTime(now.Year, now.Month, 1).AddMonths(i - 11)).ToList();
+        var unlocksByMonth = months.Select(m => new
+        {
+            key = m.ToString("yyyy-MM"),
+            label = m.ToString("MMM yy", System.Globalization.CultureInfo.InvariantCulture),
+            value = sets.Sum(s => s.Items.Count(a => a.Unlocked && a.UnlockedAt is { } d && d.Year == m.Year && d.Month == m.Month)),
+        });
+        return new
+        {
+            type = "achievementsAll",
+            games = sets.Select(s => new { gameId = s.GameId, title = titles.GetValueOrDefault(s.GameId, s.GameId), summary = AchievementSummary.Of(s) }),
+            recent,
+            unlocksByDay,
+            unlockedPercents,
+            unlocksByMonth,
+            // Where each store stands, for the screen to explain an empty list.
+            providers = _achievements.Providers.Select(p => new
+            {
+                source = p.Source,
+                blocked = _library.Games.FirstOrDefault(p.Supports) is { } any ? p.Blocked(any) : null,
+                games = _library.Games.Count(p.Supports),
+            }),
+        };
+    }
 
     /// <summary>A press, and the family of the pad it came from: xbox, playstation, switch or generic.</summary>
     public void PushPadEvent(string button, string layout) => Push(new { type = "pad", button, layout });

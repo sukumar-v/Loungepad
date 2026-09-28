@@ -121,7 +121,7 @@ public partial class MainWindow : Window
         Activated += (_, _) => FocusPageIfShown();
         // The keyboard is a second top-level window, and WPF shuts down on the last one closing,
         // so leaving it open would keep the process alive with no UI.
-        Closed += (_, _) => { _kb?.Close(); _gamepad.Dispose(); _cursor.Dispose(); _tray?.Dispose(); _updates.Dispose(); };
+        Closed += (_, _) => { _kb?.Close(); _bridge?.Shutdown(); _gamepad.Dispose(); _cursor.Dispose(); _tray?.Dispose(); _updates.Dispose(); };
 
         try
         {
@@ -300,7 +300,12 @@ public partial class MainWindow : Window
     private static readonly Dictionary<string, string> DataRoots = new(StringComparer.OrdinalIgnoreCase)
     {
         ["trailers"] = Paths.TrailersDir,
+        ["achievements"] = Paths.AchievementIconsDir,
     };
+
+    /// <summary>Whether one of the pad-driven overlays (the Power Wheel, the in-game menu) is up
+    /// in front of whatever was running. The bridge only pushes live hardware readings then.</summary>
+    public bool OverlayActive => _overlayActive;
 
     /// <summary>Files up to this size are read whole; anything larger is streamed off disk.</summary>
     private const long ReadWholeBelow = 8 * 1024 * 1024;

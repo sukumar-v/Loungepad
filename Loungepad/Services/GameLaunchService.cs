@@ -32,6 +32,16 @@ public class GameLaunchService
 
     public event Action<Game>? GameStarted;
     public event Action<Game>? GameExited;
+    /// <summary>The moment the game was started, for the activity log: raised right after GameStarted.</summary>
+    public event Action<Game, DateTime>? SessionStarted;
+    /// <summary>The session is over: the game, when it began and ended, and whether it was long
+    /// enough to count (MinSessionMinutes). Raised before GameExited, off the UI thread.</summary>
+    public event Action<Game, DateTime, DateTime, bool>? SessionEnded;
+
+    /// <summary>A sitting shorter than this is not a session: the game crashed on start, or was
+    /// opened by mistake. It counts for nothing -- not playtime, not the session count, not the
+    /// activity log -- so the three can never disagree.</summary>
+    public const double MinSessionMinutes = 0.5;
 
     public GameLaunchService(DisplayService displays, SettingsStore settings, LibraryStore library)
     {
@@ -85,6 +95,7 @@ public class GameLaunchService
             // Steam games never showed it: exclusive fullscreen takes the foreground by force.
             if (tracked is not null) AllowForeground(tracked);
             GameStarted?.Invoke(game);
+            SessionStarted?.Invoke(game, started);
 
             // And, in case the grant was refused or the emulator never asks, the first real window
             // the game opens is brought to the front once.
@@ -151,14 +162,18 @@ public class GameLaunchService
 
             if (switchedPrimary) _displays.RestorePrimary();
 
-            var minutes = (DateTime.Now - started).TotalMinutes;
+            var ended = DateTime.Now;
+            var minutes = (ended - started).TotalMinutes;
+            var counted = minutes > MinSessionMinutes;
             var g = _library.Find(game.Id);
             if (g is not null)
             {
-                if (minutes > 0.5) { g.PlaytimeMinutes += minutes; g.Sessions++; }
-                g.LastPlayed = DateTime.Now;
+                if (counted) { g.PlaytimeMinutes += minutes; g.Sessions++; }
+                g.LastPlayed = ended;
                 _library.Save();
             }
+            try { SessionEnded?.Invoke(game, started, ended, counted); }
+            catch (Exception ex) { Log.Info($"Session record failed: {ex.Message}"); }
 
             GameRunning = false;
             RunningGameId = null;
@@ -290,6 +305,25 @@ public class GameLaunchService
         if (!GameRunning || hwnd == IntPtr.Zero) return false;
         NativeMethods.GetWindowThreadProcessId(hwnd, out uint pid);
         return PidBelongsToGame(pid);
+    }
+
+    /// <summary>
+    /// Every process of the running game right now, for the hardware readings: the launcher, the
+    /// game, anything it spawned in its folder. A scan of the process list, answered through the
+    /// same cache PidBelongsToGame keeps, so a poll every few seconds costs one image-path query
+    /// per NEW process rather than one per process. Empty when nothing is running.
+    /// </summary>
+    public IReadOnlyCollection<int> TrackedPids()
+    {
+        if (!GameRunning || _runningInstallDir is null) return Array.Empty<int>();
+        var pids = new List<int>();
+        foreach (var p in Process.GetProcesses())
+        {
+            try { if (PidBelongsToGame((uint)p.Id)) pids.Add(p.Id); }
+            catch { /* exited between the listing and the query */ }
+            finally { p.Dispose(); }
+        }
+        return pids;
     }
 
     /// <summary>

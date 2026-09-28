@@ -24,3 +24,7 @@ Third-party components distributed with this software:
   .NET runtime            -- Copyright (c) .NET Foundation and Contributors.
                              Licensed under the MIT License.
                              https://github.com/dotnet/runtime
+
+  LiteDB                  -- Copyright (c) Mauricio David.
+                             Licensed under the MIT License.
+                             https://github.com/litedb-org/LiteDB

@@ -141,6 +141,10 @@ set with `npx wrangler secret list --config proxy/wrangler.toml`.
     GET /v1/art?title=<title>     → { name, portrait, tile, hero, logo }
     GET /v1/owned?steamid=<id64>  → { response: { game_count, games: [ { appid, name,
                                       playtime_forever, rtime_last_played } ] } }
+    GET /v1/achievements?steamid=<id64>&appid=<id>
+                                  → { appid, hasAchievements, achievements: [ { id, name,
+                                      description, hidden, icon, iconGray, percent, unlocked,
+                                      unlockTime } ] }
     GET /v1/health                → { ok: true }
 
 `404` means "no confident answer", which is a normal outcome rather than a failure. The launcher
@@ -150,6 +154,14 @@ treats a 404, a 429 and a dead connection identically: it keeps whatever art it 
 parses it and a direct call made with the user's own key identically. `403` is a profile whose game
 details are private (Steam answers those with no games at all), `501` means `STEAM_API_KEY` is not
 set. It is never cached: it is one person's data and it changes whenever they buy something.
+
+`/v1/achievements` is one game's achievements for one account, in one answer: Steam's
+`GetSchemaForGame` (the list, with names, descriptions, icons and the hidden flag), the account's
+`GetPlayerAchievements`, and the keyless `GetGlobalAchievementPercentagesForApp` for the rarity.
+The schema and the percentages are about the game and are cached per app (a week and a day); the
+unlocks are never cached. `403` is a private profile, as above; `501` means `STEAM_API_KEY` is not
+set; a game with no achievements answers an empty list. The same key that turns `/v1/owned` on
+turns this on.
 
 Every response carries the matched `name`, and **the launcher re-checks it against its own strict
 title rule before accepting anything**. The proxy being loose, wrong or compromised cannot put the
@@ -167,6 +179,6 @@ wrong game's art on a tile.
   unaffected because they never touch this.
 - **Put a contact address in the worker's User-Agent** if you publish widely, so an upstream that
   is unhappy with your traffic can reach you before it revokes the key.
-- **`/v1/owned` is the one route that sees something identifying.** A 64-bit SteamID is a public
+- **`/v1/owned` and `/v1/achievements` are the routes that see something identifying.** A 64-bit SteamID is a public
   identifier, but it is the user's, which is why the launcher only sends it when they turn the
   Steam library on, and why this route stores nothing and caches nothing.
