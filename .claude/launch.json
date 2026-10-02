@@ -7,6 +7,19 @@
       "runtimeArgs": ["--yes", "http-server", "Loungepad", "-c-1", "--silent"],
       "port": 8930,
       "autoPort": true
+    },
+    {
+      "name": "website",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["--yes", "http-server", "website", "-c-1", "--silent"],
+      "port": 8931,
+      "autoPort": true
+    },
+    {
+      "name": "trailer-studio",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "trailer", "run", "studio", "--", "--no-open", "--port=3123"],
+      "port": 3123
     }
   ]
 }
