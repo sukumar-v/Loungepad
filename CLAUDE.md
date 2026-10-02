@@ -34,6 +34,8 @@ Stop the scrolled grid from clipping through the All games header
   state, disable transitions (`* { transition: none !important }`) and measure. The scroll
   animator's watchdog snaps to the target after 150 ms without a frame, so scroll-follow can be
   checked in the preview by waiting ~400 ms and reading `scrollTop`.
+- The preview has the Loungepad theme in `S.themes` already: `S.settings.theme = "loungepad";
+  applyTheme()` switches to it, and `""` goes back to Shelf.
 - The published app takes keyboard input now (the WebView gets focus on `Activated`). To drive
   it, **check `GetForegroundWindow() == launcher` before every key you send**: a plain
   `SetForegroundWindow` from PowerShell is often refused, and the keys then go to whatever the
@@ -50,7 +52,9 @@ Stop the scrolled grid from clipping through the All games header
   foreground, `SendInput` keys, `CopyFromScreen`) has two traps: `Add-Type` compiles with the C# 5
   compiler, so no `out _`; and the parameter type is `[uint16]`, not `[ushort]`. Both failed AFTER
   the app had been started, which is how a test instance got left running. Put the whole run in
-  `try/finally` with the `Stop-Process` in the `finally`.
+  `try/finally` with the close in the `finally`: WM_CLOSE to the window and a wait, and
+  `Stop-Process` only if it has not gone (a kill mid-save can truncate library.json; see the
+  first-run setup notes).
 
 ## Architecture
 
@@ -249,6 +253,12 @@ Stop the scrolled grid from clipping through the All games header
   never also reaches the UI. That is why Start is a bad choice for it -- Start is the Menu button
   -- and why the Settings row warns about exactly that. Hold leaves the tap free, which is the
   point of having both.
+- **The defaults are the Loungepad keyboard on View** (`KeyboardApp` "Builtin", `KeyboardToggleButton`
+  "Back"; the user's call, Sept 30 2026). View needs no warning on Press: the library claims it for
+  search, which raises the keyboard anyway. The "Opens on" row warns instead when the toggle is part
+  of the menu or screenshot combo, since the press fires the keyboard on the way into it. The
+  touch keyboard's Gamepad-layout tip is gone from the couch guide and the setup's sign-in step with
+  it; the TabTip warning under "Keyboard app" still says it, for anyone who picks TabTip.
 
 ## Controllers and the button glyphs
 
@@ -344,6 +354,16 @@ Stop the scrolled grid from clipping through the All games header
 - The browser preview's `key` action for "Return" arrives with an empty `code` **and** an empty
   `key`; use "Enter". Every other key arrives with `key` set and `code` empty, which is why
   `KEYMAP_BY_KEY` exists beside `KEYMAP`.
+- **On the library, Tab is Settings, ` is Stats and Ctrl is a game's options; Esc is Back** (the
+  user's calls, Oct 1 2026: first Tab/Esc for Stats/Settings because [ and M "felt random", then the
+  same day Esc wanted back as the one cancel key). `LIBRARY_KEYS` applies only while
+  `libraryTakesKeys()` -- the library with nothing over it and no search open. Y, M and [ still work.
+  The hint bar draws those keys through `LIBRARY_KEYCAPS`: a slot's `data-kb` is the keycap a
+  keyboard sees in place of the button's usual one (`slotIcon`), so the same slot still draws Y, LB
+  and Menu for a pad. Only the library: the key picker's own legend has X as Ctrl and Y as Shift.
+- **Ctrl fires on the release, and only if nothing else happened while it was held** (`ctrlTap`):
+  another key, a click, a wheel (the touchpad's pinch is Ctrl plus the wheel) or a blur cancels it.
+  On the press it would open the game menu on the way into Ctrl+Shift+Esc or any Ctrl chord.
 - A DualSense on the cable reports "connected, charge unknown" (a pad icon with an empty bar):
   neither WinRT nor XInput can see it, and the Bluetooth lookup is only asked about the HID pad's
   own container, so an Xbox pad on the same PC cannot answer for it.
@@ -379,6 +399,25 @@ Stop the scrolled grid from clipping through the All games header
   `window.nextFrame`; sampling `scrollTop` on a timer aliases against those frames.
 - `mousemove` is ignored unless `screenX/Y` changed: the browser raises it when content scrolls
   under a parked cursor, and that flipped the page to pointer mode mid-run.
+- **The recents are the top of the page, not a frozen row** (the user's call, Oct 1 2026: the grid
+  had under half the screen). In Shelf `.lib-body` is the scroller and the grid is as tall as its
+  rows (`.lib-body .grid-scroll`), so the recents scroll away as the highlight walks down; a theme
+  that slots the regions out of `.lib-body` keeps the grid as its scroller. `libraryScroller()` asks
+  the CSS which it is, and everything that used to name `#gridScroll` as THE scroller (wheel routing,
+  B's scroll to the top, `renderLibrary`'s kept position) goes through it. `revealOffset` brings a
+  section's heading back with its first row (`reach`), or walking up onto Continue or All games
+  left the heading cut under the top edge. Loungepad's grid state slides the stack up by the hero
+  AND the dock, and the shelf is the view's full height in both states, so nothing resizes.
+- **Rows scrolled out of a list still have real rects.** In Loungepad they used to sit behind the
+  recents row, which parked over the top of the grid; it now slides off above with them. Holding Up, the scroll's glide trails the
+  highlight; 22-40 px of lag (stage px) made a recents tile score nearer than the grid row above,
+  so the highlight hopped to the recents for one step (the row slid down) and the next Up dived
+  into a hidden row behind them (it slid back up). Only a fast run did it; spaced presses never
+  did. `navMove` now walks a scroller to its end before leaving it, and never lands on something
+  wholly scrolled out of a scroller it is not already in (`scrollerLookup`, memoised because the
+  grid is hundreds of tiles). Reproduced in the windowed build with a held key (a key-down every
+  115 ms, the host's D-pad repeat) and frame captures; in the preview by setting the grid's
+  `scrollTop` 30 px past the settled reveal and calling `navMove("Up")`.
 
 ## Screens and the switcher
 
@@ -518,6 +557,46 @@ Stop the scrolled grid from clipping through the All games header
   category highlights it without selecting it, so A opened whichever one had last been activated:
   the highlight said Keyboard and Controller's rows appeared, which reads as A doing nothing.
 
+## The first-run setup
+
+- **`OnboardingVersion` decides whether it opens**, and the page owns the number
+  (`ONBOARDING_VERSION` in onboarding.js). 0 is a new install. `SettingsStore.Load` reads a
+  settings.json that has no `OnboardingVersion` key as 1: that install predates the setup and was set
+  up by hand. Raise `ONBOARDING_VERSION` only for a step worth showing to existing installs; they see
+  it once. `CopySettings` carries the field and "Restore default settings" keeps it, or a restore
+  would bring the welcome back.
+- It is a view (`view === "onboarding"`, `#screen-onboarding`) over the blurred library, like
+  Settings, and its rows are Settings' own builders: `storeAccountRows`, `emulationRows`,
+  `menuComboRows`, `xboxButtonRows` were split out of `allSettingsRows` for it. A change to one of
+  those rows is a change in both places, which is the point. `onbSet` is its `set`.
+- The Look step sets `body[data-onb-step="look"]`: the box moves right, the rail goes, and the library
+  is NOT blurred, because the library behind is the preview. The accent picked there is the app-wide
+  `accentColor` with the current theme's bag accent deleted, so it holds under every theme.
+- **The scan reports its steps** for the rail: `BeginSteps` lists every step of a non-quiet scan up
+  front (a switched-off source is "off"), `SetStep` moves one, `FailOpenSteps` marks the rest failed
+  when the scan throws. `scanProgress` rides every state push too. `LibraryScanner.ScanAll` takes the
+  reporter; nothing else about the scan changed. The page names the steps (`onbScanLines`).
+- Playnite's and Vortex's steps appear only when the host's `onboarding` answer
+  (`ProbeFirstRunAsync`) says Playnite has a library or Vortex is installed; it arrives while the
+  welcome is still up. The Vortex step's background look is `ModService.SummaryAsync("peek")`, which
+  changes nothing: no start, no waiting, and the extension is not copied into a Vortex that never had
+  it (`VortexBackend.PeekAsync` only writes this run's token for an install connected before).
+  "Connect" and "Restart" are the Mods screen's own `EnsureBridgeAsync` / `RestartAsync`, on a press.
+- **The PIN check is `KeyCredentialManager.IsSupportedAsync()`**, true only once a Windows Hello PIN
+  exists. Verified true on this PC, matching `...\LogonUI\NgcPin\Credentials\<SID>`; the false case
+  was not seen here. The step polls it every 4 s (`onboardingPin`) so a PIN set up in Windows Settings
+  shows the moment Loungepad is back. "Set up a PIN" parks the launcher, opens
+  `ms-settings:signinoptions`, and moves the first ApplicationFrameHost/SystemSettings window that
+  takes the foreground within 8 s onto the TV.
+- The preview opens the setup only with `?onboard` in the address (`/ui/index.html?onboard`); the
+  mock's scan steps, launchers, Playnite, Vortex (connect → needs a restart → connected) and PIN
+  (set after "Set up a PIN") are all simulated. In the real app it is Settings → General → First-time
+  setup: from the library, M, Right, then Up three times (Up off the first row wraps to Exit).
+- Verified in the windowed Debug build with keys (Sept 30 2026): every step renders over the real
+  bridge with this PC's launchers, store counts, RetroArch playlists, PIN and Vortex 2.7. **Close a
+  test instance with WM_CLOSE, not Stop-Process**: `LibraryStore.Save` is a plain WriteAllText, and a
+  kill during the metadata pass's 20 s checkpoint can truncate library.json. Back it up first.
+
 ## Running two copies
 
 - `App.OnStartup` takes a `Loungepad_SingleInstance` mutex, and a second copy used to just
@@ -532,6 +611,41 @@ Stop the scrolled grid from clipping through the All games header
 - A gap in the log where a start should be is the signature of this. If the user reports something
   and the log has no `---- Loungepad <version> starting ----` for it, they were looking at an instance
   somebody else started.
+
+## The website
+
+- `website/` is loungepad.app: a plain static site (index.html, site.css, site.js, glyphs.js, img/)
+  built from the Claude Design handoff in `website/design/` (`HANDOFF.md` says how to read the
+  `.dc.html` files). The design stays as the source of truth for copy and layout; the site is built
+  from it by hand. **All the copy is in index.html**, including each feature's long description (a
+  hidden span in its tile that the viewer reads), so search engines and no-JS visitors get it;
+  site.js only moves it. `glyphs.js` is the Glyph component's drawings, which are `ui/glyphs.js`'s --
+  keep the two in step. Every glyph is pre-rendered as Xbox in the HTML and repainted for the
+  family in hand.
+- `img/` is made by `tools/website-images.js` from the trailer project's stills
+  (`trailer/out/screens/*.png`, 2560x1440): five widths in AVIF, WebP and JPEG, named
+  `<key>-<w>.<ext>`. The widths live in three places -- that script, index.html's srcsets and
+  `WIDTHS` in site.js -- and move together. Run it from `trailer/` after `npm install --no-save
+  sharp`, since that folder has the `.npmrc` with `os=win32`.
+- Hosting is a Cloudflare Worker serving the folder as static assets (Workers Builds from GitHub:
+  root `website`, deploy command `npx wrangler deploy`). `website/wrangler.toml` has `name` (must
+  match the Worker in the dashboard) and `[assets] directory = "."`, so `.assetsignore` keeps
+  `design/` and the repo files out of the upload. Headers (CSP, caching) are in `_headers`. It began
+  as a Pages config and failed: Workers Builds runs `wrangler deploy`, which has no use for
+  `pages_build_output_dir`.
+- **Never put a backtick inside a double-quoted bash string.** A README edit written that way ran
+  `npx wrangler deploy` for real (Oct 2 2026) and published the site to the `loungepad` Worker.
+  Write docs with the editor tools or a quoted heredoc (`<<'EOF'`).
+- **The viewer's image needs `width: auto; height: auto`**: it carries `width="1920" height="1080"`
+  for the aspect-ratio hint, and with both set the two `max-*` limits squash it instead of fitting
+  it (a 390px phone showed the screenshot squeezed to portrait).
+- The `website` entry in `.claude/launch.json` serves the folder on 8931. The preview pane freezes
+  transitions AND smooth scrolling (use `scrollTo({behavior:"instant"})`), and its screenshots time
+  out when batched. What worked (Oct 2 2026): puppeteer-core in the scratchpad driving headless
+  Chrome, with `navigator.getGamepads` stubbed to a fake DualSense so the D-pad, repeat, Menu, A and
+  B paths run for real; section screenshots stitched into contact sheets with sharp. Lighthouse
+  (desktop, local server) 99/100/100/100; the text-compression and bfcache audits it lists are
+  the local server's no-cache headers, not the site.
 
 ## The old names
 
@@ -566,6 +680,13 @@ Stop the scrolled grid from clipping through the All games header
 - Only a single-file build updates itself (`Assembly.Location` is empty there). A `dotnet build`
   or the multi-file `publish\` build says "development build" and never replaces itself with the
   release, so testing the updater needs `tools\package.ps1` output in a folder of its own.
+- **A folder of its own is not a data folder of its own.** Every build reads and writes the same
+  `%APPDATA%\Loungepad`, and an older build drops every library.json field it has no property for
+  when it saves. A 1.5.0 updater test on Sept 28 2026 wiped TrailerUrl, TrailerFile, Media and the
+  content descriptors from all 954 games while keeping MetadataVersion, so 1.6.0 never fetched them
+  again -- which read as "trailers do not play anywhere". FetchVersion 11 refills them, and
+  `Game.Unknown` (`[JsonExtensionData]`, carried by `MergeScanned`) keeps unknown fields from here
+  on -- which only protects against builds that have it, not against 1.6.0 or older.
 - `TrayIcon` is WinForms' NotifyIcon (`UseWindowsForms`, with its global usings removed in the
   csproj so `Application`/`MessageBox` stay WPF's). Left click shows the launcher, the menu has
   Show, the update step and Quit. It is disposed on `Closed`, hidden first, or it lingers as a
@@ -573,6 +694,20 @@ Stop the scrolled grid from clipping through the All games header
 - `System.Drawing.Icon.ToBitmap` in Windows PowerShell (.NET Framework) cannot read PNG-compressed
   icon frames and returns noise, for the old icon as much as the new one. Check an .ico with WPF's
   `IconBitmapDecoder` (WIC), which is what the shell and the window use.
+- **The icon is drawn, not cut out** (Oct 1 2026): `tools\make-icon.ps1` draws a dark armchair-gamepad
+  silhouette on an Ember tile with GDI+ shapes at each of its nine sizes. The old one was the master's
+  badge scaled down -- a thin glowing outline on a dark tile -- and at tray sizes the line was under a
+  pixel and the tile vanished on a dark taskbar ("not legible"). **It is the master badge's own
+  outline, made solid**, and that outline is what reads as both: each leg straight down on its
+  OUTER side and slanting in on its inner side to a flat seat bottom (the controller), a backrest
+  and one seam over the arms and across a gently curved cushion (the sofa). Two redraws that
+  departed from it failed: upright arms with no slant read as an armchair only, and arms tilted
+  whole with a round arch cut between them read as neither, the arch looking pasted on (the user's
+  words). Below 32 px the seam goes and the silhouette alone is the badge. The README header is
+  `assets\loungepad-logo-dark.png` / `-light.png` (a `<picture>` per GitHub colour scheme), rendered
+  with the new icon by the local, gitignored `trailer\` project (`npm run stills`), which also makes
+  `assets\screens\`; `make-icon.ps1` only draws the icon now. Explorer may show an exe's old icon
+  until its icon cache catches up.
 
 ## PEGI
 
@@ -648,9 +783,20 @@ Stop the scrolled grid from clipping through the All games header
 
 ## The Steam account
 
+- **A Steam sign-in reads a private profile with no key** (`SteamWebSession`, Oct 2026). The user
+  signs in on store.steampowered.com in the usual sign-in window; the page is then asked, from
+  inside itself, for `/pointssummary/ajaxgetasyncconfig`, whose `data.webapi_token` (a JWT, `sub` =
+  SteamID, `exp` about a day) goes to `GetOwnedGames` as `access_token=`. That is the owner's
+  token, so privacy does not apply. Signed out, the endpoint answers `{"success":1,"data":[]}`, an
+  array where the object would be; the Web API rejects a bad token with a 401 (both checked with
+  curl). A renewal runs the same window HIDDEN on the store's account page, on the UI thread, so
+  Steam's own script refreshes the session from its long-lived cookie; landing on /login means the
+  session has gone. When signed in it goes before the proxy and the key, and signing in turns
+  `SteamShowOwned` on. **Not yet verified against a signed-in account**: the token's acceptance by
+  GetOwnedGames for a private profile is the one link not seen working here.
 - Uninstalled Steam games come from the Web API's `GetOwnedGames`, which needs a key: the shared
   proxy's `STEAM_API_KEY` (`/v1/owned`) for profiles whose game details are public, the user's own
-  key (`SteamApiKey`) for private ones. **There is no keyless route any more.** The community
+  key (`SteamApiKey`) for private ones, or the sign-in above. **There is no anonymous route.** The community
   `games?tab=all` page and the older `?xml=1` feed both redirect to a login for every profile,
   public or not (checked Sept 2026), and nothing local lists the library with names: the
   per-account `userdata/<id>/config/librarycache/*.json` are achievement pointers, `licensecache`
@@ -747,7 +893,10 @@ Stop the scrolled grid from clipping through the All games header
   the same store in one group: Steam sells two games named exactly "DOOM".
 - The tile stands for `rankEditions(...)[0]`: the copy picked under Manage → Launch with
   (`Game.PreferredEdition`, carried through `MergeScanned`), then an installed copy, then Steam,
-  Epic, GOG, Xbox, then playtime. The game menu offers "Play on X" / "Install on X" for the others.
+  Epic, GOG, Xbox, then playtime. The game menu offers "Play on X" for the other installed copies,
+  and "Install" / "Install on X" **only while no copy is installed** (the user's call, Sept 30 2026:
+  Silksong installed on Steam offered "Install on Xbox" one row from Play). A second store's copy is
+  installed from the game's page: Manage → Install from another store.
 - The platform filter runs BEFORE grouping, so filtering to Xbox shows the Xbox copy; every other
   filter (favourite, collection, installed, search) is asked of the game as a whole.
 - Hide is sent as `setHidden` for every copy. Hiding one copy only brought the other out from behind
@@ -760,8 +909,14 @@ Stop the scrolled grid from clipping through the All games header
 - A menu row's subtitle sits under its label (`.two-line`). Side by side, a long subtitle ellipsised
   the label down to "In…".
 - Search lives in the library top bar because both themes slot the top bar and Polish hides every
-  section heading. View opens it (LB/RB are minimize-combo options and RB is the keyboard toggle).
+  section heading. View opens it (LB/RB are minimize-combo options). View is also the keyboard
+  toggle by default; the claim below is what lets both live on one button.
   Typing refilters live; Enter/A/Down keeps it and lands on the first result; Esc/B clears it.
+- B on the library goes back to how it opened (the user's call, Sept 30 2026): from anywhere below
+  the top it lands on the first recent and scrolls the grid to its first row (in Loungepad the
+  recents slide back down), and at the top it clears a standing search. With no recents the top
+  is the first tile (`libraryTop` / `atLibraryTop`). The legend shows B only while a search
+  stands, as "Back" or "Clear search".
 - The default sort puts installed games first, then A to Z. The label says so.
 - A text field needs the HOST to hand keyboard focus to the WebView (`focusPage` →
   `MainWindow.FocusPage` → `WebView.Focus()`, which is what calls the controller's MoveFocus).
@@ -883,6 +1038,13 @@ Stop the scrolled grid from clipping through the All games header
   shipped: an updated extension on disk is not the one running, and a route the new build asks
   for would otherwise come back 404 and read as an empty answer. Bump `info.json` and
   `BRIDGE_VERSION` together whenever the extension changes.
+- **"Restart Vortex once" that never helps is a port conflict.** The old `consolify-bridge` (the same
+  extension under the app's former name, left in `%APPDATA%\Vortex\plugins` since its cleanup was
+  removed) loads first by folder order and binds 47391; vortex.log then shows
+  `[loungepad-bridge] could not listen ... EADDRINUSE` on every start, and our pings meet a bridge
+  that rejects our token. `VortexBackend.ForeignBridges` finds any other plugin whose index.js names
+  the port, and the status says to remove it in Vortex's Extensions instead of to restart. Seen on
+  this PC, Oct 1 2026. It is a diagnosis, not a migration: nothing deletes the other extension.
 - The token is new on every Loungepad start and written to `bridge.json` beside the extension,
   which re-reads the file on EVERY request. That is what lets a Loungepad restart not strand Vortex
   on a stale token. The Host header must be loopback (DNS rebinding from a browser tab).
@@ -958,8 +1120,9 @@ Stop the scrolled grid from clipping through the All games header
   difference is somewhere in how an injected click lands on a caption button, and the fix that
   needs no theory is to have no caption: `WindowStyle.None`, and Back, Forward, Keyboard and Done
   as buttons in the window's own bar, each drawn with the pad button that also does it.
-- **B is Back, X is Forward and Y is Done in the browse window, not LB and RB.** RB is the keyboard toggle by
-  default and the keyboard is how anything gets typed into the site; B is only a right click on
+- **B is Back, X is Forward and Y is Done in the browse window, not LB and RB.** RB was the keyboard
+  toggle by default when this was written (View is now) and the keyboard is how anything gets typed
+  into the site; B is only a right click on
   the desktop, and context menus are off in that WebView anyway. `GamepadService.ModalButtonHandler`
   is the hook: set while the window is open, asked about each face or shoulder press while the
   launcher is not in front, and a button it takes is not also a click. It checks that the window
@@ -1195,8 +1358,9 @@ Stop the scrolled grid from clipping through the All games header
   moves an installed old folder to `theme-backups` and rewrites settings.json on the next start.
   Nothing else keys on the display name.
 - The recents row lost its frosted tray on purpose: the tray was what made the layout read as
-  somebody else's television. The tiles sit straight on the art with the scrim under them, and in
-  the grid state a 12% hairline under the row separates it from the grid. Corner radius is 10px.
+  somebody else's television. The tiles sit straight on the art with the scrim under them. In the
+  grid state the row slides off the top and fades with the title (theme 4.4), so the rule that
+  used to separate it from the grid (theme 4.3) is gone. Corner radius is 10px.
 - `SyncBuiltIn` ignores a shipped folder whose id is a key of `Renamed`. Build output is never
   cleaned, so `bin\Release\themes\polish` and `publish\themes\polish` are still next to the exe on
   this PC, and without the guard the retired theme was reinstalled one line after being retired.
@@ -1422,7 +1586,11 @@ Stop the scrolled grid from clipping through the All games header
   with Ctrl/Win/Alt latched is sent as the key that types it (`VkKeyScanW`), or Ctrl then C would
   not be Ctrl+C.
 - **The gear** at the bar's right end swaps the keys for the five switches (`KeyboardLayout.Options`,
-  same size as the keys so nothing jumps). B and Menu go back to the keys there, X/Y/LB/RB/RS type
+  same size as the keys so nothing jumps), and its bar carries − Size n% + beside the gear: the size
+  is there because a sixth switch row would make the page taller than the plain keyboard. The steps
+  are a tenth at a time over the Settings slider's 0.6-1.6, raise `ScaleChanged`, and are saved and
+  pushed in `keyboardOptions` like the switches (`keyboardScale` rides in it). The harness checks
+  them off-screen: options page → Up reaches −, the highlight survives the rebuild, the ends stop. B and Menu go back to the keys there, X/Y/LB/RB/RS type
   nothing. A switch raises `OptionsChanged`; `MainWindow` writes settings.json and the bridge pushes
   `keyboardOptions`, which the page MERGES into `S.settings` rather than replacing it, or an unsaved
   change on the page would be lost. The settings are `Keyboard{Suggestions,FunctionKeys,NavKeys,
@@ -1529,11 +1697,27 @@ Stop the scrolled grid from clipping through the All games header
 - **Unlock markers are near-white (`--trophy`), not gold and not the accent.** Gold was the first
   choice and sat next to Ember, the default accent, so pips on bars read as more bar; the accent
   presets go all the way round the wheel, so no hue is safe for everyone.
-- **Inside a Settings or Stats category the D-pad never leaves the rows** (`paneMove`): Up off the
+- **Inside a Settings or Stats category Up and Down never leave the rows** (`paneMove`): Up off the
   first row comes round to the last, Down off the last to the first (nearest column in the Actions
-  grid), and Left/Right only move between tiles or adjust a value. B, or a click on a category, is
-  the only way back to the sidebar (the user's call, Sept 2026). `navMove(dir, within)` takes a
-  filter for this; the categories themselves still walk as before.
+  grid). `navMove(dir, within)` takes a filter for this. On the Stats screen Left/Right still adjust
+  a value and B is the way back.
+- **Every list comes round at its ends** (the user's call, Oct 1 2026): `listMove` (= `paneMove` over
+  the whole scope) for Up/Down in every overlay menu (`menuStep`), the achievements, stats and day
+  sheets, the key picker and the first-run setup; the Settings and Stats categories wrap among
+  themselves; the Power Wheel's submenus and the in-game bar wrap their index. The library grid and
+  a game's page do NOT: they are screens, and nav.js's "no vertical wrap" is about exactly them. A
+  new list should step with `listMove`, never bare `navMove`.
+- **In Settings, Left and Right cross between the panes and never change a value** (the user's
+  call, Sept 30 2026): Right or A from a category into its rows at the last-highlighted row, Left
+  from any row back to the category. Only the Actions grid walks its tiles sideways first
+  (`tileBeside`, since navMove would wrap the line rather than report its end). A value is changed
+  from a list: a row with a fixed set of values carries `choices` (`{ value, label, html?, swatch? }`),
+  `current` and `pick`, and A opens them all through `openChoice` (`openSettingChoice`), ticked and
+  scrolled to the one in force. `sliderRow` lists every step (rounded to the step's decimals, so
+  0.05 + 3 x 0.01 is stored as 0.08), `buttonRow` draws combos as buttons (`html`), the accent lists
+  its presets with a `swatch` plus a `more` row for a hex code. Toggles still flip on A. The ◂ ▸
+  are gone from Settings rows (`settingsRowHtml(r, true)`); the form sheet still nudges sideways and
+  keeps them, which is the only reason rows still carry `adjust`.
 - The preview's `key` action with `repeat: N` is dropped by the page's 85 ms pacing (only one press
   lands): send separate presses. Its screenshots also lag the input it just sent -- read the state
   with `javascript_tool` before concluding a key did nothing. `pulse()`'s riseIn and the row
@@ -1597,3 +1781,88 @@ Stop the scrolled grid from clipping through the All games header
 - `LibraryStore` takes an optional file path now, for the harness: `harness2` in a scratch folder
   reads the real Playnite data (checking its files' timestamps are unchanged) and runs plan,
   apply, a second apply (nothing), and undo against scratch stores. 44 checks (Sept 2026).
+
+## Rest mode and pausing a game
+
+- **A program cannot make a controller wake a sleeping PC.** That is the device asking the bus to
+  wake the machine, and whether it may is a per-device driver switch ("Allow this device to wake
+  the computer"). On this PC (S3 only, no Modern Standby, Sept 2026) `powercfg /devicequery
+  wake_programmable` lists keyboards, mice and the two network cards and NOT the Intel Bluetooth
+  radio, the Xbox pad (Bluetooth LE) or the DualSense (Bluetooth), so nothing on the pad can wake
+  it from sleep, whatever the app does -- until the user plugged in an **Xbox Wireless Adapter**
+  (Oct 1 2026), which IS listed, unarmed, and gets an Allow row. So rest mode is two steps: **Resting** (screen off via
+  `SC_MONITORPOWER`, the game frozen, the pad inert; wakes on any pad because it is the launcher
+  reading the pad) and **Asleep** (`SetSuspendState`; wakes on whatever the hardware allows). The
+  Settings rows read the two powercfg lists and say which case the PC is; `WakeInfo.Classify` picks
+  out controller-shaped names and must NOT match "HID-compliant system controller", which is a
+  keyboard's power-keys collection.
+- `DevicePowerEnumDevices` (the API powercfg wraps) answered ERROR_WMI_INSTANCE_NOT_FOUND and no
+  devices from an ordinary process here, while `powercfg /devicequery` worked unelevated. Spawn the
+  tool. `powercfg /deviceenablewake` and `/setacvalueindex` need elevation: `Verb = "runas"`, one UAC
+  prompt each, Win32 error 1223 is the prompt declined.
+- "Require sign-in on wake" is the active scheme's CONSOLELOCK (`0e796bdb-…` under the no-subgroup
+  guid): `PowerReadACValueIndex` reads it unelevated (this PC: 1, on), `PowerWriteACValueIndex`
+  is access denied (rc 5) unelevated. With it on, an S3 wake lands on the lock screen, so
+  `RestService.Wake` defers while `WM_WTSSESSION_CHANGE` says the session is locked
+  (`WTSRegisterSessionNotification` on the main window) and wakes on the unlock.
+- **Pausing is `NtSuspendProcess` on every pid `TrackedPids()` returns** (`GameLaunchService.Pause`),
+  handles kept open until `Resume`. Verified on a scratch copy of cmd.exe: the count stops and
+  restarts. Two things hang on a frozen process and are guarded: `SetWindowPos` in the window
+  monitor (`EnforceOnTv` is skipped while paused) and `PrintWindow` for the switcher's thumbnails
+  (`StartThumbnails` skips the game's windows). `RequestClose` thaws first, because a frozen process
+  never reads the WM_CLOSE. The session's `finally` and the window's `Closed` both thaw, so a game
+  is never left frozen behind an exiting launcher.
+- `RestService` is one thread (the UI thread: a 500 ms DispatcherTimer, WndProc's
+  WM_POWERBROADCAST and the pad's `WakeRequested` via the dispatcher) and every outside effect is
+  a delegate in `Ports`, so the scratch harness drives it with a fake clock. Idle is the minimum of
+  `GetLastInputInfo`'s age, the pad service's `PadInputAgeMs` (Windows counts no XInput or Raw
+  Input read as input), and **the time since the last wake**: a wake by the power button or by
+  Windows' own resume moves neither stamp, and without `_wokeAt` the idle timer read the hours
+  asleep as hours idle and rested again on the very next tick. The harness found that one.
+- `SetSuspendState` blocks until the machine is back, so it runs on a worker (`Task.Run`) and its
+  `true` arrives after the resume; a `false` within moments is a refusal. A sleep that is asked for
+  but never followed by `PBT_APMSUSPEND` within 20 s is treated as refused too. After an automatic
+  resume (`PBT_APMRESUMEAUTOMATIC` with no `PBT_APMRESUMESUSPEND`) the service rests on and sleeps
+  again after 3 min of nothing, so a maintenance wake does not leave the PC on all night.
+- Chromium holds `ES_DISPLAY_REQUIRED` while the launcher's own trailer plays, so the "somebody is
+  watching a video" check (`SomethingHoldsDisplay`) only counts when another window is in front.
+- The harness is a scratch console project referencing `bin\Debug\...\Loungepad.dll`: the state
+  machine through `Ports` with a fake clock, `WakeInfo.Read()` live, and one real
+  session through `GameLaunchService` with the scratch cmd.exe for Pause/Resume/RequestClose (62
+  checks, Sept 2026). The live session writes the user's real loungepad.log, like any session. Its
+  `Rig` class has to come AFTER the top-level statements, and cannot see their `const`s.
+- **Never `SendMessageTimeout` a broadcast on the UI thread.** The screen-off used to be
+  `SendMessageTimeout(HWND_BROADCAST, WM_SYSCOMMAND, SC_MONITORPOWER, …, 1000 ms)`, which waits the
+  full second for every top-level window that does not pump messages -- suspended Store apps, a
+  frozen game, anything flagged hung -- and this PC has 326 top-level windows. The user's log showed
+  "displays off" 10 to 70 s after "Rest:", with the UI thread blocked the whole time: no dim, no
+  tick (so no sleep ever), and whatever was pressed meanwhile woke it the moment the screen went
+  dark. That was the whole "finicky" report of Oct 1 2026. `WindowService.MonitorPower` now sends
+  the message to our own window (DefWindowProc makes it system-wide, hidden or not; 0-3 ms
+  measured), and the log carries the time it took. The one-minute warning is `min(60 s, limit/2)`
+  so the 1 and 5 minute test timers still re-arm. `SetSuspendState`'s result and error, and
+  `powercfg /lastwake` after every resume, are logged, so a PC that wakes itself names the device.
+- **A gamepad Raw Input registration with INPUTSINK makes Windows count the pad's reports as user
+  input.** A DualSense streams one every 4 ms whether or not anyone touches it, so with the
+  launcher open and a Sony pad attached `GetLastInputInfo` is pinned at zero (measured Oct 1 2026:
+  1249 WM_INPUT in 5 s; zero the moment a probe registered, climbing the moment it unregistered;
+  XInput polling is innocent), Windows' own display and sleep timers never run, and a display
+  turned off with the registration held was turned back on by Windows within **one millisecond**.
+  That was "it comes back on instantly": the rest's wake check tripped exactly at its 1.5 s grace.
+  So: `HidGamepadReader.SetQuiet(true)` while resting drops the registration (RIDEV_REMOVE) and
+  reads each pad through a plain `ReadFile` on its device path from a thread of its own (a file
+  read is not input to Windows; the HID class driver gives every reader its own copy of the
+  reports), feeding the same `Parse` so the loop's wake-on-press is unchanged; `SetQuiet(false)`
+  re-registers. `CancelSynchronousIo` on the thread (`OpenThread` with THREAD_TERMINATE) breaks the
+  blocking read. And rest mode no longer reads `GetLastInputInfo` at all: `UserInputWatch` keeps its
+  own stamps off mouse and keyboard Raw Input -- a key or button down wakes, the wheel and movement
+  past 24 counts in a second only count as activity for the idle timer, and a sensor's jitter counts
+  as nothing (the user's rule: clicks wake, movement never). `RestService.OnDisplayState` (the
+  GUID_CONSOLE_DISPLAY_STATE notification) dims the screen again two seconds after Windows lights it
+  for movement, at most once in ten seconds. The one WM_INPUT read is in `MainWindow.WndProc` and
+  is handed to the pad reader or the input watch by type.
+- **Sleep after rest is OFF by default** (`SleepAfterRestMinutes` -1; the user's call, Oct 1 2026): a
+  fresh install only ever rests, and sleep is something the user turns on once they know what can
+  wake their PC. A pad that cannot wake a sleeping PC would send them to the desk for the mouse,
+  which is the one thing the launcher exists to prevent. The page's fallback for a settings file
+  without the key, the mock's defaults and the harness's sleep case all say -1 / set it explicitly.
