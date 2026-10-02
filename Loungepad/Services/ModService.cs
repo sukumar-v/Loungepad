@@ -311,4 +311,50 @@ public sealed class ModService
 
     /// <summary>The Vortex game matched to this one on the last answer, without asking again.</summary>
     public ModGame? Cached(Game game) => Match(game, _games);
+
+    /// <summary>
+    /// Vortex and the games it manages, for the first-run setup. <paramref name="mode"/> is how far
+    /// to go to get an answer: "peek" changes nothing (see VortexBackend.PeekAsync), "connect" is
+    /// what opening the Mods screen does -- the extension put in place, Vortex started minimized if
+    /// it is not running -- and "restart" closes a running Vortex first so it loads the extension.
+    /// The last two only ever follow a press on the setup's own row.
+    /// </summary>
+    public async Task<VortexSummary> SummaryAsync(IReadOnlyList<Game> library, string mode, CancellationToken ct)
+    {
+        await _gate.WaitAsync(ct);
+        try
+        {
+            var sum = new VortexSummary();
+            _vortex.Locate();
+            try
+            {
+                if (mode == "restart" && _vortex.ExePath is not null && !await _vortex.RestartAsync(ct))
+                    sum.Error = "Vortex did not close when asked. Close it yourself, then try again";
+                var status = mode == "peek" ? await _vortex.PeekAsync(ct) : await _vortex.EnsureBridgeAsync(ct);
+                sum.Vortex = status;
+                if (!status.BridgeReady) return sum;
+
+                _games = await _vortex.GamesAsync(ct);
+                var eligible = library.Where(Eligible).ToList();
+                foreach (var vg in _games.Where(g => g.Managed && !g.Hidden))
+                {
+                    var ours = eligible.FirstOrDefault(g => Match(g, new[] { vg }) is not null);
+                    List<ModInfo> mods;
+                    try { mods = await _vortex.ModsAsync(vg.Id, ct); }
+                    catch (VortexBridgeException) { mods = new(); }
+                    sum.Games.Add(new VortexSummaryGame
+                    {
+                        GameId = ours?.Id, Title = ours?.Title ?? vg.Name,
+                        Mods = mods.Count, Enabled = mods.Count(m => m.Enabled),
+                    });
+                }
+                sum.Games = sum.Games.OrderByDescending(g => g.Mods).ThenBy(g => g.Title, StringComparer.CurrentCultureIgnoreCase).ToList();
+            }
+            catch (VortexBridgeException ex) { sum.Error = ex.Message; }
+            catch (HttpRequestException ex) { sum.Error = $"Could not reach Vortex: {ex.Message}"; }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested) { sum.Error = "Vortex took too long to answer"; }
+            return sum;
+        }
+        finally { _gate.Release(); }
+    }
 }

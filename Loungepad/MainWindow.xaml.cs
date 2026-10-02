@@ -20,10 +20,16 @@ public partial class MainWindow : Window
     private readonly GamepadService _gamepad;
     private readonly ActionService _actions;
     private readonly HidGamepadReader _hid = new();
+    /// <summary>When the keyboard and mouse were last pressed, scrolled or really moved, for rest
+    /// mode's idle timer and its wake. See UserInputWatch for why GetLastInputInfo could not do it.</summary>
+    private readonly UserInputWatch _input = new();
+    private IntPtr _displayStateNotification;
     private readonly CursorService _cursor;
     private readonly ThemeService _themes = new();
     private readonly WindowService _windows;
     private readonly UpdateService _updates;
+    private readonly RestService _rest;
+    private readonly System.Windows.Threading.DispatcherTimer _restTimer;
     private TrayIcon? _tray;
     private bool _overlayWasMinimized;
     private bool _overlayActive;
@@ -89,13 +95,50 @@ public partial class MainWindow : Window
         _gamepad.RadialRequested += () => Dispatcher.BeginInvoke(() => _ = ShowOverlay("radial"));
         _gamepad.WheelTapRequested += () => Dispatcher.BeginInvoke(OnWheelTap);
         _gamepad.StickDirection += (x, y) => Dispatcher.BeginInvoke(() => _bridge?.PushStick(x, y));
-        _gamepad.WakeRequested += () => Dispatcher.BeginInvoke(() =>
+
+        // Rest mode (see RestService): everything it does to the machine goes through here.
+        _rest = new RestService(() => _settings.Settings, new RestService.Ports
         {
-            _windows.WakeDisplays();
+            UserPressAgeMs = () => _input.PressAgeMs,
+            UserActivityAgeMs = () => _input.ActivityAgeMs,
+            PadInputAgeMs = () => _gamepad.PadInputAgeMs,
+            GameRunning = () => _launcher.GameRunning,
+            // Chromium holds the display for the launcher's own trailers, so a hold only counts
+            // as somebody watching something when another window is in front.
+            DisplayHeldAwake = () => NativeMethods.GetForegroundWindow() != _hwnd && RestService.SomethingHoldsDisplay(),
+            SleepAllowed = () => { try { return NativeMethods.IsPwrSuspendAllowed(); } catch { return false; } },
+            DisplaysOff = () => _windows.BlankDisplays(),
+            DisplaysOn = () => _windows.WakeDisplays(),
+            PauseGame = () => _launcher.Pause(),
+            ResumeGame = () => _launcher.Resume(),
+            // Off the UI thread: the call returns only once the machine is back.
+            SleepPc = () => Task.Run(() =>
+            {
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                bool ok = NativeMethods.SetSuspendState(false, false, false);
+                int err = System.Runtime.InteropServices.Marshal.GetLastWin32Error();
+                Log.Info(ok ? $"Rest: SetSuspendState returned after {sw.ElapsedMilliseconds} ms (the machine is back)"
+                            : $"Rest: SetSuspendState was refused after {sw.ElapsedMilliseconds} ms (error {err})");
+                return ok;
+            }),
+            WakeSource = () => Task.Run(WakeInfo.LastWakeSource),
+            // Inert: the loop only wakes on a press. Quiet: the pads are read directly rather than
+            // through Raw Input, or Windows counts a DualSense's stream as input and relights the
+            // screen within a millisecond (see HidGamepadReader.SetQuiet).
+            PadInert = v => { _gamepad.Suspended = v; _hid.SetQuiet(v); },
+            Prepare = PrepareForRest,
             // The wake nudges real mouse input, which would otherwise land the UI back in
             // pointer mode with nothing highlighted.
-            _gamepad.ResetInputMode();
+            AfterWake = () => _gamepad.ResetInputMode(),
+            Toast = m => _bridge?.PushToast(m),
         });
+        _rest.Changed += () => _bridge?.PushRest();
+        _launcher.PausedChanged += _ => Dispatcher.BeginInvoke(() => _bridge?.PushGameState());
+        // A press while resting: the loop swallows it and reports it here.
+        _gamepad.WakeRequested += () => Dispatcher.BeginInvoke(() => _rest.Wake("the controller"));
+        _restTimer = new System.Windows.Threading.DispatcherTimer(TimeSpan.FromMilliseconds(500),
+            System.Windows.Threading.DispatcherPriority.Background, (_, _) => _rest.Tick(), Dispatcher);
+
         _gamepad.BatteryChanged += b => Dispatcher.BeginInvoke(() => _bridge?.PushBattery(b));
         _gamepad.InputModeChanged += mode => Dispatcher.BeginInvoke(() =>
         {
@@ -121,7 +164,16 @@ public partial class MainWindow : Window
         Activated += (_, _) => FocusPageIfShown();
         // The keyboard is a second top-level window, and WPF shuts down on the last one closing,
         // so leaving it open would keep the process alive with no UI.
-        Closed += (_, _) => { _kb?.Close(); _bridge?.Shutdown(); _gamepad.Dispose(); _cursor.Dispose(); _tray?.Dispose(); _updates.Dispose(); };
+        Closed += (_, _) =>
+        {
+            _restTimer.Stop();
+            // Never leave a game frozen behind an exiting launcher: nothing else could thaw it.
+            _launcher.Resume();
+            _hid.SetQuiet(false);
+            if (_displayStateNotification != IntPtr.Zero) NativeMethods.UnregisterPowerSettingNotification(_displayStateNotification);
+            if (_hwnd != IntPtr.Zero) NativeMethods.WTSUnRegisterSessionNotification(_hwnd);
+            _kb?.Close(); _bridge?.Shutdown(); _gamepad.Dispose(); _cursor.Dispose(); _tray?.Dispose(); _updates.Dispose();
+        };
 
         try
         {
@@ -171,17 +223,58 @@ public partial class MainWindow : Window
         // HidGamepadReader). Registered here because it needs the HWND, and before the poll
         // loop starts so the first snapshot already knows what is attached.
         _hid.Register(_hwnd);
+        _input.Register(_hwnd);
         HwndSource.FromHwnd(_hwnd)?.AddHook(WndProc);
+        // Lock and unlock, so a wake that lands on the lock screen can wait for the sign-in.
+        if (!NativeMethods.WTSRegisterSessionNotification(_hwnd, NativeMethods.NOTIFY_FOR_THIS_SESSION))
+            Log.Info("Session lock notifications are not available; a wake will not wait for the sign-in");
+        // The display coming on by itself while resting is what rest mode dims again.
+        var displayState = NativeMethods.GUID_CONSOLE_DISPLAY_STATE;
+        _displayStateNotification = NativeMethods.RegisterPowerSettingNotification(_hwnd, ref displayState, NativeMethods.DEVICE_NOTIFY_WINDOW_HANDLE);
         _gamepad.Start();
     }
 
     private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
         // Not marked handled: WM_INPUT has to reach DefWindowProc so the system can release
-        // the buffer behind it.
-        if (msg == HidNative.WM_INPUT) _hid.OnInput(lParam);
+        // the buffer behind it. Read once; HID reports go to the pad reader, the keyboard and
+        // mouse to the input watch.
+        if (msg == HidNative.WM_INPUT)
+        {
+            var (buffer, size) = _input.Read(lParam);
+            if (size > 0)
+            {
+                if (BitConverter.ToUInt32(buffer, 0) == HidNative.RIM_TYPEHID) _hid.OnInputData(buffer, size);
+                else _input.OnInputData(buffer, size);
+            }
+        }
         else if (msg == HidNative.WM_INPUT_DEVICE_CHANGE) _hid.OnDeviceChange(wParam, lParam);
+        else if (msg == NativeMethods.WM_POWERBROADCAST)
+        {
+            int what = (int)wParam.ToInt64();
+            if (what == NativeMethods.PBT_POWERSETTINGCHANGE)
+            {
+                // POWERBROADCAST_SETTING: the GUID (16 bytes), DataLength (4), then the data.
+                if (lParam != IntPtr.Zero && new Guid(ReadBytes(lParam, 16)) == NativeMethods.GUID_CONSOLE_DISPLAY_STATE
+                    && System.Runtime.InteropServices.Marshal.ReadInt32(lParam, 16) >= 1)
+                    _rest.OnDisplayState(System.Runtime.InteropServices.Marshal.ReadByte(lParam, 20) != 0);
+            }
+            else _rest.OnPowerEvent(what);
+        }
+        else if (msg == NativeMethods.WM_WTSSESSION_CHANGE)
+        {
+            var what = (int)wParam.ToInt64();
+            if (what == NativeMethods.WTS_SESSION_LOCK) _rest.OnSessionLock(true);
+            else if (what == NativeMethods.WTS_SESSION_UNLOCK) _rest.OnSessionLock(false);
+        }
         return IntPtr.Zero;
+    }
+
+    private static byte[] ReadBytes(IntPtr p, int n)
+    {
+        var b = new byte[n];
+        System.Runtime.InteropServices.Marshal.Copy(p, b, 0, n);
+        return b;
     }
 
     /// <summary>The page gets the keyboard whenever the launcher is the window in front.</summary>
@@ -710,6 +803,13 @@ public partial class MainWindow : Window
                 _settings.Save();
                 _bridge?.PushKeyboardOptions();
             };
+            // The size steps beside the gear: the same number as Settings → Keyboard → Keyboard size.
+            _kb.ScaleChanged += scale =>
+            {
+                _settings.Settings.KeyboardScale = scale;
+                _settings.Save();
+                _bridge?.PushKeyboardOptions();
+            };
         }
         _kb.SetLayout(_gamepad.ActiveLayout);
         var target = (_settings.Settings.TvDeviceName is { } name ? _displays.GetDisplay(name) : null)
@@ -778,22 +878,19 @@ public partial class MainWindow : Window
     /// <summary>The UI changed input mode by itself; keep the pad service's copy in step.</summary>
     public void SetInputMode(string mode) => _gamepad.NotifyInputMode(mode);
 
+    /// <summary>Rest mode: the idle timer, the screen, the frozen game and the sleep. See RestService.</summary>
+    public RestService Rest => _rest;
+
     /// <summary>
-    /// "Suspend": blank the displays and park the pad, leaving the session (and anything
-    /// downloading or installing) running. Any gamepad button brings it back. This is not sleep —
-    /// suspending the machine from the couch is a one-way trip without Wake-on-LAN, and the lock
-    /// screen is a separate secure session the pad cannot drive at all.
+    /// What a rest needs from the window first: the menu down, and the launcher on screen when
+    /// no game is running, so the wake lands on it rather than on a half-focused desktop. With a
+    /// game running the launcher stays parked and the wake lands on the game.
     /// </summary>
-    public async Task Suspend()
+    private void PrepareForRest()
     {
         CloseOverlay(false);
         _bridge?.PushDismiss();
-        // Come back to the launcher, not to a half-focused desktop, when the screens light up.
         if (!_launcher.GameRunning) GoHome();
-
-        await Task.Delay(250);      // let the overlay tear down before the screen goes dark
-        _gamepad.Suspended = true;
-        _windows.BlankDisplays();
     }
 
     /// <summary>The window the radial menu acts on (whatever was in front when it opened).</summary>

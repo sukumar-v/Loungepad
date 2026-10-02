@@ -159,6 +159,10 @@ html, body {
 #screen-library, #backdrop { transition: filter var(--t-screen) var(--ease), opacity var(--t-screen) linear; }
 body[data-view="settings"] #screen-library,
 body[data-view="settings"] #backdrop { filter: blur(22px) saturate(0.85) brightness(0.7); }
+/* The first-run setup blurs it the same way, except on the Look step, where the library IS the
+   preview of the choice being made and the box steps aside for it (see the setup's own rules). */
+body[data-view="onboarding"]:not([data-onb-step="look"]) #screen-library,
+body[data-view="onboarding"]:not([data-onb-step="look"]) #backdrop { filter: blur(22px) saturate(0.85) brightness(0.6); }
 /* Under a game's page the library's own tiles and title fade out, and fade back in as the page
    goes. Behind an opaque page (Shelf) that changes nothing you can see; behind a page a theme
    draws over the backdrop (Loungepad's is transparent, so the same film keeps playing through
@@ -216,10 +220,26 @@ body[data-view="detail"] #screen-library.under { opacity: 0; }
 .batt-pct { font-size: 18px; letter-spacing: 0.06em; }
 #scanStatus { color: var(--accent); }
 
-/* ---- library body ---- */
+/* ---- library body ----
+   One page, scrolled as a whole: the recents are the top of it and go up off the screen as the
+   highlight walks down the grid, the way a page scrolls (the user's call, Oct 1 2026). The grid
+   used to be the only scroller, under a Continue row that never moved, which left it less than
+   half the screen. Relative so revealOffset() can measure rows against it with offsetTop. Only
+   Shelf's own markup has a .lib-body: a theme that slots the regions elsewhere keeps the grid as
+   its scroller (see the .lib-body .grid-scroll rule below). */
 .lib-body {
+  position: relative;
   flex: 1; min-height: 0; display: flex; flex-direction: column;
-  gap: 30px; padding: 24px 80px 0; overflow: hidden;
+  gap: 30px; padding: 24px 80px 0; overflow-x: hidden; overflow-y: auto;
+  scrollbar-width: none;
+}
+.lib-body::-webkit-scrollbar { display: none; }
+/* The top fade the grid had, moved to the page: rows scrolled under the top bar dissolve rather
+   than end in a hard line, and only while something is above, so the recents' glow keeps the
+   full padding at rest. */
+.lib-body.scrolled {
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 26px);
+  mask-image: linear-gradient(180deg, transparent 0, #000 26px);
 }
 .lib-section { display: flex; flex-direction: column; gap: 16px; flex: 0 0 auto; }
 .lib-grid-section { flex: 1 1 auto; min-height: 0; }
@@ -286,6 +306,13 @@ body[data-view="detail"] #screen-library.under { opacity: 0; }
   mask-image: linear-gradient(180deg, transparent 0, #000 26px);
 }
 .grid-scroll::-webkit-scrollbar { display: none; }
+/* In Shelf the page scrolls, not the grid: the grid is as tall as its rows and the page around it
+   does the scrolling. The padding stays, as room for the last row's lift and glow at the bottom. */
+.lib-body .lib-grid-section { flex: 0 0 auto; }
+.lib-body .grid-scroll {
+  flex: 0 0 auto; overflow: visible;
+  -webkit-mask-image: none; mask-image: none;
+}
 .grid-row { display: flex; gap: 24px; flex: 0 0 auto; }
 .grid-item {
   /* 2:3, which is what every store draws portrait box art to (Steam's is 600x900). The tile used
@@ -787,6 +814,10 @@ body.no-motion .pill-primary.focused { animation: none; }
 .set-value { display: flex; align-items: center; gap: 22px; font-size: 24px; color: color-mix(in srgb, var(--ink) 85%, transparent); flex: 0 0 auto; }
 .set-value .arrow { color: color-mix(in srgb, var(--ink) 35%, transparent); font-size: 20px; }
 .set-row.focused .set-value .arrow { color: var(--accent); }
+/* A value that opens a list of every value (A, see openSettingChoice). The chevron is the filter
+   menu's own sign for "opens", and it lights with the row like the old ◂ ▸ did. */
+.set-chev { font-size: 34px; line-height: 1; margin: -4px 0 0 -8px; color: color-mix(in srgb, var(--ink) 30%, transparent); }
+.set-row.focused .set-chev { color: var(--accent); }
 .set-toggle-on { color: var(--accent); font-weight: 600; }
 .set-toggle-off { color: color-mix(in srgb, var(--ink) 45%, transparent); }
 .slider { display: flex; align-items: center; gap: 20px; }
@@ -982,6 +1013,9 @@ body.no-motion .pill-primary.focused { animation: none; }
 .ov-row .ov-action { color: var(--accent); font-weight: 600; }
 #filterList, #collectList { display: flex; flex-direction: column; gap: 10px; }
 .ov-check { color: var(--accent); font-size: 24px; width: 32px; text-align: center; }
+/* A Settings value list: an accent's colour as its row's lead, a button combo drawn as buttons. */
+.ov-swatch { margin: 0 3px; }
+.ov-row .combo .btn-icon { height: 32px; }
 .ov-check.off { color: color-mix(in srgb, var(--ink) 25%, transparent); }
 
 /* ---- text input overlay ---- */
@@ -1894,3 +1928,161 @@ body[data-view="stats"] #backdrop { filter: blur(22px) saturate(0.85) brightness
 .unlock-kicker { font-size: 13px; letter-spacing: 0.18em; color: var(--accent); }
 .unlock-name { font-size: 24px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .unlock-sub { font-size: 15px; color: color-mix(in srgb, var(--ink) 55%, transparent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ---- the first-run setup ----
+   A box over the blurred library like Settings: the rail down the left carries the steps and what
+   the scan has found so far, the step itself sits on the right with Continue in the corner where
+   a console puts it. On the Look step the box slides to the right and the rail goes, so the
+   library it is choosing a look for shows through beside it. */
+#screen-onboarding {
+  align-items: center; justify-content: center;
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
+  transition: background var(--t-screen) linear;
+}
+#screen-onboarding.active { animation: fadeIn var(--t-screen) linear backwards; }
+#screen-onboarding.closing { animation: fadeOut var(--t-screen-out) linear forwards; }
+#screen-onboarding.active .onb-box { animation: cardIn var(--t-screen) var(--ease) backwards; }
+#screen-onboarding.closing .onb-box { animation: cardOut var(--t-menu-out) var(--ease-in) forwards; }
+body[data-onb-step="look"] #screen-onboarding {
+  align-items: flex-end;
+  background: linear-gradient(to left, color-mix(in srgb, var(--bg) 70%, transparent) 30%, transparent 75%);
+}
+.onb-box {
+  width: 1720px; height: 940px; display: flex;
+  background: color-mix(in srgb, var(--card) 96%, transparent);
+  border: 1px solid color-mix(in srgb, var(--edge) 10%, transparent); border-radius: 30px;
+  box-shadow: 0 50px 140px -30px rgba(0, 0, 0, 0.75);
+  overflow: hidden;
+  transition: width var(--t-screen) var(--ease), margin var(--t-screen) var(--ease);
+}
+body[data-onb-step="look"] .onb-box { width: 820px; margin-right: 60px; }
+/* The library's own legend names buttons that do something else while the setup is up. */
+body[data-view="onboarding"] #libraryFoot { visibility: hidden; }
+
+.onb-rail {
+  flex: 0 0 360px; display: flex; flex-direction: column; min-height: 0;
+  padding: 44px 30px 34px 44px;
+  background: color-mix(in srgb, var(--bg) 40%, transparent);
+  border-right: 1px solid color-mix(in srgb, var(--ink) 9%, transparent);
+}
+body[data-onb-step="look"] .onb-rail { display: none; }
+.onb-brand { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; }
+.onb-steps { display: flex; flex-direction: column; gap: 2px; margin-top: 28px; }
+.onb-step {
+  display: flex; align-items: center; gap: 14px; padding: 7px 12px; border-radius: 12px;
+  font-size: 19px; color: color-mix(in srgb, var(--ink) 42%, transparent);
+  transition: background var(--t-focus) linear, color var(--t-focus) linear;
+}
+.onb-dot {
+  width: 26px; height: 26px; border-radius: 50%; flex: 0 0 auto;
+  display: grid; place-items: center;
+  font-family: "IBM Plex Mono", monospace; font-size: 13px; font-weight: 500;
+  border: 2px solid color-mix(in srgb, var(--ink) 20%, transparent);
+}
+.onb-step.done { color: color-mix(in srgb, var(--ink) 72%, transparent); }
+.onb-step.done .onb-dot { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.onb-step.current { color: var(--ink); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.onb-step.current .onb-dot { border-color: var(--accent); color: var(--accent); }
+
+.onb-bg { margin-top: auto; padding-top: 22px; display: flex; flex-direction: column; gap: 2px; }
+.onb-bg-title { font-size: 13px; letter-spacing: 0.18em; color: color-mix(in srgb, var(--ink) 42%, transparent); margin-bottom: 8px; }
+.onb-bg-row { display: flex; align-items: center; gap: 10px; font-size: 16px; min-height: 27px; color: color-mix(in srgb, var(--ink) 75%, transparent); }
+.onb-bg-row.pending { color: color-mix(in srgb, var(--ink) 38%, transparent); }
+.onb-bg-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.onb-bg-val { font-size: 13px; color: color-mix(in srgb, var(--ink) 50%, transparent); white-space: nowrap; }
+.onb-bg-mark {
+  width: 16px; height: 16px; flex: 0 0 auto; border-radius: 50%;
+  display: grid; place-items: center; font-size: 11px; font-weight: 700;
+  border: 2px solid color-mix(in srgb, var(--ink) 18%, transparent);
+}
+.onb-bg-mark.ok { border: none; background: color-mix(in srgb, var(--accent) 22%, transparent); color: var(--accent); }
+.onb-bg-mark.warn { border: none; background: color-mix(in srgb, var(--danger) 25%, transparent); color: var(--danger); }
+.onb-bg-mark.spin {
+  border-color: color-mix(in srgb, var(--accent) 25%, transparent); border-top-color: var(--accent);
+  animation: onbSpin calc(0.9s * var(--motion)) linear infinite;
+}
+body.no-motion .onb-bg-mark.spin { animation: none; }
+@keyframes onbSpin { to { transform: rotate(360deg); } }
+
+.onb-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.onb-head { padding: 52px 72px 4px; }
+.onb-kicker { font-size: 14px; letter-spacing: 0.18em; color: var(--accent); }
+.onb-title { font-size: 46px; font-weight: 600; letter-spacing: -0.02em; margin: 10px 0 0; line-height: 1.1; }
+.onb-lede { font-size: 20px; line-height: 1.5; margin: 14px 0 0; max-width: 1060px; color: color-mix(in srgb, var(--ink) 64%, transparent); }
+.onb-lede .btn-slot, .onb-note .btn-slot { margin: 0 2px; }
+.onb-lede .btn-icon, .onb-note .btn-icon { height: 30px; }
+/* The Settings scroller's own spacing, with room round the rows for their focus ring. */
+.settings-scroll.onb-rows { padding: 22px 72px 26px; gap: 16px; }
+/* Never squeezed to fit: a column that runs past its box scrolls. A flex item with overflow hidden
+   (the status list) may otherwise shrink to nothing, since its minimum height is then 0. */
+.onb-rows > * { flex: 0 0 auto; }
+.onb-rows .set-section { padding-top: 14px; }
+.onb-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 18px 30px; padding: 12px 72px 36px; flex: 0 0 auto; }
+.onb-foot .legend { padding: 0; gap: 34px; }
+/* In the narrow box of the Look step the legend takes a line of its own, under Continue. */
+body[data-onb-step="look"] .onb-foot { flex-direction: column-reverse; align-items: flex-end; }
+body[data-onb-step="look"] .onb-foot .legend { align-self: stretch; gap: 28px; }
+/* Right-hand even with the hints hidden (Appearance), when it is the only thing on the line. */
+.onb-next { cursor: pointer; margin-left: auto; }
+
+.onb-note { font-size: 18px; line-height: 1.55; color: color-mix(in srgb, var(--ink) 60%, transparent); padding: 0 4px; }
+.onb-note.ok { color: color-mix(in srgb, var(--accent) 85%, var(--ink)); }
+.onb-note.warn { color: var(--danger); }
+
+.onb-status {
+  display: flex; flex-direction: column; border-radius: 14px; overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--edge) 7%, transparent);
+}
+.onb-status-row {
+  display: flex; align-items: center; gap: 18px; padding: 16px 26px; font-size: 21px;
+  background: color-mix(in srgb, var(--card) 70%, transparent);
+}
+.onb-status-row + .onb-status-row { border-top: 1px solid color-mix(in srgb, var(--edge) 6%, transparent); }
+.onb-status-icon { color: color-mix(in srgb, var(--ink) 55%, transparent); display: flex; }
+.onb-status-icon .ov-icon { width: 26px; height: 26px; }
+.onb-status-row.ok .onb-status-icon { color: var(--accent); }
+.onb-status-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.onb-status-val { font-size: 18px; color: color-mix(in srgb, var(--ink) 55%, transparent); white-space: nowrap; }
+.onb-status-row.ok .onb-status-val { color: color-mix(in srgb, var(--ink) 80%, transparent); }
+.onb-status-row.dim .onb-status-name { color: color-mix(in srgb, var(--ink) 45%, transparent); }
+
+/* A row of big choices: the TV, the theme, the accent. The chosen one is ringed in the accent and
+   ticked; the highlight is the usual ring and glow over whichever is under it. */
+.onb-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+.onb-tiles.swatches { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+.onb-tile {
+  position: relative; display: flex; align-items: center; gap: 18px;
+  min-height: 96px; padding: 20px 24px; border-radius: 16px; cursor: pointer;
+  background: var(--card); border: 2px solid color-mix(in srgb, var(--edge) 8%, transparent);
+  transition: transform var(--t-focus) var(--ease), background var(--t-focus) linear, box-shadow var(--t-focus) linear, border-color var(--t-focus) linear;
+}
+.onb-tiles.swatches .onb-tile { min-height: 72px; padding: 14px 18px; gap: 14px; }
+.onb-tile.chosen { border-color: color-mix(in srgb, var(--accent) 70%, transparent); background: color-mix(in srgb, var(--accent) 8%, var(--card)); }
+.onb-tile.focused {
+  transform: scale(1.02); background: var(--surface);
+  box-shadow: 0 0 0 3px var(--accent), 0 0 44px 6px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.onb-tile-icon { display: flex; color: color-mix(in srgb, var(--ink) 60%, transparent); }
+.onb-tile-icon .ov-icon { width: 34px; height: 34px; }
+.onb-tile.chosen .onb-tile-icon { color: var(--accent); }
+.onb-tile-text { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
+.onb-tile-title { font-size: 22px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.onb-tiles.swatches .onb-tile-title { font-size: 18px; font-weight: 500; }
+.onb-tile-sub { font-size: 16px; line-height: 1.4; color: color-mix(in srgb, var(--ink) 50%, transparent); }
+.onb-tile-check {
+  position: absolute; top: 10px; right: 12px; font-size: 16px; font-weight: 700;
+  color: var(--accent); opacity: 0; transition: opacity var(--t-focus) linear;
+}
+.onb-tile.chosen .onb-tile-check { opacity: 1; }
+.onb-swatch { width: 34px; height: 34px; border-radius: 50%; flex: 0 0 auto; box-shadow: inset 0 0 0 2px rgba(0, 0, 0, 0.25); }
+
+.onb-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+.onb-stat {
+  display: flex; flex-direction: column; gap: 6px; padding: 26px 28px; border-radius: 16px;
+  background: var(--card); border: 1px solid color-mix(in srgb, var(--edge) 7%, transparent);
+}
+.onb-stat-n { font-size: 56px; font-weight: 600; letter-spacing: -0.03em; line-height: 1; color: var(--accent); }
+.onb-stat-label { font-size: 19px; color: color-mix(in srgb, var(--ink) 62%, transparent); }
+.onb-keys { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px 30px; padding: 4px 4px 0; }
+.onb-key { display: flex; align-items: center; gap: 14px; font-size: 20px; color: color-mix(in srgb, var(--ink) 80%, transparent); }
+.onb-key .btn-icon { height: 34px; }

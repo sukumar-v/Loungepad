@@ -20,17 +20,20 @@ internal static class HidNative
 
     public const uint RIDEV_INPUTSINK = 0x00000100;   // deliver even when another window is in front
     public const uint RIDEV_DEVNOTIFY = 0x00002000;   // and say when a device comes or goes
+    public const uint RIDEV_REMOVE = 0x00000001;      // drop the registration (hwndTarget must be zero)
 
     public const uint RID_INPUT = 0x10000003;
     public const uint RIDI_PREPARSEDDATA = 0x20000005;
     public const uint RIDI_DEVICENAME = 0x20000007;
     public const uint RIDI_DEVICEINFO = 0x2000000B;
-    public const uint RIM_TYPEHID = 2;
+    public const uint RIM_TYPEMOUSE = 0, RIM_TYPEKEYBOARD = 1, RIM_TYPEHID = 2;
 
     public const ushort USAGE_PAGE_GENERIC = 0x01;
     public const ushort USAGE_PAGE_BUTTON = 0x09;
     public const ushort USAGE_JOYSTICK = 0x04;
     public const ushort USAGE_GAMEPAD = 0x05;
+    public const ushort USAGE_MOUSE = 0x02;
+    public const ushort USAGE_KEYBOARD = 0x06;
 
     [StructLayout(LayoutKind.Sequential)]
     public struct RAWINPUTDEVICE
@@ -182,4 +185,20 @@ internal static class HidNative
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "CreateFileW")]
     public static extern SafeFileHandle CreateFile(string fileName, uint desiredAccess, uint shareMode, IntPtr securityAttributes,
         uint creationDisposition, uint flagsAndAttributes, IntPtr templateFile);
+
+    // ---- reading a pad's reports directly, while resting (see HidGamepadReader.SetQuiet) ----
+
+    /// <summary>One input report, synchronously: the HID class driver answers each call with the
+    /// next report, report id first, exactly as Raw Input would have delivered it.</summary>
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool ReadFile(SafeFileHandle hFile, byte[] buffer, uint bytesToRead, out uint bytesRead, IntPtr overlapped);
+
+    /// <summary>Breaks a thread out of a blocking ReadFile. Needs THREAD_TERMINATE on the handle.</summary>
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool CancelSynchronousIo(IntPtr hThread);
+
+    public const uint THREAD_TERMINATE = 0x0001;
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern IntPtr OpenThread(uint desiredAccess, bool inheritHandle, uint threadId);
 }

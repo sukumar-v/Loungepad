@@ -22,12 +22,16 @@ let S = {
   gameRunning: false,
   runningGameId: null,
   scanning: false,
+  scanProgress: [],                      // [{ id, state: pending|running|done|failed|off, count }] -- the last scan, source by source (BeginSteps on the host)
+  padName: null,                         // the pad in hand as Windows names it, for the first-run setup's welcome
   steamAccount: null,                    // { steamId, personaName, ownedCount, fetchedAt, error }
   stores: null,                          // { epic|gog|xbox: { signedIn, user, count, fetchedAt, error }, gamePass: { count, fetchedAt, error } }
   emulation: null,                       // { emulators: [...], romFolders: [...], platforms: [{ id, name, shortName, extensions, hasCores }] }
   update: null,                          // { state, current, latest, progress, message, checkedAt, userAsked } -- see UpdateService
   actions: null,                         // { apps: [{ id, name, exes, icon, installed, custom, pinned, modified, actions: [...] }] } -- see actions.js
   xboxButton: null,                      // { gameBar, xboxMode, steam, steamRunning, steamBusy } -- who else reacts to the Xbox button; xboxMode/steam null where there is none
+  rest: null,                            // { phase: awake|resting|asleep, paused, wake: { canSleep, modernStandby, signInOnWake, devices: [{ name, armed, kind }], lastWake } | null } -- see RestService and WakeInfo
+  gamePaused: false,                     // the running game is frozen (the in-game menu's Pause, or rest mode)
   padConnected: false,
   achievements: {},                      // game id -> { unlocked, total, score, totalScore, lastUnlock, source, fetchedAt, error } -- see activity.js
   sessionStart: null,                    // when the running game was started, for the "playing for" readout
@@ -202,6 +206,7 @@ function repaintFocus() {
   else if (view === "detail") updateDetailFocus();
   else if (view === "settings") renderSettings();
   else if (view === "stats") renderStats();
+  else if (view === "onboarding") renderOnboarding();
 }
 
 /* ============================== spatial focus ==============================
@@ -269,6 +274,16 @@ function ensureFocus(scope) {
   if (el) setFocusEl(el); else clearFocus(scope);
 }
 
+/** What scrolls the library: the grid itself, or in Shelf the page around it, which carries the
+    recents up off the screen with it (see .lib-body in app.css). Asked of the CSS rather than
+    known, since a theme decides; unlike scrollParentOf it answers whether or not it overflows. */
+function libraryScroller() {
+  const grid = $("gridScroll");
+  for (let p = grid; p && p.id !== "screen-library"; p = p.parentElement)
+    if (/(auto|scroll)/.test(getComputedStyle(p).overflowY)) return p;
+  return grid;
+}
+
 /** Nearest ancestor that actually scrolls on the given axis. */
 function scrollParentOf(el, axis) {
   for (let p = el.parentElement; p; p = p.parentElement) {
@@ -278,6 +293,29 @@ function scrollParentOf(el, axis) {
     } else if (/(auto|scroll)/.test(s.overflowY) && p.scrollHeight > p.clientHeight + 1) return p;
   }
   return null;
+}
+
+/** A memoised "which scroller is this element in", for one navMove: a library is hundreds of
+    tiles, and walking each one's ancestors through getComputedStyle would cost more than the step.
+    The map holds, for each element visited, the nearest scroller among it and its ancestors. */
+function scrollerLookup() {
+  const memo = new Map();
+  const scrolls = (p) => {
+    const s = getComputedStyle(p);
+    return (/(auto|scroll)/.test(s.overflowY) && p.scrollHeight > p.clientHeight + 1)
+        || (/(auto|scroll)/.test(s.overflowX) && p.scrollWidth > p.clientWidth + 1);
+  };
+  return (el) => {
+    const path = [];
+    let found = null;
+    for (let p = el.parentElement; p; p = p.parentElement) {
+      if (memo.has(p)) { found = memo.get(p); break; }
+      path.push(p);
+      if (scrolls(p)) { found = p; break; }
+    }
+    for (const x of path) memo.set(x, found);
+    return found;
+  };
 }
 
 /** Offset along one axis, summed to the scroller. Layout pixels, to match scrollTop/Left. */
@@ -310,9 +348,20 @@ function revealOffset(sc, el, axis) {
     if (ends[ends.length - 1] === el) return total;
   }
 
-  if (near - REVEAL_MARGIN <= 0) return 0;
+  /* The same thing one level down, for a scroller holding several headed sections -- Shelf's
+     library page, where Playing, Continue and All games each head a run of tiles. Walking up onto
+     a section's first row brings its heading back into view with it, rather than leaving the
+     heading cut under the top edge. */
+  let reach = near;
+  const sec = axis === "y" ? el.closest(".lib-section") : null;
+  if (sec && sec !== sc && sc.contains(sec)) {
+    const lead = sec.querySelector(FOCUSABLE_SEL);
+    if (lead && near <= offsetWithin(lead, sc, axis) + 1) reach = offsetWithin(sec, sc, axis);
+  }
+
+  if (reach - REVEAL_MARGIN <= 0) return 0;
   if (far + REVEAL_MARGIN >= total) return total;
-  if (near - REVEAL_MARGIN < viewNear) return near - REVEAL_MARGIN;
+  if (reach - REVEAL_MARGIN < viewNear) return reach - REVEAL_MARGIN;
   if (far + REVEAL_MARGIN > viewFar) return far + REVEAL_MARGIN - size;
   return null;
 }
@@ -456,9 +505,30 @@ function navMove(dir, within) {
      exhausted the wrap below takes over, and only if there is nothing to wrap to
      does it fall back to the whole scope (which is what lets a theme put a
      sidebar to the left of a grid and have Right cross into it). */
+  /* Rows scrolled out of a list are clipped, not gone: their rects are still real, and they sit
+     wherever the scroll put them -- in the Loungepad theme, above the grid where the recents row
+     also is once it has slid off (it used to park over the top of the grid, with the hidden rows
+     directly behind it). Two rules keep the engine from walking into them.
+
+     A list is walked to its end before the highlight leaves it (samePlace, below). Holding Up
+     through the grid, the scroll's glide trails the highlight by a few dozen pixels, and that lag
+     was enough for a recents tile to score nearer than the next row up: the highlight jumped to
+     the recents for one step, the row slid down, and the next Up dived back into a hidden row.
+
+     And a thing scrolled wholly out of its own list cannot be reached from outside that list:
+     from the recents, the grid rows hidden behind them were "above" and took the highlight. */
+  const scrollerOf = scrollerLookup();
+  const curScroller = scrollerOf(cur);
+  const reachable = (el) => {
+    const sc = scrollerOf(el);
+    if (!sc || sc === curScroller) return true;
+    const r = el.getBoundingClientRect(), v = sc.getBoundingClientRect();
+    return r.bottom > v.top && r.top < v.bottom && r.right > v.left && r.left < v.right;
+  };
+
   // data-nav-skip: can hold the highlight, but is never walked to. The search box is reached with
   // View or from the Filter menu only -- Up off the top row landing in it read as a mistake.
-  const walkable = list.filter(el => !el.hasAttribute("data-nav-skip"));
+  const walkable = list.filter(el => !el.hasAttribute("data-nav-skip") && (el === cur || reachable(el)));
   let pool = walkable.filter(el => el !== cur);
   if (horizontal) {
     const sameBand = pool.filter(el => {
@@ -477,7 +547,8 @@ function navMove(dir, within) {
     return best;
   };
 
-  let best = pick(pool);
+  let best = curScroller ? pick(pool.filter(el => scrollerOf(el) === curScroller)) : null;
+  if (!best) best = pick(pool);
   if (!best) best = Nav.wrapTarget(walkable, cur, dir);
   if (!best && pool.length !== walkable.length - 1) best = pick(walkable.filter(el => el !== cur));
   if (!best) return false;
@@ -516,6 +587,18 @@ function paneMove(dir, inPane) {
 }
 
 /*
+ * Up and Down in a list come round at the ends: Up off the first item lands on the last, Down off
+ * the last on the first (the user's call, Oct 1 2026). Every menu, sheet and category list steps
+ * through here, or through paneMove, which it is; Left and Right already wrap their line in nav.js.
+ * The library grid and a game's page are screens rather than lists, and keep their ends -- falling
+ * off the bottom of a library onto its top bar is the disorientation nav.js was written to avoid.
+ */
+function listMove(dir, within) {
+  if (dir !== "Up" && dir !== "Down") return navMove(dir, within);
+  return paneMove(dir, within || (() => true));
+}
+
+/*
  * Set by a vertical wheel -- which is what the right stick sends -- and consumed by the next
  * D-pad step. Only a WHEEL counts: revealFocus scrolls smoothly, so during a fast run of Down
  * presses the highlight is briefly half out of view on every step, and treating that as "the
@@ -544,8 +627,9 @@ function wheelHome() {
   const cur = focusEl(scope);
   const around = cur && scrollParentOf(cur, "y");
   if (around) return around;
-  if (view === "library") return $("gridScroll");
+  if (view === "library") return libraryScroller();
   if (view === "settings") return $("settingsScroll");
+  if (view === "onboarding") return $("onbRows");
   return null;
 }
 
@@ -694,6 +778,7 @@ function paintNav() {
   // page, in the backdrop (Loungepad) and in the page's own art (Shelf) both.
   const override = focusedMediaOverride();
   if (view === "detail") { updateMediaScroll(); updateDetailArt(g, override); renderDetailLegend(g); }
+  else if (view === "library") renderLibraryLegend();
   scheduleBackdrop(g, override);
   updateFocusDetail(g);
   syncTrailers();
@@ -717,7 +802,7 @@ function updateFocusDetail(g) {
 function focusedGame() {
   if (view === "detail") return gameById(detailGameId);
   // Settings sits over the library, so the picture behind it stays the library's own.
-  const el = focusEl(view === "settings" || view === "stats" ? document.getElementById("screen-library") : undefined);
+  const el = focusEl(view === "settings" || view === "stats" || view === "onboarding" ? document.getElementById("screen-library") : undefined);
   return el && el.dataset.gameId ? gameById(el.dataset.gameId) : null;
 }
 
@@ -1102,9 +1187,16 @@ function watchScrolled(scroller) {
  * every one on the page when the pad in hand changes without anything being re-rendered.
  * `padOnly` marks a slot that is about a gamepad whatever is in use: the button rows in Settings.
  */
-function slot(btn, padOnly) {
-  return `<span class="btn-slot" data-btn="${esc(canonBtn(btn))}"${padOnly ? ' data-pad=""' : ""}>` +
-    btnIcon(btn, padOnly ? padFamily : inputFamily) + `</span>`;
+function slot(btn, padOnly, kb) {
+  return `<span class="btn-slot" data-btn="${esc(canonBtn(btn))}"${padOnly ? ' data-pad=""' : ""}${kb ? ` data-kb="${esc(kb)}"` : ""}>` +
+    slotIcon(btn, padOnly ? padFamily : inputFamily, kb) + `</span>`;
+}
+
+/* `kb` is the key a slot stands for on a keyboard when that is not the button's usual key: on the
+   library Tab is Settings, ` is Stats and Ctrl is a game's options (LIBRARY_KEYCAPS), where
+   everywhere else Menu is M, LB is [ and Y is Y. A pad draws the button whatever kb says. */
+function slotIcon(btn, family, kb) {
+  return kb && family === "keyboard" ? keycap(kb) : btnIcon(btn, family);
 }
 
 /** "LS + RS" as pictures, for a settings value. */
@@ -1121,7 +1213,7 @@ function hintHtml(text) {
 /** Redraw every slot for the families now in use. */
 function paintButtons(root) {
   (root || document).querySelectorAll("[data-btn]").forEach(el => {
-    el.innerHTML = btnIcon(el.dataset.btn, "pad" in el.dataset ? padFamily : inputFamily);
+    el.innerHTML = slotIcon(el.dataset.btn, "pad" in el.dataset ? padFamily : inputFamily, el.dataset.kb);
   });
 }
 
@@ -1142,16 +1234,36 @@ function setInputFamily(family) {
 }
 
 /** One entry of a legend: the button, then what it does. Clickable, so a mouse can press it. */
-function legendItem(btn, label) {
+function legendItem(btn, label, kb) {
   const press = /^Dpad/.test(btn) ? "" : ` data-press="${esc(canonBtn(btn))}"`;
-  return `<div class="legend-item"${press}>${slot(btn)}<span>${esc(label)}</span></div>`;
+  return `<div class="legend-item"${press}>${slot(btn, false, kb)}<span>${esc(label)}</span></div>`;
 }
 
 const LIBRARY_LEGEND = [["A", "Launch"], ["X", "Filter"], ["Y", "Options"], ["View", "Search"], ["LB", "Stats"], ["Menu", "Settings"]];
 
+/* The keyboard on the library, with nothing over it (the user's call, Oct 1 2026): Enter launches, X
+   filters, Ctrl opens a game's options, / searches, Tab opens Settings and ` opens Stats -- the keys
+   the legend names, rather than Y, M and [, which all still work. Esc is Back here as it is on every
+   other screen: it was Settings for a day, and one key that always cancels was worth more. Ctrl is
+   handled on its own (ctrlTap, by the keymap), because it is a modifier as well as a key. */
+const LIBRARY_KEYS = { Tab: "Menu", Backquote: "LB", "`": "LB" };
+const LIBRARY_KEYCAPS = { Menu: "Tab", LB: "`", Y: "Ctrl" };
+
+function libraryTakesKeys() {
+  return view === "library" && !overlayOpen() && !searchOpen && !overlayMode
+    && !radialOpen && !radialSub && !actionWheelOpen && !ingameOpen;
+}
+
+/* B only appears while a search is standing, because that is when it does something worth saying:
+   from the grid it goes back to the top, and from the top it clears the search. Rebuilt on every
+   highlight move, so it is only written when it changes. */
 function renderLibraryLegend() {
   const el = $("libraryFoot");
-  if (el) el.innerHTML = foot(...LIBRARY_LEGEND);
+  if (!el) return;
+  const items = [...LIBRARY_LEGEND];
+  if (F.search) items.splice(1, 0, ["B", atLibraryTop(focusEl(document.getElementById("screen-library"))) ? "Clear search" : "Back"]);
+  const html = foot(...items.map(([b, label]) => [b, label, LIBRARY_KEYCAPS[b]]));
+  if (el.__html !== html) { el.innerHTML = html; el.__html = html; }
 }
 
 function renderDetailLegend(g) {
@@ -1205,12 +1317,16 @@ function renderMenu(listEl, footEl, items, idx, footHtml, onHover, onClick) {
     // for exactly this, and showing both says the same thing twice.
     const lead = r.thumb
       ? `<div class="ov-thumb${r.thumbIsIcon ? " is-icon" : ""}" style="background-image:url('${r.thumb}')"></div>`
+      : r.swatch ? `<span class="swatch ov-swatch" style="background:${esc(r.swatch)}"></span>`
       : iconSvg(r.icon);
+    // `html` is a label the caller built itself -- button pictures for a combo -- and is trusted;
+    // everything else is text.
+    const name = r.html || esc(r.label ?? r.name);
     // The subtitle goes UNDER the label, never beside it. Side by side, a long subtitle took the
     // row's width and squeezed the label down to its first two letters -- "Install" read "In…".
     const text = r.sub
-      ? `<span class="ov-text"><span class="ov-name">${esc(r.label ?? r.name)}</span><span class="ov-sub">${esc(r.sub)}</span></span>`
-      : `<span>${esc(r.label ?? r.name)}</span>`;
+      ? `<span class="ov-text"><span class="ov-name">${name}</span><span class="ov-sub">${esc(r.sub)}</span></span>`
+      : `<span>${name}</span>`;
     if (r.sub) el.classList.add("two-line");
     el.innerHTML = `<div class="ov-label">${lead}${text}</div>${right}`;
     el.addEventListener("mouseenter", () => { if (hoverEnabled()) onHover(i); });
@@ -1244,9 +1360,10 @@ function watchOverflow(el) {
   markOverflow(el);
 }
 
-/** Step an overlay's index by moving through the DOM, so the list need not be a column. */
+/** Step an overlay's index by moving through the DOM, so the list need not be a column. The ends
+    come round (listMove). */
 function menuStep(dir, idx, count) {
-  if (!navMove(dir)) return idx;
+  if (!listMove(dir)) return idx;
   const el = focusEl();
   const next = el && el.dataset.rowIndex !== undefined ? parseInt(el.dataset.rowIndex, 10) : idx;
   return Math.max(0, Math.min(count - 1, next));
@@ -1254,7 +1371,7 @@ function menuStep(dir, idx, count) {
 
 /** Standard footer hints: [button, label] pairs, drawn for the pad in hand. */
 function foot(...pairs) {
-  return pairs.map(([btn, label]) => legendItem(btn, label)).join("");
+  return pairs.map(([btn, label, kb]) => legendItem(btn, label, kb)).join("");
 }
 
 /* overlays */
@@ -1277,6 +1394,8 @@ let actState = null;                     // { gameId, idx, sessions }
 let sessionState = null;                 // { session, samples, unlocks, from }
 let dayState = null;                     // { key, idx } -- the Stats overview's Day sheet
 let formState = null;                    // { kind, kicker, title, sub, rows, idx, onClose } -- see openForm
+// The first-run setup (onboarding.js), a view like Settings. Declared here for the same reason.
+let onboardState = null;                 // { step, from, info, vortex, pinPoll } -- see openOnboarding
 let statsUi = { tab: "overview", pane: "nav", idx: 0, period: "30d", achSort: "progress", from: "library", day: null };
 let statsData = { sessions: null, sources: null, ach: null };
 
@@ -2096,7 +2215,9 @@ function syncTrailers() {
   // Nothing plays anywhere behind a game, in a hidden window or under the text field. The option
   // and the screens that are not about a game only silence the films the page plays on its own;
   // the viewer's film was asked for, and plays.
-  const hard = S.gameRunning || overlayMode || document.visibilityState !== "visible" || inputOpen;
+  // Resting counts as hidden: the screen is dark and a trailer's sound would carry on into the room.
+  const resting = !!(S.rest && S.rest.phase && S.rest.phase !== "awake");
+  const hard = S.gameRunning || overlayMode || document.visibilityState !== "visible" || inputOpen || resting;
   const quiet = hard || mode === "off" || !!modsState || guideOpen || !!mediaView;
 
   const inBackdrop = libraryCanHostTrailers();
@@ -2599,7 +2720,9 @@ function renderLibrary() {
   gridRows = rows;
   // Not only from revealFocus: scrolling with the wheel never moves the pad focus, and the top
   // fade still has to come on.
-  watchScrolled($("gridScroll"));
+  const pageScroll = libraryScroller();
+  const keepTop = pageScroll.scrollTop;
+  watchScrolled(pageScroll);
 
   // Games, not entries: a game owned on two stores is one title.
   const titles = collapseEditions(visibleGames()).length;
@@ -2647,9 +2770,9 @@ function renderLibrary() {
   // Grid. Emptying a scroller snaps its scrollTop to 0, and this runs on every state push -- the
   // end of a scan, the end of a metadata pass, a favourite toggled -- so mid-browse the rows
   // jumped down to the top and the reveal glided them back up to the highlight. Hold the position
-  // across the rebuild; revealFocus moves it from there only if it has to.
+  // across the rebuild; revealFocus moves it from there only if it has to. In Shelf that is the
+  // page's position, which the emptied grid (and the emptied row above) would clamp just the same.
   const scroll = $("gridScroll");
-  const keepTop = scroll.scrollTop;
   scroll.innerHTML = "";
   if (total === 0) {
     const note = document.createElement("div");
@@ -2657,7 +2780,7 @@ function renderLibrary() {
     note.innerHTML = S.scanning
       ? "Scanning your Steam, Epic, GOG and Xbox libraries and your ROM folders…"
       : F.search
-        ? `No games match “${esc(F.search)}”. Press ${slot("View")} to change the search, or ${slot("B")} while typing to clear it.`
+        ? `No games match “${esc(F.search)}”. Press ${slot("View")} to change the search, or ${slot("B")} to clear it.`
       : (visibleGames().length
         ? `Nothing matches the current filter. Press ${slot("X")} to change it, or ${slot("Y")} to reset.`
         : "No games found yet. Use the <b>+ Add game</b> tile below, or rescan from <b>Settings → Library</b>.");
@@ -2676,7 +2799,7 @@ function renderLibrary() {
     });
     scroll.appendChild(rowDiv);
   });
-  scroll.scrollTop = keepTop;
+  pageScroll.scrollTop = keepTop;
 
   clampFocus();
   updateLibraryFocus();
@@ -2754,21 +2877,43 @@ function libraryInput(btn) {
     // Settings lost its tab, so this is the way in. Menu is the pad's ☰ button; holding it is
     // still the keyboard toggle, and only a tap gets here.
     case "Menu": switchView("settings"); break;
-    // B walks back out of the grid: to its top, then up to the carousel.
+    // B walks back to how the library opened: the first press goes up to the recents (Shelf's
+    // page scrolls back to the top, the Loungepad theme slides them back down), the next one
+    // clears a standing search. Pressed
+    // repeatedly it always ends on the whole library with the highlight at the top.
     case "B": {
-      const list = Nav.focusables(Nav.activeScope());
+      const top = libraryTop();
       const cur = focusEl();
-      if (!cur || !list.length) break;
-      const inGrid = !!cur.closest("#gridScroll");
-      if (inGrid) {
-        const first = list.find(el => el.closest("#gridScroll"));
-        if (first && first !== cur) { setFocusEl(first); afterFocusMove(); break; }
+      if (top && !atLibraryTop(cur)) {
+        setFocusEl(top);
+        // The grid goes back to its first row too, or the peek under the recents would be
+        // showing wherever the highlight had got to. In Shelf this is the page going to the top.
+        const grid = libraryScroller();
+        if (grid && grid.scrollTop > 0) animateScroll(grid, "y", 0);
+        afterFocusMove();
+      } else if (F.search) {
+        setSearch("");
+        renderLibrary();
+        pulse($("gridScroll"));
       }
-      const above = list.find(el => el.closest("#continueRow"));
-      if (above) { setFocusEl(above); afterFocusMove(); }
+      renderLibraryLegend();
       break;
     }
   }
+}
+
+/** Where B takes the highlight: the first recent game, or the first tile when there are none. */
+function libraryTop() {
+  const list = Nav.focusables(document.getElementById("screen-library"));
+  return list.find(el => el.closest("#continueRow")) || list.find(el => el.closest("#gridScroll")) || null;
+}
+
+/** The highlight is already as far back as B takes it: on the recents (any of them), on the
+    running game's card above them, or on the first tile of a library with no recents. */
+function atLibraryTop(cur) {
+  if (!cur) return false;
+  if (cur.closest("#continueRow, #playingSection")) return true;
+  return cur === libraryTop();
 }
 
 function launchGame(g) {
@@ -3378,17 +3523,18 @@ function detailInput(btn) {
 
 /* ============================== settings ============================== */
 
+function displayLabel(d) {
+  if (!d) return "None";
+  const num = d.deviceName.replace(/\D/g, "");
+  return `${d.friendlyName} · ${d.width}×${d.height}${d.isPrimary ? " · PRIMARY" : ""} (Display ${num})`;
+}
+
 function allSettingsRows() {
   const s = S.settings;
   if (!s) return [];
   // applyTheme here as well as on the host's state push: the push is 350ms of debounce away, and
   // the accent has to move with the ◂ ▸ that changed it or the picker looks broken.
   const set = (fn) => { fn(); applyTheme(); scheduleSave(); renderSettings(); };
-  const displayLabel = (d) => {
-    if (!d) return "None";
-    const num = d.deviceName.replace(/\D/g, "");
-    return `${d.friendlyName} · ${d.width}×${d.height}${d.isPrimary ? " · PRIMARY" : ""} (Display ${num})`;
-  };
 
   const rows = [];
   // Appearance, all of it per theme: the theme, then its look, its motion, and last the options
@@ -3427,6 +3573,9 @@ function allSettingsRows() {
     name: "TV display", hint: "Loungepad opens here, and games are steered onto it",
     type: "select",
     value: displayLabel(S.displays.find(d => d.deviceName === s.tvDeviceName) || null),
+    choices: S.displays.map(d => ({ value: d.deviceName, label: displayLabel(d) })),
+    current: s.tvDeviceName,
+    pick: (v) => set(() => { s.tvDeviceName = v; }),
     adjust: (dir) => set(() => {
       if (!S.displays.length) return;
       let i = S.displays.findIndex(d => d.deviceName === s.tvDeviceName);
@@ -3483,38 +3632,7 @@ function allSettingsRows() {
       v => set(() => s.touchpadScrollSpeed = v), v => v.toFixed(2) + "×",
       "How far two fingers scroll. A quick flick keeps the page coasting after they lift"));
   }
-  /* Who else acts on the Xbox button: Windows' Game Bar and Xbox mode, and Steam. The host reads
-     all three (see WindowsGuide and SteamGuide). Their switches are the WINDOWS AND STEAM rows at
-     the end of this category; the warning here only names what is still on. */
-  const tapHold = s.menuComboMode !== "DoubleTap";
-  const xb = S.xboxButton || {};
-  const usesGuide = /\bGuide\b/.test(s.minimizeCombo || "");
-  const takers = [];
-  if (usesGuide && xb.gameBar === true) takers.push("Xbox Game Bar");
-  if (usesGuide && tapHold && xb.xboxMode === true) takers.push("Windows' Xbox mode");
-  if (usesGuide && xb.steam === true) takers.push("Steam");
-  const listed = takers.length < 2 ? takers.join("") : takers.slice(0, -1).join(", ") + " and " + takers[takers.length - 1];
-  const comboWarn =
-    takers.length ?
-      `${listed} also ${takers.length === 1 ? "takes" : "take"} this button` +
-      (takers.includes("Windows' Xbox mode") ? ", and Xbox mode opens Task View when it is held" : "") +
-      `. Turn ${takers.length === 1 ? "it" : "them"} off under Windows and Steam, at the end of this list.`
-    : s.minimizeCombo === "View + Menu" ?
-      (xb.gameBar === true ? "Game Bar treats View + Menu as the Xbox button in apps; turn that off under Windows and Steam, at the end of this list. " : "") +
-      "Steam binds View + Menu (Back + Start) to open Big Picture. Disable it in Steam: Settings > " +
-      "Controller > Guide Button Chord Layout, or turn off Steam Input for this controller. Restart " +
-      "Steam afterwards."
-    : null;
-
-  rows.push(buttonRow("Menu combo", MINIMIZE_COMBOS, () => s.minimizeCombo, v => set(() => s.minimizeCombo = v),
-    "Opens the Power Wheel and brings Loungepad back, from anywhere, a game included",
-    comboWarn));
-  rows.push(cycleRow("Combo gesture", ["TapHold", "DoubleTap"], () => (s.menuComboMode === "DoubleTap" ? "DoubleTap" : "TapHold"),
-    v => set(() => s.menuComboMode = v),
-    tapHold
-      ? "A tap opens the Power Wheel, and another tap closes it. Hold for half a second to show or hide Loungepad, or for the in-game menu while a game runs"
-      : "A tap shows or hides Loungepad once it is sure no second tap is coming; a quick double tap opens the Power Wheel",
-    null, { TapHold: "Tap: Power Wheel · Hold: Loungepad", DoubleTap: "Tap: Loungepad · Double tap: Power Wheel" }));
+  rows.push(...menuComboRows(s, set));
 
   rows.push(buttonRow("Screenshot button", SCREENSHOT_COMBOS, () => s.screenshotCombo, v => set(() => s.screenshotCombo = v),
     "Taps F12, Steam's screenshot key. Works while a game is focused, which the Xbox Share button cannot manage, " +
@@ -3523,45 +3641,8 @@ function allSettingsRows() {
       ? "Same as the menu combo above, so one press does both. Pick a different one."
       : null));
 
-  /* WINDOWS AND STEAM: the three other things that react to the Xbox button, each a switch that
-     shows what is set right now and changes it on the spot, plus one press for all of them. The
-     host writes Windows' two in the registry and Steam's in its own settings file, which means
-     closing and reopening Steam; see xboxButtonSet on the host. */
   rows.push({ section: "WINDOWS AND STEAM", cat: "input" });
-  const hasXboxMode = xb.xboxMode === true || xb.xboxMode === false;
-  const hasSteam = xb.steam === true || xb.steam === false;
-  const stillOn = [
-    xb.gameBar === true ? "Xbox Game Bar stops opening on the Xbox button, and stops treating View + Menu as one" : null,
-    xb.xboxMode === true ? "Windows' Xbox mode is turned off, so a hold no longer opens Task View" : null,
-    xb.steam === true ? `Steam stops opening on the Xbox button and drops its Guide button shortcuts${xb.steamRunning ? "; Steam closes and reopens for this" : ""}` : null,
-  ].filter(Boolean);
-  if (stillOn.length) rows.push({
-    name: "Give Loungepad the Xbox button",
-    hint: "Turns off everything below that still reacts to it, in one go",
-    type: "action", label: "Turn all off",
-    action: () => {
-      if (xb.steam === true && xb.steamRunning && S.gameRunning) { toast("Close the game first: Steam has to restart for this"); return; }
-      askConfirm({
-        title: "Give Loungepad the Xbox button?",
-        body: stillOn.join(". ") + ". Each can be turned back on here.",
-        yesLabel: "Turn all off", icon: "controller", danger: false,
-        onYes: () => send({ cmd: "xboxButtonAllOff" }),
-      });
-    },
-  });
-  rows.push(toggleRow("Xbox Game Bar on the controller",
-    "The Xbox button opens Game Bar, and View + Menu stands in for the Xbox button in apps. Win + G opens Game Bar either way",
-    () => xb.gameBar === true, v => setXboxButton("gameBar", v)));
-  if (hasXboxMode) rows.push(toggleRow("Windows Xbox mode",
-    "Windows' own full-screen gaming home. While it is on, holding the Xbox button opens Task View, on top of the hold that brings Loungepad back",
-    () => xb.xboxMode === true, v => setXboxButton("xboxMode", v)));
-  if (hasSteam) {
-    const steamHint = "Steam's “Guide Button Focuses Steam” and its Guide button shortcuts, such as Guide + a button for Big Picture or the keyboard" +
-      (xb.steamRunning ? ". Steam closes and reopens to change this" : "");
-    rows.push(xb.steamBusy
-      ? { name: "Steam on the Xbox button", hint: steamHint, type: "action", label: "Restarting Steam…", action: () => {} }
-      : toggleRow("Steam on the Xbox button", steamHint, () => xb.steam === true, v => setXboxButton("steam", v)));
-  }
+  rows.push(...xboxButtonRows());
 
   rows.push({ section: "KEYBOARD", cat: "keyboard" });
   rows.push(cycleRow("Keyboard app", ["Builtin", "TabTip", "Osk"], () => s.keyboardApp, v => set(() => s.keyboardApp = v),
@@ -3573,16 +3654,26 @@ function allSettingsRows() {
         "needs a real mouse. Both also take the foreground, so the field you were typing into can " +
         "lose its caret.",
     KEYBOARD_APP_LABELS));
-  rows.push(buttonRow("Keyboard button", ["Start", "Back", "LS", "RS", "LB", "RB"], () => s.keyboardToggleButton, v => set(() => s.keyboardToggleButton = v),
-    "Shows and hides the keyboard from anywhere in the launcher"));
+  rows.push(buttonRow("Keyboard button", ["Back", "Start", "LS", "RS", "LB", "RB"], () => s.keyboardToggleButton, v => set(() => s.keyboardToggleButton = v),
+    s.keyboardToggleButton === "Back"
+      ? "Shows and hides the keyboard from anywhere. On the library [[View]] opens search instead, which brings the keyboard up with it"
+      : "Shows and hides the keyboard from anywhere in the launcher"));
   // Press is quicker and is the default. Hold exists because it leaves the tap free, which is the
-  // only way to keep a button that already does something inside the launcher.
+  // only way to keep a button that already does something inside the launcher. View is the one
+  // exception that needs neither: the library claims it for search (publishClaims), and search
+  // raises the keyboard anyway. What a Press does take outright is Menu; and a combo the toggle
+  // button is part of brings the keyboard up as well, since the press fires before the combo is whole.
+  const pressMode = (s.keyboardToggleMode || "Press") !== "Hold";
+  const toggleBtn = canonBtn(s.keyboardToggleButton || "Back");
+  const sharedCombo = [["menu combo", s.minimizeCombo], ["screenshot button", s.screenshotCombo]]
+    .find(([, c]) => c && c !== "Off" && c.includes("+") && c.split("+").map(p => canonBtn(p.trim())).includes(toggleBtn));
   rows.push(cycleRow("Opens on", ["Press", "Hold"], () => s.keyboardToggleMode, v => set(() => s.keyboardToggleMode = v),
-    (s.keyboardToggleMode || "Press") === "Hold"
-      ? "Hold the button down. A tap still does whatever that button normally does"
-      : "One tap. The button does nothing else while this is set",
-    (s.keyboardToggleMode || "Press") !== "Hold" && (s.keyboardToggleButton === "Start" || s.keyboardToggleButton === "Back")
-      ? `${s.keyboardToggleButton === "Start" ? "[[Menu]] opens Settings from the library" : "[[View]] opens search on the library"}, and on Press the keyboard takes it outright — pick another button, or switch to Hold.`
+    pressMode
+      ? "One tap. The button does nothing else while this is set"
+      : "Hold the button down. A tap still does whatever that button normally does",
+    !pressMode ? null
+      : toggleBtn === "Menu" ? "[[Menu]] opens Settings from the library, and on Press the keyboard takes it outright — pick another button, or switch to Hold."
+      : sharedCombo ? `[[${toggleBtn}]] is also part of the ${sharedCombo[0]}, so on Press the keyboard comes up every time that combo is used — pick another button, or switch to Hold.`
       : null,
     { Press: "Press", Hold: "Hold" }));
   if ((s.keyboardToggleMode || "Press") === "Hold")
@@ -3594,7 +3685,7 @@ function allSettingsRows() {
   rows.push({ section: "LOUNGEPAD KEYBOARD", cat: "keyboard" });
   rows.push(sliderRow("Keyboard size", () => s.keyboardScale, 0.6, 1.6, 0.05,
     v => set(() => s.keyboardScale = v), v => Math.round(v * 100) + "%",
-    "Scales the keys up or down from the size Loungepad picks for the TV"));
+    "Scales the keys up or down from the size Loungepad picks for the TV. Also the − and + beside the gear on the keyboard"));
   // The same five switches are on the keyboard itself, behind the gear at the right end of its
   // suggestion bar. A change made there arrives here as a keyboardOptions message.
   rows.push(toggleRow("Word suggestions",
@@ -3636,47 +3727,8 @@ function allSettingsRows() {
     action: () => send({ cmd: "addManual" }),
   });
 
-  // One row per ROM folder and one per emulator, each opening its own options list; the two
-  // "Add" rows are the way in. A folder with no emulator, or a RetroArch folder with no core,
-  // says so on its row: its games are in the library and cannot start, and that is the one
-  // thing worth a warning here.
   rows.push({ section: "EMULATORS & ROM FOLDERS", cat: "library" });
-  rows.push(toggleRow("Find emulators and ROMs automatically",
-    "Every scan looks for installed emulators in the usual places, then for games: RetroArch's playlists, an Emulation\\roms layout, and folders named after a system. Anything you remove stays removed",
-    () => s.detectEmulators !== false, v => set(() => s.detectEmulators = v)));
-  const em = S.emulation || { emulators: [], romFolders: [], platforms: [] };
-  (em.romFolders || []).forEach(f => {
-    const p = platformDef(f.platformId);
-    const emu = emulatorById(f.emulatorId);
-    const n = S.games.filter(g => g.romFolderId === f.id).length;
-    const bits = [`${n} game${n === 1 ? "" : "s"}`, emu ? emu.name : "no emulator"];
-    if (usesCore(emu)) bits.push(f.core ? coreName(f.core) : "no core");
-    if (f.detected) bits.push("found automatically");
-    // A playlist is named for its file; the folder its games are in is the games' business.
-    const where = f.playlist ? `RetroArch playlist · ${f.path.split(/[\\/]/).pop()}` : f.path;
-    rows.push({
-      name: p ? p.name : f.platformId, hint: `${where} · ${bits.join(" · ")}`,
-      warn: !emu ? "No emulator is set for this folder, so its games cannot start yet"
-          : usesCore(emu) && !f.core ? `${emu.name} needs a core for this system before its games can start` : undefined,
-      type: "action", label: "Options",
-      action: () => openRomFolderOptions(f),
-    });
-  });
-  rows.push({
-    name: "Add a ROM folder", hint: "One folder per system. You will be asked which system it is and which emulator runs it; the folder's name is a first guess",
-    type: "action", label: "Add",
-    action: () => send({ cmd: "romFolderPick" }),
-  });
-  (em.emulators || []).forEach(e => rows.push({
-    name: e.name, hint: `${e.exePath} · ${e.args || '"{rom}"'}${e.detected ? " · found automatically" : ""}`,
-    type: "action", label: "Options",
-    action: () => openEmulatorOptions(e),
-  }));
-  rows.push({
-    name: "Add an emulator", hint: "For one the scan did not find: point to its .exe. RetroArch, Dolphin, PCSX2, DuckStation, PPSSPP, mGBA, MAME and the other common ones are recognised and set up on their own",
-    type: "action", label: "Add",
-    action: () => send({ cmd: "emuAdd" }),
-  });
+  rows.push(...emulationRows(s, set));
 
   // The manager is one program for the whole library, so its row is here; each game's own mods
   // are under that game's Options. The row is where "is it installed, and where" gets answered
@@ -3700,16 +3752,7 @@ function allSettingsRows() {
 
   // Every store in one place: the accounts and switches first, the optional keys after them.
   rows.push({ section: "STORES & LAUNCHERS", cat: "library" });
-  rows.push(toggleRow("Steam: show games you own but haven't installed", steamAccountHint(),
-    () => !!s.steamShowOwned, v => set(() => s.steamShowOwned = v)));
-  rows.push(storeRow("epic", "Epic Games account",
-    "Sign in to list every game you own on the Epic Games Store. Anything not installed shows greyed out and installs from here"));
-  rows.push(storeRow("gog", "GOG account",
-    "Sign in to list every game you own on GOG. Installs go through GOG Galaxy when it is here, and through gog.com when it is not"));
-  rows.push(storeRow("xbox", "Xbox account",
-    "Sign in with your Microsoft account to list the PC games on your Xbox profile — the ones it has seen you play"));
-  rows.push(toggleRow("Show the PC Game Pass catalogue", gamePassHint(),
-    () => !!s.gamePassCatalog, v => set(() => s.gamePassCatalog = v)));
+  rows.push(...storeAccountRows(s, set));
   rows.push(secretRow("Steam Web API key", s,
     "Optional. Only needed if your Steam profile keeps its game details private. Free from steamcommunity.com/dev/apikey — any domain name will do",
     () => s.steamApiKey, v => set(() => s.steamApiKey = v)));
@@ -3780,13 +3823,67 @@ function allSettingsRows() {
     type: "action", label: "Open", action: () => openPlayniteImport(),
   });
 
-  rows.push({ section: "STARTUP, WAKE & LOCK SCREEN", cat: "general" });
+  /* REST & SLEEP: a console's rest mode. The timers and the two switches are settings; the rows
+     after them are read off Windows (S.rest.wake, see WakeInfo on the host): which controller
+     devices may wake the PC from sleep, one Allow per device that could, and whether a wake lands
+     on the lock screen. Both changes are elevated on the host, so each costs one UAC prompt. */
+  rows.push({ section: "REST & SLEEP", cat: "general" });
+  const restAfter = typeof s.restAfterMinutes === "number" ? s.restAfterMinutes : 60;
+  const sleepAfter = typeof s.sleepAfterRestMinutes === "number" ? s.sleepAfterRestMinutes : -1;
+  const wake = S.rest && S.rest.wake ? S.rest.wake : null;
+  rows.push(cycleRow("Rest after", REST_AFTER, () => restAfter, v => set(() => s.restAfterMinutes = v),
+    "With nothing touched on the pad, keyboard or mouse for this long, the TV goes dark and the game is " +
+    "paused where it stands. A button on the pad, a key or a mouse click brings both back; moving the mouse or " +
+    "a stick never does. The Power Wheel rests the PC at once",
+    null, REST_AFTER_LABELS));
+  if (restAfter > 0)
+    rows.push(toggleRow("Also while a game is running",
+      "Like a console: this long without a press mid-game means nobody is playing. Off if you leave games running by themselves",
+      () => s.restDuringGame !== false, v => set(() => s.restDuringGame = v)));
+  rows.push(toggleRow("Pause the game while resting",
+    "Freezes the game's processes, the way PlayState does, so it draws and computes nothing until you are back and " +
+    "picks up exactly where it was. Off leaves it running to a dark screen: for an online game, or one whose anti-cheat objects",
+    () => s.restPausesGame !== false, v => set(() => s.restPausesGame = v)));
+  rows.push(cycleRow("Then sleep the PC after", SLEEP_AFTER, () => sleepAfter, v => set(() => s.sleepAfterRestMinutes = v),
+    "Resting keeps the PC on at a desktop's idle draw; sleep takes it to a few watts and comes back where it left off. " +
+    "Off unless you turn it on, because what can wake a sleeping PC is the row below, and on many desktops that is not the pad",
+    wake && !wake.canSleep && sleepAfter >= 0 ? "Windows says this PC cannot sleep, so resting is as far as it goes." : null,
+    SLEEP_AFTER_LABELS));
+  // Both on demand, for trying the timers' effect without waiting for them. Rest needs no
+  // confirm (one press brings it back); sleep does, because what brings THAT back is the row
+  // below, and on many a desktop that is not the pad.
+  rows.push({
+    name: "Sleep the PC now",
+    hint: "Rests first, so the game is frozen and the pad parked, then Windows' own sleep. What wakes it is the row below",
+    type: "action", label: "Sleep",
+    action: () => askConfirm({
+      title: "Put the PC to sleep?",
+      body: "The game is paused where it stands and the PC goes to sleep. It comes back on whatever Windows allows to wake it, which the Rest and sleep rows describe.",
+      yesLabel: "Sleep", icon: "power", danger: false,
+      onYes: () => send({ cmd: "sleepPc" }),
+    }),
+  });
+  rows.push({
+    name: "Rest now",
+    hint: "The TV goes dark and the game is paused where it stands, exactly as the timer would do it. A button, a key or a click brings it back; movement does not",
+    type: "action", label: "Rest",
+    action: () => send({ cmd: "rest" }),
+  });
+  restWakeRows(wake).forEach(r => rows.push(r));
+
+  rows.push({ section: "STARTUP & LOCK SCREEN", cat: "general" });
   rows.push(toggleRow("Launch Loungepad at login", "Registers a startup entry so the launcher is ready after wake or reboot",
     () => s.launchOnStartup, v => set(() => s.launchOnStartup = v)));
   rows.push({
     name: "Couch setup guide", hint: "Gamepad keyboard layout, PIN sign-in, controller wake, auto-start",
     type: "action", label: "Open guide",
     action: () => { guideOpen = true; showOverlay("overlay-guide"); },
+  });
+  rows.push({
+    name: "First-time setup",
+    hint: "The screens a new install opens on: the TV, the look, your stores, emulators, the Xbox button, signing in with the controller. Everything already set stays as it is",
+    type: "action", label: "Run again",
+    action: () => openOnboarding("settings"),
   });
   rows.push({
     name: "Restore default settings",
@@ -3812,6 +3909,229 @@ function allSettingsRows() {
   return rows;
 }
 
+
+/* One row per ROM folder and one per emulator, each opening its own options list; the two "Add"
+   rows are the way in. A folder with no emulator, or a RetroArch folder with no core, says so on
+   its row: its games are in the library and cannot start, and that is the one thing worth a
+   warning here. Settings → Library and the first-run setup's emulator step both list them. */
+function emulationRows(s, set) {
+  const rows = [];
+  rows.push(toggleRow("Find emulators and ROMs automatically",
+    "Every scan looks for installed emulators in the usual places, then for games: RetroArch's playlists, an Emulation\\roms layout, and folders named after a system. Anything you remove stays removed",
+    () => s.detectEmulators !== false, v => set(() => s.detectEmulators = v)));
+  const em = S.emulation || { emulators: [], romFolders: [], platforms: [] };
+  (em.romFolders || []).forEach(f => {
+    const p = platformDef(f.platformId);
+    const emu = emulatorById(f.emulatorId);
+    const n = S.games.filter(g => g.romFolderId === f.id).length;
+    const bits = [`${n} game${n === 1 ? "" : "s"}`, emu ? emu.name : "no emulator"];
+    if (usesCore(emu)) bits.push(f.core ? coreName(f.core) : "no core");
+    if (f.detected) bits.push("found automatically");
+    // A playlist is named for its file; the folder its games are in is the games' business.
+    const where = f.playlist ? `RetroArch playlist · ${f.path.split(/[\\/]/).pop()}` : f.path;
+    rows.push({
+      name: p ? p.name : f.platformId, hint: `${where} · ${bits.join(" · ")}`,
+      warn: !emu ? "No emulator is set for this folder, so its games cannot start yet"
+          : usesCore(emu) && !f.core ? `${emu.name} needs a core for this system before its games can start` : undefined,
+      type: "action", label: "Options",
+      action: () => openRomFolderOptions(f),
+    });
+  });
+  rows.push({
+    name: "Add a ROM folder", hint: "One folder per system. You will be asked which system it is and which emulator runs it; the folder's name is a first guess",
+    type: "action", label: "Add",
+    action: () => send({ cmd: "romFolderPick" }),
+  });
+  (em.emulators || []).forEach(e => rows.push({
+    name: e.name, hint: `${e.exePath} · ${e.args || '"{rom}"'}${e.detected ? " · found automatically" : ""}`,
+    type: "action", label: "Options",
+    action: () => openEmulatorOptions(e),
+  }));
+  rows.push({
+    name: "Add an emulator", hint: "For one the scan did not find: point to its .exe. RetroArch, Dolphin, PCSX2, DuckStation, PPSSPP, mGBA, MAME and the other common ones are recognised and set up on their own",
+    type: "action", label: "Add",
+    action: () => send({ cmd: "emuAdd" }),
+  });
+  return rows;
+}
+
+/* The stores' libraries: Steam's switch, the three sign-ins and the Game Pass catalogue. Settings →
+   Library lists its optional keys after these; the first-run setup's stores step lists only these. */
+function storeAccountRows(s, set) {
+  return [
+    toggleRow("Steam: show games you own but haven't installed", steamAccountHint(),
+      () => !!s.steamShowOwned, v => set(() => s.steamShowOwned = v)),
+    steamSignInRow(),
+    storeRow("epic", "Epic Games account",
+      "Sign in to list every game you own on the Epic Games Store. Anything not installed shows greyed out and installs from here"),
+    storeRow("gog", "GOG account",
+      "Sign in to list every game you own on GOG. Installs go through GOG Galaxy when it is here, and through gog.com when it is not"),
+    storeRow("xbox", "Xbox account",
+      "Sign in with your Microsoft account to list the PC games on your Xbox profile — the ones it has seen you play"),
+    toggleRow("Show the PC Game Pass catalogue", gamePassHint(),
+      () => !!s.gamePassCatalog, v => set(() => s.gamePassCatalog = v)),
+  ];
+}
+
+/* The menu combo and its gesture: Settings → Controller, and the first-run setup's Xbox button step.
+   Who else acts on the Xbox button -- Windows' Game Bar and Xbox mode, and Steam -- is read by the
+   host (see WindowsGuide and SteamGuide); their switches are xboxButtonRows, and the warning here
+   only names what is still on. `where` says where those switches are on the screen asking. */
+function menuComboRows(s, set, where = "under Windows and Steam, at the end of this list") {
+  const tapHold = s.menuComboMode !== "DoubleTap";
+  const xb = S.xboxButton || {};
+  const usesGuide = /\bGuide\b/.test(s.minimizeCombo || "");
+  const takers = [];
+  if (usesGuide && xb.gameBar === true) takers.push("Xbox Game Bar");
+  if (usesGuide && tapHold && xb.xboxMode === true) takers.push("Windows' Xbox mode");
+  if (usesGuide && xb.steam === true) takers.push("Steam");
+  const listed = takers.length < 2 ? takers.join("") : takers.slice(0, -1).join(", ") + " and " + takers[takers.length - 1];
+  const comboWarn =
+    takers.length ?
+      `${listed} also ${takers.length === 1 ? "takes" : "take"} this button` +
+      (takers.includes("Windows' Xbox mode") ? ", and Xbox mode opens Task View when it is held" : "") +
+      `. Turn ${takers.length === 1 ? "it" : "them"} off ${where}.`
+    : s.minimizeCombo === "View + Menu" ?
+      (xb.gameBar === true ? `Game Bar treats View + Menu as the Xbox button in apps; turn that off ${where}. ` : "") +
+      "Steam binds View + Menu (Back + Start) to open Big Picture. Disable it in Steam: Settings > " +
+      "Controller > Guide Button Chord Layout, or turn off Steam Input for this controller. Restart " +
+      "Steam afterwards."
+    : null;
+
+  return [
+    buttonRow("Menu combo", MINIMIZE_COMBOS, () => s.minimizeCombo, v => set(() => s.minimizeCombo = v),
+      "Opens the Power Wheel and brings Loungepad back, from anywhere, a game included",
+      comboWarn),
+    cycleRow("Combo gesture", ["TapHold", "DoubleTap"], () => (s.menuComboMode === "DoubleTap" ? "DoubleTap" : "TapHold"),
+      v => set(() => s.menuComboMode = v),
+      tapHold
+        ? "A tap opens the Power Wheel, and another tap closes it. Hold for half a second to show or hide Loungepad, or for the in-game menu while a game runs"
+        : "A tap shows or hides Loungepad once it is sure no second tap is coming; a quick double tap opens the Power Wheel",
+      null, { TapHold: "Tap: Power Wheel · Hold: Loungepad", DoubleTap: "Tap: Loungepad · Double tap: Power Wheel" }),
+  ];
+}
+
+/* WINDOWS AND STEAM: the three other things that react to the Xbox button, each a switch that
+   shows what is set right now and changes it on the spot, plus one press for all of them. The
+   host writes Windows' two in the registry and Steam's in its own settings file, which means
+   closing and reopening Steam; see xboxButtonSet on the host. Settings → Controller and the
+   first-run setup both list them. */
+function xboxButtonRows() {
+  const xb = S.xboxButton || {};
+  const rows = [];
+  const hasXboxMode = xb.xboxMode === true || xb.xboxMode === false;
+  const hasSteam = xb.steam === true || xb.steam === false;
+  const stillOn = [
+    xb.gameBar === true ? "Xbox Game Bar stops opening on the Xbox button, and stops treating View + Menu as one" : null,
+    xb.xboxMode === true ? "Windows' Xbox mode is turned off, so a hold no longer opens Task View" : null,
+    xb.steam === true ? `Steam stops opening on the Xbox button and drops its Guide button shortcuts${xb.steamRunning ? "; Steam closes and reopens for this" : ""}` : null,
+  ].filter(Boolean);
+  if (stillOn.length) rows.push({
+    name: "Give Loungepad the Xbox button",
+    hint: "Turns off everything below that still reacts to it, in one go",
+    type: "action", label: "Turn all off",
+    action: () => {
+      if (xb.steam === true && xb.steamRunning && S.gameRunning) { toast("Close the game first: Steam has to restart for this"); return; }
+      askConfirm({
+        title: "Give Loungepad the Xbox button?",
+        body: stillOn.join(". ") + ". Each can be turned back on in Settings → Controller.",
+        yesLabel: "Turn all off", icon: "controller", danger: false,
+        onYes: () => send({ cmd: "xboxButtonAllOff" }),
+      });
+    },
+  });
+  rows.push(toggleRow("Xbox Game Bar on the controller",
+    "The Xbox button opens Game Bar, and View + Menu stands in for the Xbox button in apps. Win + G opens Game Bar either way",
+    () => xb.gameBar === true, v => setXboxButton("gameBar", v)));
+  if (hasXboxMode) rows.push(toggleRow("Windows Xbox mode",
+    "Windows' own full-screen gaming home. While it is on, holding the Xbox button opens Task View, on top of the hold that brings Loungepad back",
+    () => xb.xboxMode === true, v => setXboxButton("xboxMode", v)));
+  if (hasSteam) {
+    const steamHint = "Steam's “Guide Button Focuses Steam” and its Guide button shortcuts, such as Guide + a button for Big Picture or the keyboard" +
+      (xb.steamRunning ? ". Steam closes and reopens to change this" : "");
+    rows.push(xb.steamBusy
+      ? { name: "Steam on the Xbox button", hint: steamHint, type: "action", label: "Restarting Steam…", action: () => {} }
+      : toggleRow("Steam on the Xbox button", steamHint, () => xb.steam === true, v => setXboxButton("steam", v)));
+  }
+  return rows;
+}
+
+/* Rest mode's two timers, as the rows offer them. Minutes; 0 is never for the first, and for the
+   second -1 keeps the PC on and 0 sleeps it straight after the screen goes dark. */
+const REST_AFTER = [0, 1, 5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 240];
+const SLEEP_AFTER = [-1, 0, 1, 5, 10, 15, 30, 60, 120, 180, 240];
+const restMinutesLabel = m => (m < 60 ? `${m} min` : m % 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${m / 60} h`);
+const REST_AFTER_LABELS = Object.fromEntries(REST_AFTER.map(m => [m, m === 0 ? "Never" : restMinutesLabel(m)]));
+const SLEEP_AFTER_LABELS = Object.fromEntries(SLEEP_AFTER.map(m => [m, m < 0 ? "Keep the PC on" : m === 0 ? "Straight away" : restMinutesLabel(m)]));
+
+/* What can wake this PC from sleep, as Windows reports it, and the sign-in that stands in the way.
+   The one thing no program can do is make a controller wake a sleeping PC: that is the device's
+   driver offering "Allow this device to wake the computer", and on a desktop in S3 sleep the
+   Bluetooth radio usually does not, so a Bluetooth pad has no route at all; the Xbox Wireless
+   Adapter and some wired pads do. The sentence names which case this PC is, and every device that
+   could be allowed gets an Allow of its own. Rest mode itself needs none of this: the screen-off
+   half wakes on any pad, because it is the launcher reading the pad. */
+function restWakeRows(wake) {
+  const rows = [];
+  if (!wake) {
+    rows.push({ name: "Waking from sleep", hint: "Reading what can wake this PC…", type: "html", valueHtml: "" });
+    return rows;
+  }
+  const devices = wake.devices || [];
+  const names = list => list.map(d => d.name).join(", ");
+  const ctlOn = devices.filter(d => d.kind === "controller" && d.armed);
+  const ctlOff = devices.filter(d => d.kind === "controller" && !d.armed);
+  const btOn = devices.filter(d => d.kind === "bluetooth" && d.armed);
+  const btOff = devices.filter(d => d.kind === "bluetooth" && !d.armed);
+  let hint;
+  if (!wake.canSleep) hint = "Windows reports that this PC cannot sleep at all, so nothing here applies: resting keeps it on with the screen dark";
+  else if (wake.modernStandby) hint = "This PC uses Modern Standby, which keeps Bluetooth up while asleep, so a paired controller can usually wake it with its Xbox or PS button"
+    + (ctlOff.length ? `. ${names(ctlOff)} could be allowed to as well, below` : "");
+  else if (ctlOn.length) hint = `${names(ctlOn)} may wake the PC: press its Xbox or PS button`
+    + (ctlOff.length ? `. ${names(ctlOff)} could too, once allowed below` : "");
+  else if (ctlOff.length) hint = `${names(ctlOff)} could wake the PC but is not allowed to yet: allow it below`;
+  else if (btOn.length) hint = `${names(btOn)} may wake the PC, so a Bluetooth controller might, depending on the pad and the board. A keyboard or mouse always can`;
+  else if (btOff.length) hint = `${names(btOff)} could be allowed to wake the PC, below; whether a Bluetooth pad then does depends on the pad and the board`;
+  else hint = "No controller or receiver on this PC can wake it from sleep: their drivers do not offer it, and a Bluetooth radio on a desktop rarely does. " +
+    "A wireless keyboard or mouse, or the power button, wakes it. The Xbox Wireless Adapter and some wired pads can, and appear here once plugged in";
+  if (wake.lastWake) hint += `. Last woken by: ${wake.lastWake}`;
+  rows.push({
+    name: "Waking from sleep", hint, type: "action", label: "Re-check",
+    action: () => send({ cmd: "restRefresh", force: true }),
+  });
+  if (wake.canSleep) {
+    for (const d of ctlOff.concat(btOff).slice(0, 6))
+      rows.push({
+        name: d.name,
+        hint: d.kind === "controller"
+          ? "Allow this device to wake the PC: Device Manager's own switch, with one Windows permission prompt"
+          : "Allow the Bluetooth radio to wake the PC, with one Windows permission prompt. A pad paired to it may then wake it too",
+        type: "action", label: "Allow",
+        action: () => send({ cmd: "wakeAllow", name: d.name }),
+      });
+    rows.push(wake.signInOnWake
+      ? {
+          name: "Sign-in after waking",
+          hint: "Windows asks for your PIN or password when the PC wakes, on a lock screen the pad cannot type into. " +
+            "Turning it off lands you straight back where you were. One Windows permission prompt; the same switch is in Windows' Settings → Accounts → Sign-in options",
+          warn: "On: a wake from sleep stops at the lock screen until it is signed into.",
+          type: "action", label: "Turn off",
+          action: () => askConfirm({
+            title: "Skip the sign-in after waking?",
+            body: "Anyone who wakes the PC lands straight in the session, with no PIN or password. Windows asks for permission once.",
+            yesLabel: "Turn off", icon: "lock", danger: false,
+            onYes: () => send({ cmd: "signInOnWake", on: false }),
+          }),
+        }
+      : {
+          name: "Sign-in after waking",
+          hint: "Off: a wake lands straight back where it was. Turn it on to have Windows ask for your PIN or password after sleep (one Windows permission prompt)",
+          type: "action", label: "Turn on",
+          action: () => send({ cmd: "signInOnWake", on: true }),
+        });
+  }
+  return rows;
+}
 
 /* The theme's own rows and the way back, as the last block of Appearance. The options the theme
    declares, read and written through the validated definitions (see themeSettingDefs), then a
@@ -3912,6 +4232,30 @@ function storeRow(store, name, offHint) {
   };
 }
 
+/* Steam's sign-in, for a profile that keeps its games private. Without it Steam's library comes
+   through the shared service, which only a public profile answers; with it, the account's own token
+   reads it whatever the privacy setting says (SteamWebSession on the host). Signing in turns the
+   switch above on, as signing in to any store does. */
+function steamSignInRow() {
+  const st = S.stores && S.stores.steam;
+  const signedIn = !!(st && st.signedIn);
+  const a = S.steamAccount || {};
+  const who = (st && st.user) || a.personaName || a.steamId || "your account";
+  const why = (st && st.error) || a.error;
+  const hint = !signedIn
+    ? "For a profile that keeps its game details private, or one you would rather not make public: sign in on Steam's own page and your library is read with that sign-in. Your password never reaches Loungepad"
+    : why ? `Signed in as ${who} · ${why}`
+    : a.fetchedAt ? `Signed in as ${who} · ${a.ownedCount} game${a.ownedCount === 1 ? "" : "s"} in your library`
+    : `Signed in as ${who} · fetching your library…`;
+  return {
+    name: "Steam sign-in", hint, type: "action", label: signedIn ? "Sign out" : "Sign in",
+    action: () => {
+      if (signedIn) askSignOut("steam", "Steam account");
+      else { toast("Opening the sign-in window…"); send({ cmd: "storeSignIn", store: "steam" }); }
+    },
+  };
+}
+
 function askSignOut(store, name) {
   confirmState = {
     title: `Sign out of ${name.replace(/ account$/i, "")}?`,
@@ -3975,13 +4319,27 @@ function toggleRow(name, hint, get, setV) {
   };
 }
 
+/* A row with a fixed set of values carries them as `choices` ({ value, label, html?, swatch? }),
+   with `current` and `pick(value)`. A on the row opens them as a list (openSettingChoice), so every
+   option is in view at once rather than met one at a time under ◂ ▸. `adjust` stays for the form
+   sheet, which still nudges its dates and times sideways. */
+
 /* Both row builders fall back when a setting is missing. A settings file written by an older
    build has no key for an option added since, and one undefined value used to throw inside the
    formatter and take the whole settings screen down with it. */
 function sliderRow(name, get, min, max, step, setV, fmt, hint) {
   const cur = () => { const v = get(); return typeof v === "number" && isFinite(v) ? v : min; };
+  // Every step as its own value, rounded to the step's own decimals so 0.05 + 3 x 0.01 is 0.08
+  // and not 0.08000000000000002 -- the value is written back to settings.json exactly as listed.
+  const places = (String(step).split(".")[1] || "").length + (String(min).split(".")[1] || "").length;
+  const values = [];
+  for (let i = 0; i <= Math.round((max - min) / step); i++) values.push(+(min + i * step).toFixed(places));
+  const nearest = values.reduce((a, b) => (Math.abs(b - cur()) < Math.abs(a - cur()) ? b : a), values[0]);
   return {
     name, hint, type: "slider", value: cur(), min, max, fmt,
+    choices: values.map(v => ({ value: v, label: fmt(v) })),
+    current: nearest,
+    pick: (v) => setV(v),
     adjust: (dir) => {
       let v = Math.round((cur() + dir * step) / step) * step;
       v = Math.max(min, Math.min(max, v));
@@ -3996,6 +4354,9 @@ function cycleRow(name, options, get, setV, hint, warn, labels) {
   const cur = () => (options.includes(get()) ? get() : options[0]);
   return {
     name, hint, warn, type: "select", value: (labels && labels[cur()]) || cur(),
+    choices: options.map(o => ({ value: o, label: (labels && labels[o]) || o })),
+    current: cur(),
+    pick: (v) => setV(v),
     adjust: (dir) => {
       const i = (options.indexOf(cur()) + dir + options.length) % options.length;
       setV(options[i]);
@@ -4004,23 +4365,22 @@ function cycleRow(name, options, get, setV, hint, warn, labels) {
 }
 
 /* A row whose options are gamepad buttons or combos. The stored value is the XInput name, as it
-   always was; what is shown is the button drawn for the pad last used. */
+   always was; what is shown is the button drawn for the pad last used, in the list as well. */
 function buttonRow(name, options, get, setV, hint, warn) {
   const row = cycleRow(name, options, get, setV, hint, warn);
   row.valueHtml = comboHtml(options.includes(get()) ? get() : options[0]);
+  row.choices.forEach(c => { c.html = comboHtml(c.value); });
   return row;
 }
 
-/* The accent picker. ◂ ▸ walk the presets so the common case never needs a keyboard, and A opens
-   a text prompt for a hex code from anywhere on the row.
-
-   A hand-typed colour joins the strip as an extra stop on the end rather than snapping to the
-   nearest preset, and cycling off it drops it again -- so the strip only ever shows colours you
-   can actually land on, and there is no dead stop to press through. */
+/* The accent picker: the presets as a list, each with its colour beside its name, and a last row
+   that asks for a hex code. A hand-typed colour is listed as well while it is the one in use, so
+   the list always has the current colour ticked. */
 function accentRow(set) {
   const cur = () => lookAccent();
   const custom = () => !ACCENTS.some(a => a.hex === cur());
-  const stops = () => (custom() ? [...ACCENTS.map(a => a.hex), cur()] : ACCENTS.map(a => a.hex));
+  const choices = ACCENTS.map(a => ({ value: a.hex, label: a.name, swatch: a.hex }));
+  if (custom()) choices.push({ value: cur(), label: `Custom · ${cur()}`, swatch: cur() });
 
   return {
     name: "Accent colour",
@@ -4030,16 +4390,37 @@ function accentRow(set) {
     value: cur(),
     label: accentName(cur()),
     custom: custom(),
-    adjust: (dir) => set(() => {
-      const list = stops();
-      lookSet(LOOK_IDS.accent, list[(list.indexOf(cur()) + dir + list.length) % list.length]);
-    }),
-    action: () => openInput("Accent colour (hex, e.g. #F0A253)", cur(), (v) => {
-      const hex = v.startsWith("#") ? v : "#" + v;
-      if (isHexColor(hex)) set(() => lookSet(LOOK_IDS.accent, hex.toUpperCase()));
-      else toast("Enter a colour as #RRGGBB");
-    }),
+    choices,
+    current: cur(),
+    pick: (hex) => set(() => lookSet(LOOK_IDS.accent, hex)),
+    more: [{
+      label: "Enter a colour…", sub: "Any colour, as a hex code like #F0A253", icon: "edit",
+      action: () => openInput("Accent colour (hex, e.g. #F0A253)", cur(), (v) => {
+        const hex = v.startsWith("#") ? v : "#" + v;
+        if (isHexColor(hex)) set(() => lookSet(LOOK_IDS.accent, hex.toUpperCase()));
+        else toast("Enter a colour as #RRGGBB");
+      }),
+    }],
   };
+}
+
+/** A on a Settings row: a list of its values when it has them, else whatever the row does. */
+function activateSettingRow(row) {
+  if (row.choices) openSettingChoice(row);
+  else if (row.action) row.action();
+  else if (row.adjust) row.adjust(1);
+}
+
+/** Every value a row can take, as a list with the one in force ticked and highlighted. */
+function openSettingChoice(row) {
+  if (!row.choices.length) { toast("Nothing to choose from"); return; }
+  const items = row.choices.map(c => ({
+    label: c.label, html: c.html, swatch: c.swatch, sub: c.sub,
+    checked: c.value === row.current, radio: true,
+    action: () => row.pick(c.value),
+  }));
+  (row.more || []).forEach(m => items.push(m));
+  openChoice(row.name, items);
 }
 
 const KEYBOARD_APP_LABELS = {
@@ -4065,7 +4446,7 @@ const SETTINGS_TABS = [
 let settingsTab = "general";
 /* Which half of the screen has the highlight. Settings opens on the sidebar, so the first thing
    you choose is what you are configuring rather than being dropped into a list of rows; A (or
-   Right) steps into the options and B steps back out to the categories. */
+   Right) steps into the options and B (or Left) steps back out to the categories. */
 let settingsPane = "nav";
 
 function settingsRows() {
@@ -4145,20 +4526,31 @@ function renderSettingsNav() {
   });
 }
 
+/* The wake facts are read off Windows by spawning powercfg, so they are asked for when General
+   is on screen and at most every half minute, not on every highlight move. */
+let restRefreshedAt = 0;
+
 function renderSettings() {
   renderSettingsNav();
+  if (settingsTab === "general" && Date.now() - restRefreshedAt > 30000) {
+    restRefreshedAt = Date.now();
+    send({ cmd: "restRefresh" });
+  }
   // The legend changes with the pane: on the categories B leaves Settings, inside the options it
   // only steps back to the categories, and saying so is cheaper than letting people find out.
   const footEl = $("settingsFoot");
   // No LB/RB entry: there is one screen left, so the shoulders switch between nothing. A legend
-  // that names a button which does not respond is worse than a shorter legend.
+  // that names a button which does not respond is worse than a shorter legend. A says what it
+  // does to the row under the highlight: a list of values, a switch, or the row's own action.
+  const rows = settingsRows();
+  const onRow = settingsPane === "rows" ? rows.filter(r => !r.section)[settingsIdx] : null;
+  const aLabel = !onRow ? "Select" : onRow.choices ? "Change" : onRow.type === "toggle" ? "Switch" : "Select";
   if (footEl) footEl.innerHTML = settingsPane === "nav"
     ? foot(["A", "Open"], ["B", "Back"], ["DpadV", "Category"])
-    : settingsTab !== "actions" ? foot(["A", "Select"], ["B", "Categories"], ["DpadH", "Adjust"])
+    : settingsTab !== "actions" ? foot(["A", aLabel], ["B", "Categories"])
     : actionsUi.level === "apps" ? foot(["A", "Open"], ["B", "Categories"])
     : actionsUi.level === "app" ? foot(["A", "Edit"], ["B", "Back"])
-    : foot(["A", "Select"], ["B", "Back"], ["DpadH", "Adjust"]);
-  const rows = settingsRows();
+    : foot(["A", aLabel], ["B", "Back"]);
   const scroll = $("settingsScroll");
   // The Actions grid is the same scroller laid out as tiles; everything else is rows.
   scroll.classList.toggle("apps-grid", actionsGridMode());
@@ -4177,7 +4569,7 @@ function renderSettings() {
   rows.forEach(r => {
     if (r.section) { nodes.push({ section: r.section, bare: !!r.bare }); return; }
     fi++;
-    nodes.push({ row: r, idx: fi, html: r.tile ? actionsTileHtml(r) : settingsRowHtml(r) });
+    nodes.push({ row: r, idx: fi, html: r.tile ? actionsTileHtml(r) : settingsRowHtml(r, true) });
   });
   // The Actions category's level is part of the shape: its list and its editor are different
   // rows under one tab, and the level tag is what makes the drill-down rebuild.
@@ -4194,8 +4586,6 @@ function renderSettings() {
     if (n.section !== undefined) return;
     const el = scroll.children[i];
     el.dataset.focusKey = "setrow:" + settingsTab + ":" + n.idx;
-    // Left/Right adjust the value here instead of moving; settingsInput reads this.
-    if (n.row.adjust) el.dataset.navLock = "horizontal"; else delete el.dataset.navLock;
     el.classList.toggle("muted", !!n.row.muted);
     if (el.__html !== n.html) { el.innerHTML = n.html; el.__html = n.html; }
   });
@@ -4229,29 +4619,34 @@ function settingsRowEl(idx) {
     if (settingsIdx === idx && settingsPane === "rows") return;
     settingsIdx = idx; settingsPane = "rows"; renderSettings();
   });
-  el.addEventListener("click", (e) => {
+  el.addEventListener("click", () => {
     settingsIdx = idx; settingsPane = "rows";
     const row = settingsRows().filter(x => !x.section)[idx];
     if (!row) return;
-    // On an arrow, step that way; anywhere else on the row is the same as pressing A.
-    const arrow = e.target instanceof Element ? e.target.closest(".arrow") : null;
-    if (arrow && row.adjust) { row.adjust(parseInt(arrow.dataset.dir, 10) || 1); return; }
-    if (row.action) row.action(); else if (row.adjust) row.adjust(1);
+    renderSettings();
+    // Anywhere on the row is the same as pressing A: a list of values, a switch, or the action.
+    activateSettingRow(row);
   });
   return el;
 }
 
-/** What a row shows: its name and hint on the left, its value or its action on the right. */
-function settingsRowHtml(r) {
-  // The arrows carry a direction, so a mouse can step a value either way (see settingsRowEl).
+/** What a row shows: its name and hint on the left, its value or its action on the right.
+    `picker` is Settings, where a value is changed from a list (A) and a switch flips on A: no
+    ◂ ▸, because Left and Right move between the panes there. The form sheet still steps its
+    values sideways and keeps them. */
+function settingsRowHtml(r, picker) {
+  // The arrows carry a direction, so a mouse can step a value either way (see renderForm).
   const left = `<span class="arrow" data-dir="-1">◂</span>`, rightArrow = `<span class="arrow" data-dir="1">▸</span>`;
+  const list = !!(picker && r.choices);
+  // A value that opens a list ends in a chevron, as the filter menu's dropdowns do.
+  const [pre, post] = list ? ["", `<span class="set-chev">›</span>`] : picker ? ["", ""] : [left, rightArrow];
   let right = "";
   if (r.type === "toggle") {
     right = r.value
-      ? `${left}<span class="set-toggle-on">ON</span>${rightArrow}`
-      : `${left}<span class="set-toggle-off">OFF</span>${rightArrow}`;
+      ? `${pre}<span class="set-toggle-on">ON</span>${post}`
+      : `${pre}<span class="set-toggle-off">OFF</span>${post}`;
   } else if (r.type === "select") {
-    right = `${left}<span>${r.valueHtml || esc(r.value)}</span>${rightArrow}`;
+    right = `${list ? "" : left}<span>${r.valueHtml || esc(r.value)}</span>${list ? post : rightArrow}`;
   } else if (r.type === "swatch") {
     // The presets are shown as dots, the selected one ringed, with a trailing dot for a custom
     // colour so the strip reads as the row's full range rather than a value plus a mystery.
@@ -4259,11 +4654,11 @@ function settingsRowHtml(r) {
       `<span class="swatch${on ? " on" : ""}" style="background:${esc(hex)}"></span>`;
     const dots = r.swatches.map(hex => dot(hex, hex === r.value)).join("")
       + (r.custom ? dot(r.value, true) : "");
-    right = `${left}<span class="swatch-strip">${dots}</span>`
-      + `<span class="swatch-name">${esc(r.label)}</span>${rightArrow}`;
+    right = `${pre}<span class="swatch-strip">${dots}</span>`
+      + `<span class="swatch-name">${esc(r.label)}</span>${post}`;
   } else if (r.type === "slider") {
     const pct = ((r.value - r.min) / (r.max - r.min)) * 100;
-    right = `<div class="slider">${left}<div class="slider-track"><div class="slider-fill" style="width:${pct}%"></div></div>${rightArrow}<span class="slider-val">${esc(r.fmt(r.value))}</span></div>`;
+    right = `<div class="slider">${pre}<div class="slider-track"><div class="slider-fill" style="width:${pct}%"></div></div>${list ? "" : post}<span class="slider-val">${esc(r.fmt(r.value))}</span>${list ? post : ""}</div>`;
   } else if (r.type === "action") {
     right = `<span class="set-action-label${r.danger ? " danger" : ""}">${esc(r.label)}</span>`;
   } else if (r.type === "html") {
@@ -4274,13 +4669,16 @@ function settingsRowHtml(r) {
 }
 
 /* Settings keeps its two panes, but they are now just two groups of focusables in one
-   scope: the categories on the left, the rows on the right. Movement is geometric, and
+   scope: the categories on the left, the rows on the right. Up and Down are geometric, and
    the pane is derived from where the highlight actually landed rather than tracked by
-   hand -- which is what lets a theme stack them, or drop the sidebar entirely. Only the way
-   OUT of the rows is not geometric: that is B (or a click on a category), never a direction.
+   hand -- which is what lets a theme stack them, or drop the sidebar entirely.
 
-   Left/Right are the exception to pure geometry: on a row they adjust the value, because
-   that is what ◂ ▸ mean everywhere else in this UI. A row marks itself data-nav-lock. */
+   Left and Right cross between the two panes: Right (or A) from a category into its rows, at
+   the row that was last highlighted there, and Left from any row back to the category. A value
+   is never changed sideways any more: A opens every value the row can take as a list
+   (openSettingChoice), so the whole range is in view instead of being met one ◂ ▸ at a time.
+   The one exception is the Actions grid, whose tiles sit side by side: Left and Right walk the
+   row of tiles first, and only Left off its first tile goes back to the categories. */
 function settingsInput(btn) {
   const scope = document.getElementById("screen-settings");
   const el = focusEl(scope);
@@ -4288,17 +4686,24 @@ function settingsInput(btn) {
   const row = el && el.dataset.rowIndex !== undefined ? rows[parseInt(el.dataset.rowIndex, 10)] : null;
   const onTab = !!(el && el.dataset.settingsTab);
 
-  // Inside a category the highlight stays among its rows (paneMove); on the categories it walks
-  // them as before, and Right steps into the rows like A.
+  // Inside a category the highlight stays among its rows (paneMove), and on the categories among
+  // the categories; both come round at the ends.
   const inRows = (x) => x.dataset.rowIndex !== undefined;
+  const inTabs = (x) => x.dataset.settingsTab !== undefined;
   switch (btn) {
     case "Up": case "Down":
-      if (row ? paneMove(btn, inRows) : navMove(btn)) syncSettingsPane();
+      if (row ? paneMove(btn, inRows) : onTab ? paneMove(btn, inTabs) : navMove(btn)) syncSettingsPane();
       break;
 
-    case "Left": case "Right":
-      if (row && el.dataset.navLock === "horizontal") { row.adjust(btn === "Right" ? 1 : -1); break; }
-      if (row ? paneMove(btn, inRows) : navMove(btn)) syncSettingsPane();
+    case "Left":
+      if (!row) break;
+      if (row.tile && tileBeside(el, "Left", inRows) && navMove("Left", inRows)) { syncSettingsPane(); break; }
+      enterSettingsPane("nav");
+      break;
+
+    case "Right":
+      if (onTab) { setSettingsTab(el.dataset.settingsTab); enterSettingsPane("rows"); break; }
+      if (row && row.tile && tileBeside(el, "Right", inRows) && navMove("Right", inRows)) syncSettingsPane();
       break;
 
     case "A":
@@ -4308,7 +4713,7 @@ function settingsInput(btn) {
       // highlight said Keyboard and the rows that appeared were Controller's, which reads as A
       // not working at all.
       if (onTab) { setSettingsTab(el.dataset.settingsTab); enterSettingsPane("rows"); break; }
-      if (row) { if (row.action) row.action(); else if (row.adjust) row.adjust(1); }
+      if (row) activateSettingRow(row);
       break;
 
     // Back steps out to the categories first, and only leaves Settings from there. Inside the
@@ -4319,6 +4724,19 @@ function settingsInput(btn) {
       else enterSettingsPane("nav");
       break;
   }
+}
+
+/** Whether another tile sits beside `el` on its own line, in that direction. navMove would wrap
+    round the line instead of reporting the end of it, and the end is where Left leaves the grid. */
+function tileBeside(el, dir, accept) {
+  const r = el.getBoundingClientRect(), mid = Nav.centre(r).x;
+  return Nav.focusables(Nav.activeScope()).some(x => {
+    if (x === el || !accept(x)) return false;
+    const o = x.getBoundingClientRect();
+    if (!(o.bottom > r.top && o.top < r.bottom)) return false;
+    const c = Nav.centre(o).x;
+    return dir === "Left" ? c < mid - 1 : c > mid + 1;
+  });
 }
 
 /** Pane and category follow the highlight, so nothing has to be kept in step by hand. */
@@ -4354,7 +4772,7 @@ function setXboxButton(what, on) {
   }
   xb[what] = on;
   send({ cmd: "xboxButtonSet", what, on });
-  renderSettings();
+  if (view === "onboarding") renderOnboarding(); else renderSettings();
 }
 
 function scheduleSave() {
@@ -4444,7 +4862,7 @@ function filterDropdownRows() {
 
 const SORT_ICONS = {
   az: "sortAsc", za: "sortDesc", recent: "clock",
-  played: "timer", sizeDesc: "chevronsDown", sizeAsc: "chevronsUp", score: "star",
+  played: "timer", sizeDesc: "chevronsDown", sizeAsc: "chevronsUp", score: "star", ach: "trophy",
 };
 
 function sortDropdownRows() {
@@ -4535,16 +4953,22 @@ function gameMenuItems() {
   ];
   if (running) top.push({ label: "Resume game", icon: "play", sub: "Back to the running game",
     action: () => { closeGameMenu(); send({ cmd: "resumeGame" }); } });
-  if (!g.installed && canInstall(g)) top.push({ label: "Install", icon: "download",
+  // Install only while the game is on this PC nowhere. Once it is installed in one store, a second
+  // copy from another is a deliberate choice, made from the game's page under Manage -- not one row
+  // away from Play here. That holds for the tile's own copy too: Launch with can make an
+  // uninstalled store the default while another store's copy is on disk.
+  const editions = editionsOf(g);
+  const installedSomewhere = editions.some(m => m.installed);
+  if (!g.installed && !installedSomewhere && canInstall(g)) top.push({ label: "Install", icon: "download",
     sub: `Through ${storeName(g)}; the tile turns playable when it is done`,
     action: () => { closeGameMenu(); offerInstall(g); } });
   // The same game in the other stores it is in. Played from here once, not made the default --
   // that is what Manage > Launch with is for.
-  editionsOf(g).filter(m => m.id !== g.id).forEach(m => {
+  editions.filter(m => m.id !== g.id).forEach(m => {
     if (m.installed) top.push({ label: `Play on ${m.platform}`, icon: "play",
       sub: "Just this once. Manage → Launch with changes the default",
       action: () => { closeGameMenu(); launchGame(m); } });
-    else if (canInstall(m)) top.push({ label: `Install on ${m.platform}`, icon: "download",
+    else if (!installedSomewhere && canInstall(m)) top.push({ label: `Install on ${m.platform}`, icon: "download",
       sub: `Through ${storeName(m)}`,
       action: () => { closeGameMenu(); offerInstall(m); } });
   });
@@ -4692,6 +5116,16 @@ function manageItems() {
         toast(`${g.title} now launches with ${m.platform}${m.installed ? "" : " (not installed yet)"}`);
       },
     }));
+    // A copy from another store, on purpose: the game menu (Y) stops offering this once the game
+    // is installed anywhere, so this is where a second copy is got.
+    const installable = editions.filter(m => m.id !== g.id && !m.installed && canInstall(m));
+    if (installable.length) {
+      items.push({ cat: "INSTALL FROM ANOTHER STORE" });
+      installable.sort(byStore).forEach(m => items.push({
+        label: `Install on ${m.platform}`, icon: "download", sub: `Through ${storeName(m)}`,
+        action: () => { closeManage(); offerInstall(m); },
+      }));
+    }
     items.push({ cat: "THIS COPY" });
   }
   if (g.emulated) {
@@ -5059,7 +5493,19 @@ function openChoice(title, items, opts = {}) {
   const idx = Math.max(0, items.findIndex(i => !i.cat && i.checked));
   choiceState = { title, items, idx, onBack: opts.onBack || null };
   showOverlay("overlay-choice");
+  // A fresh list opens at its own ticked row, already in place: renderMenu keeps the scroll of
+  // whatever list was here before, and a Settings value can be forty rows down (a slider's
+  // steps), which would otherwise glide in from wherever the last list was left.
+  const list = $("choiceList");
+  stopScroll(list, "y");
+  list.scrollTop = 0;
   renderChoice();
+  const cur = list.querySelector(".ov-row.focused") || list.querySelector(`[data-row-index="${idx}"]`);
+  if (cur) {
+    stopScroll(list, "y");
+    list.scrollTop = Math.max(0, cur.offsetTop - (list.clientHeight - cur.offsetHeight) / 2);
+    markOverflow(list);
+  }
 }
 
 function closeChoice() { choiceState = null; hideOverlay("overlay-choice"); }
@@ -5352,7 +5798,8 @@ setInterval(publishClaims, 400);
  * the Loungepad theme hides the section headings. View opens it and raises the on-screen keyboard; every
  * keystroke refilters the grid live. Enter, A or Down keeps the search and drops the highlight on
  * the first result; Escape or B while typing clears it. With a search standing, the field shows
- * it and the grid heading says so, and View opens it again to change it.
+ * it and the grid heading says so, and View opens it again to change it. B on the library clears
+ * it too, once the highlight is back at the top (see libraryInput).
  *
  * Matching is by folded title (see titleKey), across every store a game is in, and it is a
  * substring match on words -- "hollow" finds Hollow Knight and Hollow Knight: Silksong.
@@ -5436,9 +5883,8 @@ $("libSearch").addEventListener("mouseenter", () => { if (hoverEnabled() && !sea
 /* ============================== couch setup guide ============================== */
 
 const GUIDE_STEPS = [
-  ["Switch the touch keyboard to the Gamepad layout (one time)", `Windows does not expose this as a setting an app can flip, so do it once by hand and it sticks. Open the touch keyboard (the keyboard button, ${slot("RB", true)} unless you changed it), tap the <b>cog icon</b> in its top-left, open <b>Keyboard layout</b> and choose <b>Gamepad</b>. You then get controller navigation with button accelerators — <b>X</b> backspace, <b>Y</b> space. On the default layout the keyboard ignores the pad entirely. Requires Windows 11 build 26100.3624 or newer.`],
   ["Sign in from the couch: set up a Windows Hello PIN", "Apps cannot type into the secure lock screen, but you don't need one: in <b>Settings → Accounts → Sign-in options</b>, add a <b>PIN (Windows Hello)</b>. The sign-in screen's PIN pad works with the touch keyboard, which supports gamepad input — so after a wake you can sign in without leaving the sofa. For a fully hands-off couch PC, enable automatic sign-in instead (<b>netplwiz</b>, untick \"Users must enter a user name and password\")."],
-  ["Let your controller's receiver wake the PC", "Open <b>Device Manager</b> and find your gamepad's USB receiver (under <b>Human Interface Devices</b> or <b>Xbox Peripherals</b>). Open its <b>Power Management</b> tab and tick <b>Allow this device to wake the computer</b>. Pressing the controller button will then wake the PC from sleep."],
+  ["Rest instead of leaving the PC on", "<b>Settings → General → Rest and sleep</b> is a console's rest mode: after a stretch with nothing pressed the TV goes dark and the game is paused where it stands, and one press on any controller brings both back. Left resting, the PC goes to sleep. Whether the controller can wake it from <i>sleep</i> is up to its receiver's driver: the same rows list every device that could and allow it with one press. Where none can (a Bluetooth pad on most desktops), a wireless keyboard or mouse, or the power button, wakes it -- set “Then sleep the PC after” to a longer time, or keep the PC on, to suit."],
   ["Auto-start Loungepad", "Turn on <b>Launch Loungepad at login</b> in Settings → Startup so the PC lands straight back on the TV with gamepad-mouse active after waking."],
 ];
 
@@ -5519,6 +5965,8 @@ function switchView(v) {
   // Always land on the categories, never mid-list in whatever was open last time.
   if (v === "settings") { settingsPane = "nav"; settingsIdx = 0; renderSettings(); }
   if (v === "stats") openStatsView(prev);
+  if (v === "onboarding") renderOnboarding();
+  else delete document.body.dataset.onbStep;   // what moves the library into view on the Look step
   syncTrailers();
 }
 
@@ -5718,6 +6166,7 @@ function handleInput(btn, src) {
   else if (view === "detail") detailInput(btn);
   else if (view === "settings") settingsInput(btn);
   else if (view === "stats") statsInput(btn);
+  else if (view === "onboarding") onboardingInput(btn);
 }
 
 // After every press, so the claim follows the screen the press just led to.
@@ -5749,7 +6198,8 @@ let lastKeyStepAt = -Infinity;
 
 window.addEventListener("keydown", (e) => {
   if (inputOpen) return;
-  const btn = KEYMAP[e.code] || KEYMAP_BY_KEY[e.key];
+  const lib = libraryTakesKeys() ? (LIBRARY_KEYS[e.code] || LIBRARY_KEYS[e.key]) : null;
+  const btn = lib || KEYMAP[e.code] || KEYMAP_BY_KEY[e.key];
   if (!btn || e.ctrlKey || e.altKey || e.metaKey) return;
   e.preventDefault();
   setInputFamily("keyboard");
@@ -5764,6 +6214,29 @@ window.addEventListener("keydown", (e) => {
   lastKeyStepAt = now;
   handleInput(btn, "kb");   // handleInput switches to pad mode on directions only
 });
+
+/*
+ * Ctrl is the library's Y (a game's options), and Ctrl is also a modifier: a key or a click with it
+ * held, Ctrl+Shift+Esc, and a pinch on a DualSense's touchpad, which the host sends as Ctrl plus the
+ * wheel. So it fires on the release, and only when nothing else happened while it was down -- the
+ * way the Windows key opens Start. Captured, so a listener that stops a key cannot hide it from here.
+ */
+let ctrlTap = false;
+const isCtrl = (e) => e.key === "Control" || e.code === "ControlLeft" || e.code === "ControlRight";
+window.addEventListener("keydown", (e) => {
+  if (!isCtrl(e)) ctrlTap = false;
+  else if (!e.repeat) ctrlTap = !e.shiftKey && !e.altKey && !e.metaKey;
+}, true);
+window.addEventListener("keyup", (e) => {
+  if (!isCtrl(e) || !ctrlTap) return;
+  ctrlTap = false;
+  if (inputOpen || !libraryTakesKeys()) return;
+  e.preventDefault();
+  setInputFamily("keyboard");
+  handleInput("Y", "kb");
+});
+for (const type of ["mousedown", "wheel", "blur"])
+  window.addEventListener(type, () => { ctrlTap = false; }, { capture: true, passive: true });
 
 /*
  * The mouse, as a pad. Buttons only: a real click means a hand is on the mouse, where a mousemove
@@ -5848,7 +6321,11 @@ function handleHostMessage(m) {
       // icons that came with the last actions message are carried over by app id.
       S.actions = withActionIcons(m.actions, S.actions);
       S.xboxButton = m.xboxButton || null;
+      // The wake facts ride along once the host has read them; a push from before that keeps
+      // whatever the last rest message carried.
+      if (m.rest) { S.rest = m.rest.wake || !S.rest ? m.rest : { ...m.rest, wake: S.rest.wake }; S.gamePaused = !!m.rest.paused; }
       S.update = m.update || S.update;
+      if (m.scanProgress) S.scanProgress = m.scanProgress;
       S.achievements = m.achievements || {};
       S.sessionStart = m.sessionStart || null;
       if (S.settings) S.settings.launchOnStartup = m.startupRegistered;
@@ -5868,12 +6345,25 @@ function handleHostMessage(m) {
       if (view === "stats") renderStats();
       if (achState) renderAchievements();
       if (actState) renderActivity();
-      if (firstState && S.settings && !S.settings.tvDeviceName && S.displays.length > 1) {
+      if (view === "onboarding") renderOnboarding();
+      // A new install opens on the first-run setup, which asks for the TV among other things. An
+      // install that has been through it but has lost its TV (a display unplugged, say) still
+      // gets sent to the one row that matters.
+      if (firstState && S.settings && needsOnboarding()) openOnboarding("library");
+      else if (firstState && S.settings && !S.settings.tvDeviceName && S.displays.length > 1) {
         switchView("settings");
         toast("Welcome — pick which display is your TV");
       }
       break;
     }
+    // The last scan and the passes after it, source by source: the first-run setup's strip.
+    case "scanProgress":
+      S.scanProgress = m.steps || [];
+      if (view === "onboarding") renderOnboarding();
+      break;
+    case "onboarding": onOnboardingInfo(m); break;
+    case "onboardingPin": onOnboardingPin(m); break;
+    case "onboardingVortex": onOnboardingVortex(m); break;
     // A switch flipped on the Loungepad keyboard's own options page. Merged, not replaced: the
     // page's copy may hold a change of its own that has not been saved yet.
     case "keyboardOptions":
@@ -5892,7 +6382,9 @@ function handleHostMessage(m) {
       break;
     // The pad in hand changed, or one was picked up again after the keyboard had the legend.
     case "padLayout":
+      if (m.name) S.padName = m.name;
       setInputFamily(m.layout);
+      if (view === "onboarding") renderOnboarding();
       break;
     case "padClick":
       padClickAt = performance.now();
@@ -5980,14 +6472,27 @@ function handleHostMessage(m) {
     case "battery":
       lastBatteryMsg = m;
       updateBattery(m);
+      if (view === "onboarding") renderOnboarding();
       break;
     case "game":
       S.gameRunning = m.running;
       S.runningGameId = m.id;
       S.sessionStart = m.since || null;
+      S.gamePaused = !!(m.running && m.paused);
       // The cards for what the session unlocked wait for the launcher to be back on the TV.
       if (!m.running) { S.telemetry = null; setTimeout(drainUnlocks, 800); }
       renderLibrary();
+      if (ingameOpen) renderIngame();
+      break;
+    // Rest mode: the phase (the page stops its trailers while the screen is dark), whether the
+    // game is frozen, and what can wake this PC for the Settings rows.
+    case "rest":
+      S.rest = m.rest || null;
+      S.gamePaused = !!(S.gameRunning && m.rest && m.rest.paused);
+      syncTrailers();
+      if (ingameOpen) renderIngame();
+      updatePlayingMeta();
+      if (view === "settings") renderSettings();
       break;
     // Play sessions and achievements: see activity.js for every one of these.
     case "telemetry":
@@ -5998,7 +6503,10 @@ function handleHostMessage(m) {
     case "activitySession": onSessionMessage(m); break;
     case "activityAll": onActivityAll(m); break;
     case "activityRecorded": onActivityRecorded(m); break;
-    case "playnite": onPlayniteMessage(m); break;
+    case "playnite":
+      onPlayniteMessage(m);
+      if (view === "onboarding") onOnboardingPlaynite(m);
+      break;
     case "achievements": onAchievementsMessage(m); break;
     case "achievementsSummary": onAchievementsSummary(m); break;
     case "achievementsAll": onAchievementsAll(m); break;
@@ -6359,6 +6867,26 @@ function mockAchAll() {
   };
 }
 
+/* Rest mode in the preview: awake, nothing frozen, and a wake report shaped like this PC's --
+   one controller receiver that could be allowed, a Bluetooth radio that is, and the sign-in on. */
+const mockRest = {
+  phase: "awake", paused: false,
+  wake: {
+    canSleep: true, modernStandby: false, signInOnWake: true,
+    devices: [
+      { name: "Xbox Wireless Adapter for Windows", armed: false, kind: "controller" },
+      { name: "Intel(R) Wireless Bluetooth(R)", armed: true, kind: "bluetooth" },
+    ],
+    lastWake: "HID Keyboard Device",
+  },
+};
+function mockRestPayload() { return { phase: mockRest.phase, paused: mockRest.paused, wake: { ...mockRest.wake, devices: mockRest.wake.devices.map(d => ({ ...d })) } }; }
+/* The game message as the host sends it after a pause or a thaw. */
+function mockGamePush() {
+  if (!mockHandle._running) return;
+  handleHostMessage({ type: "game", running: true, id: mockHandle._running, since: new Date(Date.now() - 72 * 60000).toISOString(), paused: mockRest.paused });
+}
+
 /* Preview only: U shows an unlock card, I opens the in-game menu over a "running" Hollowmark with
    live readings, K closes that game. */
 if (!HOST) window.addEventListener("keydown", (e) => {
@@ -6507,7 +7035,7 @@ function mockHandle(msg) {
         steamShowOwned: true, steamApiKey: "", gamePassCatalog: false, xboxClientId: "", detectEmulators: true, autoUpdate: true,
         leftClickButton: "A", rightClickButton: "B",
         minimizeCombo: "LS + RS", menuComboMode: "TapHold",
-        keyboardToggleButton: "Start", keyboardToggleHoldMs: 600,
+        keyboardToggleButton: "Back", keyboardToggleMode: "Press", keyboardToggleHoldMs: 600,
         keyboardApp: "Builtin", keyboardScale: 1.0, keyRepeatDelayMs: 350, keyRepeatIntervalMs: 90,
         keyboardSuggestions: true, keyboardFunctionKeys: false, keyboardNavKeys: false,
         keyboardNumpad: false, keyboardModifiers: false,
@@ -6515,8 +7043,13 @@ function mockHandle(msg) {
         activityTracking: true, activityHardware: true, activitySampleSeconds: 5,
         achievementsEnabled: true, achievementNotifications: true, achievementsOnTiles: true,
         retroAchievementsUser: "", retroAchievementsKey: "",
+        restAfterMinutes: 60, restDuringGame: true, restPausesGame: true, sleepAfterRestMinutes: -1,
         animationsEnabled: true, animationSpeed: 1.0, themeSettings: {},
+        // The first-run setup opens only with ?onboard in the preview's address, so every other
+        // screen can still be walked straight away.
+        onboardingVersion: /[?&]onboard\b/.test(location.search) ? 0 : 1,
       },
+      rest: mockRestPayload(),
       displays: [
         { deviceName: "\\\\.\\DISPLAY1", friendlyName: "Dell U2723QE", x: 0, y: 0, width: 3840, height: 2160, isPrimary: true },
         { deviceName: "\\\\.\\DISPLAY2", friendlyName: "LG C3 OLED", x: 3840, y: 0, width: 3840, height: 2160, isPrimary: false },
@@ -6540,6 +7073,26 @@ function mockHandle(msg) {
       ] });
     }).catch(() => {});
     setTimeout(() => { handleHostMessage({ type: "padConnected", connected: true }); handleHostMessage({ type: "battery", present: true, percent: 62, charging: false, level: 2 }); }, 700);
+    setTimeout(() => handleHostMessage({ type: "padLayout", layout: "xbox", name: "Xbox Wireless Controller" }), 750);
+    mockScanProgress();
+  } else if (msg.cmd === "onboardingProbe") {
+    setTimeout(() => {
+      handleHostMessage({ type: "onboarding", launchers: { steam: true, epic: true, galaxy: false, xboxApp: true },
+        playnite: { found: true, dir: mockPlaynite.dir }, pin: !!mockHandle._pin, vortex: mockVortex().vortex });
+      handleHostMessage({ type: "onboardingVortex", busy: false, mode: "peek", ...mockVortex() });
+    }, 300);
+  } else if (msg.cmd === "onboardingPin") {
+    handleHostMessage({ type: "onboardingPin", pin: !!mockHandle._pin });
+  } else if (msg.cmd === "onboardingSignInOptions") {
+    toast("(preview) Windows Settings would open at Sign-in options, on the TV");
+    setTimeout(() => { mockHandle._pin = true; }, 1500);
+  } else if (msg.cmd === "onboardingVortex") {
+    // Connecting to a running Vortex needs one restart, the way a Vortex that was open before the
+    // extension arrived does; the restart then answers with the games.
+    handleHostMessage({ type: "onboardingVortex", busy: true, mode: msg.mode });
+    if (msg.mode === "connect" && mockHandle._vortex !== "ready") mockHandle._vortex = "needsRestart";
+    if (msg.mode === "restart") mockHandle._vortex = "ready";
+    setTimeout(() => handleHostMessage({ type: "onboardingVortex", busy: false, mode: msg.mode, ...mockVortex() }), msg.mode === "peek" ? 200 : 1600);
   } else if (msg.cmd === "updateCheck") {
     mockUpdateStep({ state: "checking" }, 0);
     mockUpdateStep({ state: "available", latest: "1.6.0" }, 700);
@@ -6610,11 +7163,38 @@ function mockHandle(msg) {
   } else if (msg.cmd === "windowAction") {
     toast("(preview) window " + msg.action);
   } else if (msg.cmd === "shortcut") {
-    toast("(preview) shortcut " + msg.id);
+    toast(msg.id === "sleepPc" ? "(preview) the PC would sleep now, with the game frozen first" : "(preview) shortcut " + msg.id);
   } else if (msg.cmd === "power") {
     toast("(preview) power " + msg.action);
-  } else if (msg.cmd === "closeOverlay" || msg.cmd === "resumeGame" || msg.cmd === "goHome") {
+  } else if (msg.cmd === "closeOverlay" || msg.cmd === "goHome") {
     /* host-side window juggling; nothing to do in the browser preview */
+  } else if (msg.cmd === "resumeGame") {
+    // Back to the game thaws it, as on the host.
+    if (mockRest.paused) { mockRest.paused = false; mockGamePush(); }
+  } else if (msg.cmd === "pauseGame") {
+    mockRest.paused = !mockRest.paused;
+    mockGamePush();
+    toast(mockRest.paused ? "(preview) game frozen" : "(preview) game running again");
+  } else if (msg.cmd === "rest") {
+    // The screen goes dark for a moment and comes back, as a press would bring it back.
+    mockRest.phase = "resting";
+    if (mockHandle._running) mockRest.paused = true;
+    handleHostMessage({ type: "rest", rest: mockRestPayload() });
+    toast("(preview) resting — the screen would be dark now");
+    setTimeout(() => { mockRest.phase = "awake"; mockRest.paused = false; handleHostMessage({ type: "rest", rest: mockRestPayload() }); }, 1500);
+  } else if (msg.cmd === "sleepPc") {
+    toast("(preview) the PC would sleep now, with the game frozen first");
+  } else if (msg.cmd === "restRefresh") {
+    handleHostMessage({ type: "rest", rest: mockRestPayload() });
+  } else if (msg.cmd === "wakeAllow") {
+    const d = mockRest.wake.devices.find(x => x.name === msg.name);
+    if (d) d.armed = true;
+    toast(`(preview) ${msg.name} may wake the PC now`);
+    handleHostMessage({ type: "rest", rest: mockRestPayload() });
+  } else if (msg.cmd === "signInOnWake") {
+    mockRest.wake.signInOnWake = !!msg.on;
+    toast(msg.on ? "(preview) sign-in after a wake is back on" : "(preview) no sign-in after a wake");
+    handleHostMessage({ type: "rest", rest: mockRestPayload() });
   } else if (msg.cmd === "closeGame") {
     mockHandle._running = null;
     handleHostMessage({ type: "game", running: false, id: null });
@@ -6622,6 +7202,7 @@ function mockHandle(msg) {
   } else if (msg.cmd === "rescan") {
     handleHostMessage({ type: "scanning", busy: true });
     setTimeout(() => handleHostMessage({ type: "scanning", busy: false }), 1500);
+    mockScanProgress();
   } else if (msg.cmd === "setArgs") {
     toast("(preview) args = " + msg.args);
   } else if (msg.cmd === "romFolderPick") {
@@ -6817,6 +7398,46 @@ function mockHandle(msg) {
     mockPlaynite.done.clear();
     setTimeout(() => handleHostMessage(mockPlaynite.message("undone", outcome)), 400);
   }
+}
+
+/* The scan as the host reports it, a step at a time (BeginSteps / SetStep), so the first-run
+   setup's rail can be watched filling in. GOG is not signed in and Game Pass is off, as in the
+   mock's stores, so both are "off". */
+function mockScanProgress() {
+  const plan = [["emulators", 2], ["steam", 9], ["epic", 5], ["gog", 4], ["xbox", 2], ["roms", 8],
+    ["steamOwned", 3], ["epicOwned", 1], ["gogOwned", null], ["xboxOwned", 2], ["gamePass", null], ["metadata", null], ["achievements", null]];
+  const off = new Set(["gogOwned", "gamePass"]);
+  const steps = plan.map(([id]) => ({ id, state: off.has(id) ? "off" : "pending", count: null }));
+  const push = () => handleHostMessage({ type: "scanProgress", steps: steps.map(s => ({ ...s })) });
+  clearTimeout(mockScanProgress._t);
+  push();
+  let i = 0;
+  const next = () => {
+    while (i < plan.length && steps[i].state === "off") i++;
+    if (i >= plan.length) return;
+    const st = steps[i], n = plan[i][1];
+    st.state = "running";
+    push();
+    mockScanProgress._t = setTimeout(() => { st.state = "done"; st.count = n; push(); i++; next(); }, st.id === "metadata" ? 6000 : 700);
+  };
+  mockScanProgress._t = setTimeout(next, 400);
+}
+
+/* Vortex as the setup's step would find it: running, and not connected until it has been restarted
+   once (see the onboardingVortex branch of mockHandle). */
+function mockVortex() {
+  const state = mockHandle._vortex || "none";
+  const vortex = {
+    installed: true, path: "C:\\Users\\couch\\AppData\\Local\\Programs\\Vortex\\Vortex.exe", version: "1.13.7", running: true,
+    bridgeReady: state === "ready", needsRestart: state === "needsRestart",
+    error: state === "needsRestart" ? "Vortex is running but has not loaded the Loungepad bridge yet. Restart Vortex once" : null,
+  };
+  const games = state !== "ready" ? [] : [
+    { gameId: "steam:hollowmarksecondascent", title: "Hollowmark: Second Ascent", mods: 14, enabled: 11 },
+    { gameId: "gog:salttide", title: "Salt & Tide", mods: 3, enabled: 3 },
+    { gameId: null, title: "Skyrim Special Edition", mods: 0, enabled: 0 },
+  ];
+  return { vortex, games, error: null };
 }
 
 /* The Playnite import as the host would plan it for a small library: every part has something,

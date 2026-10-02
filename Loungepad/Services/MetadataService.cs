@@ -45,7 +45,7 @@ public class MetadataService
     /// about not re-hitting the network for the same answer; it was never meant to pin a library
     /// to whatever the app happened to know the day it first scanned.
     /// </summary>
-    private const int FetchVersion = 10;  // 6: the store trailer; 7: IGDB's YouTube trailer; 8: the gallery; 9: descriptors per board; 10: Metacritic only
+    private const int FetchVersion = 11;  // 6: the store trailer; 7: IGDB's YouTube trailer; 8: the gallery; 9: descriptors per board; 10: Metacritic only; 11: refill what a 1.5.0 run wiped (see Game.Unknown)
 
     /// <summary>
     /// Which source wrote a file, as part of its name.

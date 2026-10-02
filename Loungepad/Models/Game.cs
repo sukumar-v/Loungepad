@@ -147,4 +147,15 @@ public class Game
     /// everything stamped with an older one is fetched again -- otherwise a library sits on the
     /// old answers until the freshness window runs out, which is not what that window is for.</summary>
     public int MetadataVersion { get; set; }
+
+    /// <summary>
+    /// Whatever library.json holds that this build has no property for, kept and written back
+    /// as it was. An older build run against the same data folder -- an updater test, a copy
+    /// left on another drive -- used to read the file, drop every field it had never heard of
+    /// and save: a 1.5.0 start in Sept 2026 wiped TrailerUrl, Media and the content descriptors
+    /// from all 954 games, and because MetadataVersion survived, 1.6.0 never fetched them again.
+    /// Only builds from this one on carry this, so it protects the next such run, not that one.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonExtensionData]
+    public Dictionary<string, System.Text.Json.JsonElement>? Unknown { get; set; }
 }

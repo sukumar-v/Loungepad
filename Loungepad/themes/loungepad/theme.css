@@ -8,7 +8,10 @@
                once the highlight has rested on it -- its title sits low on the left,
                the recents sit in a row near the bottom, and the first row of the grid
                peeks under it.
-     browsing  the row is at the top and the grid owns the screen.
+     browsing  the row has gone up off the screen with the title, like the top of a
+               page scrolled away, and the grid owns the whole view. The row used to
+               park at the top, which left the grid three rows (the user's call,
+               Oct 1 2026); Up off the grid's first row brings it back.
 
    The recents used to ride a frosted tray, and the tray is what made the whole screen
    read as somebody else's television. Gone: the tiles sit straight on the art, held
@@ -30,12 +33,12 @@
    pixels and they are allowed to add up:
 
      chrome  96 + view 912 + legend 72                        = 1080
-     hero 640 + dock 232 + peek 40                            =  912
-     dock 232 + shelf 680                                     =  912
+     hero 640 + dock 232 + peek 40                            =  912   at rest
+     shelf 912                                                =  912   browsing
 
    Only --view-h, --dock-h and --peek are set; the hero is what is left over. That
    is what lets "Hide the button hints" work as one line: the view grows by the
-   legend's 72px and the hero absorbs all of it.
+   legend's 72px, the hero absorbs all of it, and the shelf is the view's height.
 
    Six columns across the 1760px between the gutters: (1760 - 5x28) / 6 = 270.
 
@@ -229,7 +232,7 @@ body:not([data-view="detail"]):has(#screen-library:is(.active, .closing, .under)
     color-mix(in srgb, var(--bg) 90%, transparent),
     color-mix(in srgb, var(--bg) 82%, transparent));
 }
-/* With the art kept bright the scrim only has to hold the chrome and the dock, not hide a picture. */
+/* With the art kept bright the scrim only has to hold the chrome and the tiles, not hide a picture. */
 html[data-theme-dim-art="false"] body:not([data-view="detail"]):has(#screen-library:is(.active, .closing, .under)[data-focus-region="grid"]) #backdrop::after {
   background: linear-gradient(180deg,
     color-mix(in srgb, var(--bg) 46%, transparent),
@@ -258,8 +261,10 @@ html[data-theme-dim-art="false"] body:not([data-view="detail"]):has(#screen-libr
   transition: transform var(--slide) var(--ease);
   will-change: transform;
 }
+/* Up by the hero AND the dock, which is the view less the peek: the shelf's top lands on the
+   view's top and the recents leave with the title. */
 #screen-library[data-focus-region="grid"] .tv-stack {
-  transform: translateY(calc(var(--hero-h) * -1));
+  transform: translateY(calc((var(--hero-h) + var(--dock-h)) * -1));
 }
 
 /* ------------------------------------------------------------------- hero --
@@ -315,15 +320,12 @@ html[data-theme-dim-art="false"] body:not([data-view="detail"]):has(#screen-libr
   height: var(--dock-h);
   margin: 0 var(--gutter);
   padding: 22px 0;
-  /* Browsing, the row parks at the top of the grid and the art behind it is a wash, so a
-     hairline underneath is the one thing saying "these are the recent ones, the rest is below".
-     Transparent at rest: over the art it would be a line drawn across the picture. */
-  border-bottom: 1px solid transparent;
-  transition: border-color calc(380ms * var(--motion, 1)) var(--ease);
+  transition: opacity calc(300ms * var(--motion, 1)) linear;
 }
-#screen-library[data-focus-region="grid"] .tv-dock {
-  border-bottom-color: color-mix(in srgb, var(--edge) 12%, transparent);
-}
+/* Browsing, it slides up out of the view with the hero, and fades as it goes like the hero does,
+   so it never runs into the top edge as a row cut in half. (It used to park there, with a rule
+   under it to tell it from the grid; there is nothing left to tell apart.) */
+#screen-library[data-focus-region="grid"] .tv-dock { opacity: 0; }
 
 .tv-dock .lib-section { gap: 0; }
 .tv-dock .section-head { display: none; }
@@ -338,9 +340,11 @@ html[data-theme-dim-art="false"] body:not([data-view="detail"]):has(#screen-libr
    dissolves the row wrappers so every tile is a direct child of the grid. */
 
 /* Held back while it is only a peek, so the sliver under the dock reads as the next thing
-   down rather than as a second row competing with the art. */
+   down rather than as a second row competing with the art. The view's full height, so browsing
+   it fills the view; at rest everything under the peek is clipped by .tv-view. One height in both
+   states, so the scroller is never resized under the app's reveal arithmetic. */
 .tv-shelf {
-  height: calc(var(--view-h) - var(--dock-h)); padding: 0 var(--gutter);
+  height: var(--view-h); padding: 0 var(--gutter);
   opacity: 0.5; transition: opacity calc(340ms * var(--motion, 1)) var(--ease);
 }
 #screen-library[data-focus-region="grid"] .tv-shelf { opacity: 1; }
@@ -356,10 +360,10 @@ html[data-theme-dim-art="false"] body:not([data-view="detail"]):has(#screen-libr
   padding: 20px 20px 26px;
   margin: 0 -20px;
 }
-/* Three rows fit and the fourth peeks, which is how you know to keep going. Fade its cut edge
-   rather than leave a hard line above the legend -- and redeclare the app's top fade, because
-   this rule would otherwise replace it. 24px is short enough to clear the focused tile, which
-   revealFocus keeps 30px clear of the edge. */
+/* Four rows fit at six across and the next one peeks, which is how you know to keep going. Fade
+   its cut edge rather than leave a hard line above the legend -- and redeclare the app's top
+   fade, because this rule would otherwise replace it. 24px is short enough to clear the focused
+   tile, which revealFocus keeps 30px clear of the edge. */
 .tv-shelf .grid-scroll {
   -webkit-mask-image: linear-gradient(180deg, #000 calc(100% - 24px), transparent);
   mask-image: linear-gradient(180deg, #000 calc(100% - 24px), transparent);

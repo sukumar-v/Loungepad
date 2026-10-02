@@ -73,6 +73,7 @@ const ICONS = {
      lookalike: an X closes, a moon sleeps, and "switch window" copies the two overlapping
      panes of the Xbox View button, which is the control that does this on a console. ---- */
   play: '<path d="M8 5.4v13.2L18.5 12 8 5.4z"/>',
+  pause: '<path d="M8.6 5.4v13.2M15.4 5.4v13.2"/>',
   x: '<path d="M6.4 6.4l11.2 11.2M17.6 6.4L6.4 17.6"/>',
   viewBtn: '<rect x="2.5" y="8" width="11.5" height="9.5" rx="1.6"/>'
          + '<path d="M7.4 8V6.5A1.5 1.5 0 0 1 8.9 5h10.1a1.5 1.5 0 0 1 1.5 1.5v9a1.5 1.5 0 0 1-1.5 1.5H17"/>',

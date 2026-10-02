@@ -18,6 +18,8 @@ internal enum KeyAction
     Options,
     /// <summary>A switch on the options page; <see cref="KeyDef.Option"/> says which.</summary>
     Option,
+    /// <summary>The options page's size steps, in its bar beside the gear.</summary>
+    SizeDown, SizeUp,
 }
 
 public enum KeyboardOption { Suggestions, FunctionKeys, NavKeys, Numpad, Modifiers }
@@ -149,6 +151,14 @@ internal sealed class KeyboardLayout
     private static readonly KeyDef SymbolsKey = new("abc", Action: KeyAction.Layer, Units: 2, Hint: "LT");
 
     public static readonly KeyDef Gear = new("", Action: KeyAction.Options);
+    public static readonly KeyDef SizeDown = new("−", Action: KeyAction.SizeDown);
+    public static readonly KeyDef SizeUp = new("+", Action: KeyAction.SizeUp);
+
+    /// <summary>Where the size steps sit in the options page's bar, in columns: −, then two columns
+    /// for the value (drawn by the window, not a key), then +, then the gear in the last column.</summary>
+    public static double SizeDownX(double width) => width - 5;
+    public static double SizeValueX(double width) => width - 4;
+    public static double SizeUpX(double width) => width - 2;
 
     /// <summary>
     /// The bottom row. With Ctrl/Win/Alt on, they go where a real keyboard has them -- left of
@@ -279,14 +289,18 @@ internal sealed class KeyboardLayout
     };
 
     /// <summary>
-    /// The options page: the gear, and one switch a row. It is the same width and height as the
-    /// keys it stands in for, so the keyboard does not jump when it opens -- only when a switch
-    /// changes what the keys will be. B goes back, as it does everywhere in the launcher; a B
-    /// badge on the gear was tried and sat on top of the icon, the bar being shorter than a key.
+    /// The options page: the size steps and the gear in the bar, and one switch a row. It is the
+    /// same width and height as the keys it stands in for, so the keyboard does not jump when it
+    /// opens -- only when a switch changes what the keys will be. The size lives in the bar because
+    /// the rows are already as many as the plain keyboard has: a sixth would make the page taller
+    /// than the keys. B goes back, as it does everywhere in the launcher; a B badge on the gear was
+    /// tried and sat on top of the icon, the bar being shorter than a key.
     /// </summary>
     public static KeyboardLayout Options(KeyboardOptions o)
     {
         var l = new KeyboardLayout { Width = WidthFor(o), BodyRows = BodyRowsFor(o) };
+        l.Slots.Add(new Slot(SizeDown, 0, SizeDownX(l.Width)));
+        l.Slots.Add(new Slot(SizeUp, 0, SizeUpX(l.Width)));
         l.Slots.Add(new Slot(Gear, 0, l.Width - 1));
         double w = Math.Min(l.Width, MainWidth), x = (l.Width - w) / 2;
         int row = 1;

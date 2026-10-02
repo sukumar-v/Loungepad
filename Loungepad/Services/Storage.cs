@@ -114,7 +114,16 @@ public class SettingsStore
         try
         {
             if (File.Exists(Paths.SettingsFile))
-                Settings = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(Paths.SettingsFile)) ?? new AppSettings();
+            {
+                var text = File.ReadAllText(Paths.SettingsFile);
+                Settings = JsonSerializer.Deserialize<AppSettings>(text) ?? new AppSettings();
+                // Written before the first-run setup existed: this install was set up by hand, so it
+                // counts as having been through the first version of the setup. Only a file with
+                // no settings at all is a new install.
+                if (System.Text.Json.Nodes.JsonNode.Parse(text) is System.Text.Json.Nodes.JsonObject o
+                    && !o.ContainsKey(nameof(AppSettings.OnboardingVersion)))
+                    Settings.OnboardingVersion = 1;
+            }
 
             // The accent reaches the UI as a CSS value, so a hand-edited file must not be able to
             // put anything but a hex colour there. Checked on the way in as well as on save,
@@ -326,6 +335,10 @@ public class LibraryStore
                     // scan lacked is kept from last time, or the achievements would go on every scan.
                     s.XboxTitleId ??= old.XboxTitleId;
                     s.EpicNamespace ??= old.EpicNamespace;
+                    // Fields a newer build wrote that this one cannot read (see Game.Unknown). A
+                    // rescan builds every entry afresh, so without this they would go on the
+                    // first scan instead of the first save.
+                    s.Unknown = old.Unknown;
                 }
                 merged.Add(s);
             }

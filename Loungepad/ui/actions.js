@@ -134,7 +134,7 @@ function bindingIssues(app, action, combo) {
   if (s.screenshotCombo && s.screenshotCombo !== "Off" && comboEq(combo, s.screenshotCombo))
     issues.push({ level: "block", text: `That is the screenshot button, which always wins. Pick another button.` });
 
-  const toggle = canonBtn(s.keyboardToggleButton || "RB");
+  const toggle = canonBtn(s.keyboardToggleButton || "Back");
   const hold = (s.keyboardToggleMode || "Press") === "Hold";
   if (single === toggle && !hold)
     issues.push({ level: "warn", text: `${say(toggle)} opens the keyboard on a press, so it wins over this. Change the keyboard button under Keyboard, set it to Hold, or pick another button.` });
@@ -817,7 +817,7 @@ function keyPickInput(btn) {
   const scope = $("overlay-keypick");
   switch (btn) {
     case "Up": case "Down": case "Left": case "Right":
-      if (navMove(btn)) paintNav();
+      if (listMove(btn)) paintNav();
       break;
     case "A": {
       if (!focusVisible()) break;

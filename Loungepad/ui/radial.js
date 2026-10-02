@@ -32,8 +32,11 @@ const RADIAL_ITEMS = [
   /* Label and description are rewritten from the live setting in renderRadial: this one is a
      toggle, and a spoke that cannot say which way it is currently set is a coin flip. */
   { id: "mouseInGame", label: "Mouse in game", icon: "controller" },
-  { id: "sleep",       label: "Sleep",         icon: "moon",
-    desc: "Blank the screen — any button wakes it" },
+  /* Rest mode (see RestService on the host): the screen off, the game frozen, and one press on the
+     pad brings both back. Sleeping the PC itself is under Shortcuts, because whether the pad can
+     wake it from THAT depends on the hardware. */
+  { id: "rest",        label: "Rest",          icon: "moon",
+    desc: "Screen off and the game paused — any button brings both back" },
 ];
 
 /* Where the highlight sits before the stick has been pushed anywhere. Deliberately NOT spoke
@@ -47,9 +50,13 @@ const SHORTCUTS = [
   { id: "settings",        label: "Windows Settings", icon: "gear" },
   { id: "displaySettings", label: "Display Settings", icon: "monitor" },
   { id: "volume",          label: "Volume Mixer",     icon: "volume" },
-  // Distinct from Sleep, which only blanks the screen: this hands the session to the Windows
+  // Distinct from Rest, which only blanks the screen: this hands the session to the Windows
   // lock screen, which the pad cannot drive at all.
   { id: "lock",            label: "Lock PC",          icon: "lock" },
+  // Rest first (the game frozen, the pad parked), then Windows' own sleep. The host answers
+  // this id itself rather than running a program; what can wake the PC afterwards is in
+  // Settings → General → Rest and sleep.
+  { id: "sleepPc",         label: "Sleep PC",         icon: "power" },
 ];
 
 /** Close every transient menu so an overlay never stacks on a stale one. */
@@ -150,7 +157,7 @@ function radialActivate() {
     case "close":     send({ cmd: "windowAction", action: "close" });    closeRadial(false); break;
     case "keyboard":  send({ cmd: "toggleKeyboard" });                   closeRadial(true);  break;
     // Blanks the TV and parks the pad; any button brings it back, so it needs no confirm step.
-    case "sleep":     send({ cmd: "suspend" });                          closeRadial(false); break;
+    case "rest":      send({ cmd: "rest" });                             closeRadial(false); break;
     // Stays open so the flipped label is visible; the toast alone would be gone with the menu.
     case "mouseInGame":
       if (S.settings) S.settings.gamepadMouseDuringGame = !mouseInGameOn();
@@ -227,8 +234,9 @@ function renderRadialSub() {
 function radialSubInput(btn) {
   const items = radialSubItems();
   switch (btn) {
-    case "Up": radialSubIdx = Math.max(0, radialSubIdx - 1); renderRadialSub(); break;
-    case "Down": radialSubIdx = Math.min(items.length - 1, radialSubIdx + 1); renderRadialSub(); break;
+    // Round at the ends, like every list (listMove in app.js).
+    case "Up": if (items.length) { radialSubIdx = (radialSubIdx - 1 + items.length) % items.length; renderRadialSub(); } break;
+    case "Down": if (items.length) { radialSubIdx = (radialSubIdx + 1) % items.length; renderRadialSub(); } break;
     case "A": if (focusVisible() && items[radialSubIdx]) items[radialSubIdx].action(); break;
     case "B": radialSub = null; hideOverlay("overlay-radialsub"); renderRadial(); break;
   }
@@ -252,12 +260,21 @@ function hideIngame() {
 
 function ingameItems() {
   const g = gameById(S.runningGameId);
+  const paused = !!S.gamePaused;
   return [
-    { label: "Resume", icon: "play", desc: "Back to what you were playing",
+    // Going back to the game always means a running game: a frozen one is thawed on the way.
+    { label: "Resume", icon: "play", desc: paused ? "Unpause the game and go back to it" : "Back to what you were playing",
       action: () => { hideIngame(); send({ cmd: "resumeGame" }); } },
-    { label: "Home", icon: "home", desc: "Leave the game running and open the library",
+    { label: "Home", icon: "home", desc: paused ? "Leave the game paused and open the library" : "Leave the game running and open the library",
       action: () => { hideIngame(); setOverlayMode(false); switchView("library"); send({ cmd: "goHome" }); } },
-    { label: "Power Wheel", icon: "apps", desc: "Switch windows, keyboard, sleep",
+    /* PlayState's trick: the game's processes frozen where they stand, so a game with no pause
+       of its own can be walked away from, and nothing is drawn or computed until you are back.
+       The menu stays up so the tile flips and says which way it is. */
+    { label: paused ? "Unpause" : "Pause game", icon: paused ? "play" : "pause",
+      desc: paused ? "The game is frozen where it stands; unpause it and stay here"
+                   : "Freeze the game where it stands, so it draws and computes nothing until you are back",
+      action: () => send({ cmd: "pauseGame" }) },
+    { label: "Power Wheel", icon: "apps", desc: "Switch windows, keyboard, rest",
       action: () => { hideIngame(); send({ cmd: "setRadialActive", active: true }); openRadial(g ? g.title : ""); } },
     // No confirm step: drop the overlay and land back on the library. Leaving the overlay up
     // over a closing game looks like nothing happened at all.
@@ -296,10 +313,10 @@ function renderIngame() {
 function ingameInput(btn) {
   const items = ingameItems();
   switch (btn) {
-    // A row, so it reads left and right. Up/Down are deliberately inert rather than wrapping
-    // the row, which would feel like the highlight jumped for no reason.
-    case "Left":  ingameIdx = Math.max(0, ingameIdx - 1); renderIngame(); break;
-    case "Right": ingameIdx = Math.min(items.length - 1, ingameIdx + 1); renderIngame(); break;
+    // A row, so it reads left and right, and comes round at its ends like every list. Up/Down are
+    // deliberately inert: on a row they would read as the highlight jumping for no reason.
+    case "Left":  if (items.length) { ingameIdx = (ingameIdx - 1 + items.length) % items.length; renderIngame(); } break;
+    case "Right": if (items.length) { ingameIdx = (ingameIdx + 1) % items.length; renderIngame(); } break;
     case "A": if (focusVisible() && items[ingameIdx]) items[ingameIdx].action(); break;
     case "B": hideIngame(); send({ cmd: "resumeGame" }); break;
   }

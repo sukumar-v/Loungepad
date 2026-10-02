@@ -49,6 +49,9 @@ internal sealed class HidGamepadReader
     private byte[] _report = new byte[64];
     private ushort[] _usages = new ushort[64];
     private bool _registered;
+    private bool _quiet;
+    private IntPtr _hwnd;
+    private readonly List<QuietReader> _quietReaders = new();
 
     /// <summary>A pad arrived or left. Raised on the window thread.</summary>
     public event Action<string, string, bool>? PadChanged;
@@ -60,6 +63,7 @@ internal sealed class HidGamepadReader
     public void Register(IntPtr hwnd)
     {
         if (_registered) return;
+        _hwnd = hwnd;
         var devices = new[]
         {
             new HidNative.RAWINPUTDEVICE { usUsagePage = HidNative.USAGE_PAGE_GENERIC, usUsage = HidNative.USAGE_JOYSTICK,
@@ -101,6 +105,140 @@ internal sealed class HidGamepadReader
         PadChanged?.Invoke(gone.Layout, gone.Name, false);
     }
 
+    /// <summary>
+    /// Resting: let go of the Raw Input registration and read the pads directly instead.
+    ///
+    /// While a window holds a Raw Input registration for gamepads with INPUTSINK, Windows counts
+    /// every report those pads send as user input -- and a DualSense streams one every 4 ms
+    /// whether or not anyone is touching it. Measured here (Oct 2026): GetLastInputInfo pinned at
+    /// zero the moment a probe registered, climbing again the moment it unregistered; and a display
+    /// turned off while the registration was held was turned back on by Windows within ONE
+    /// millisecond. So resting cannot keep the screen dark with the registration up, and Windows'
+    /// own idle timers never run while the launcher is open with a Sony pad attached.
+    ///
+    /// Quiet mode drops the registration (RIDEV_REMOVE) and reads each known pad's reports through
+    /// a plain ReadFile on its device path from a thread of its own -- the HID class driver hands
+    /// every reader its own copy of the input reports, and a read through a file handle is not
+    /// input as far as Windows is concerned. The reports go through the same Parse into the same
+    /// state, so GamepadService's loop sees a press exactly as before and nothing else changes.
+    /// Leaving quiet mode stops the threads and registers again. Both on the window thread.
+    /// </summary>
+    public void SetQuiet(bool quiet)
+    {
+        if (quiet == _quiet) return;
+        _quiet = quiet;
+        if (quiet)
+        {
+            var remove = new[]
+            {
+                new HidNative.RAWINPUTDEVICE { usUsagePage = HidNative.USAGE_PAGE_GENERIC, usUsage = HidNative.USAGE_JOYSTICK, dwFlags = HidNative.RIDEV_REMOVE, hwndTarget = IntPtr.Zero },
+                new HidNative.RAWINPUTDEVICE { usUsagePage = HidNative.USAGE_PAGE_GENERIC, usUsage = HidNative.USAGE_GAMEPAD, dwFlags = HidNative.RIDEV_REMOVE, hwndTarget = IntPtr.Zero },
+            };
+            if (_registered && !HidNative.RegisterRawInputDevices(remove, (uint)remove.Length, (uint)Marshal.SizeOf<HidNative.RAWINPUTDEVICE>()))
+                Log.Info($"HID pads: could not drop the Raw Input registration ({Marshal.GetLastWin32Error()})");
+            _registered = false;
+
+            List<HidPad> pads;
+            lock (_lock) pads = _pads.Values.ToList();
+            foreach (var pad in pads) _quietReaders.Add(new QuietReader(this, pad));
+            Log.Info($"HID pads: quiet mode, reading {pads.Count} pad(s) directly");
+        }
+        else
+        {
+            foreach (var r in _quietReaders) r.Stop();
+            _quietReaders.Clear();
+            if (_hwnd != IntPtr.Zero) Register(_hwnd);
+            Log.Info("HID pads: Raw Input registration back");
+        }
+    }
+
+    /// <summary>A report read directly from a pad (quiet mode), on that pad's reader thread.</summary>
+    private void OnDirectReport(HidPad pad, byte[] report, uint length, ushort[] usages)
+    {
+        if (!pad.Parse(report, length, usages, out var state, out var t)) return;
+        lock (_lock)
+        {
+            pad.State = state;
+            pad.TouchDx += t.Dx;
+            pad.TouchDy += t.Dy;
+            pad.TouchSpread += t.Spread;
+            pad.TouchFingers = t.Fingers;
+            pad.TouchClick = t.Click;
+            _last = pad;
+            _seq++;
+        }
+    }
+
+    /// <summary>
+    /// One pad read through its own file handle while resting. ReadFile blocks until the pad
+    /// sends a report (a DualSense does every 4 ms; a generic pad only on a change, which is a
+    /// press, which is the point); Stop breaks the read with CancelSynchronousIo.
+    /// </summary>
+    private sealed class QuietReader
+    {
+        private readonly HidGamepadReader _owner;
+        private readonly HidPad _pad;
+        private readonly Thread _thread;
+        private volatile bool _stop;
+        private volatile uint _tid;
+
+        public QuietReader(HidGamepadReader owner, HidPad pad)
+        {
+            _owner = owner;
+            _pad = pad;
+            _thread = new Thread(Run) { IsBackground = true, Name = "HidQuietReader" };
+            _thread.Start();
+        }
+
+        public void Stop()
+        {
+            _stop = true;
+            uint tid = _tid;
+            if (tid != 0)
+            {
+                var h = HidNative.OpenThread(HidNative.THREAD_TERMINATE, false, tid);
+                if (h != IntPtr.Zero)
+                {
+                    HidNative.CancelSynchronousIo(h);
+                    NativeMethods.CloseHandle(h);
+                }
+            }
+            _thread.Join(1500);
+        }
+
+        private void Run()
+        {
+            _tid = NativeMethods.GetCurrentThreadId();
+            try
+            {
+                using var h = HidNative.CreateFile(_pad.Path, HidNative.GENERIC_READ, HidNative.FILE_SHARE_READ | HidNative.FILE_SHARE_WRITE,
+                    IntPtr.Zero, HidNative.OPEN_EXISTING, 0, IntPtr.Zero);
+                if (h.IsInvalid)
+                {
+                    Log.Info($"HID pad: {_pad.Name}: cannot open for a direct read (error {Marshal.GetLastWin32Error()}); it will not wake the launcher");
+                    return;
+                }
+                int len = Math.Max(_pad.InputReportLength, 64);
+                var buf = new byte[len];
+                var usages = new ushort[Math.Max(1, _pad.MaxUsages)];
+                while (!_stop)
+                {
+                    if (!HidNative.ReadFile(h, buf, (uint)len, out uint got, IntPtr.Zero))
+                    {
+                        int err = Marshal.GetLastWin32Error();
+                        if (!_stop) Log.Info($"HID pad: {_pad.Name}: direct read ended (error {err})");
+                        return;
+                    }
+                    if (got > 0 && !_stop) _owner.OnDirectReport(_pad, buf, got, usages);
+                }
+            }
+            catch (Exception ex)
+            {
+                if (!_stop) Log.Info($"HID pad: {_pad.Name}: direct read failed: {ex.Message}");
+            }
+        }
+    }
+
     /// <summary>WM_INPUT: one or more reports from a device. Parsed here, on the window thread.</summary>
     public void OnInput(IntPtr hRawInput)
     {
@@ -108,7 +246,14 @@ internal sealed class HidGamepadReader
         if (HidNative.GetRawInputData(hRawInput, HidNative.RID_INPUT, null, ref size, HidNative.RawInputHeaderSize) != 0 || size == 0) return;
         if (_buffer.Length < size) _buffer = new byte[size];
         if (HidNative.GetRawInputData(hRawInput, HidNative.RID_INPUT, _buffer, ref size, HidNative.RawInputHeaderSize) == unchecked((uint)-1)) return;
+        OnInputData(_buffer, size);
+    }
 
+    /// <summary>The body of a WM_INPUT already read into a buffer (the window reads it once and
+    /// hands HID reports here, keyboard and mouse elsewhere).</summary>
+    public void OnInputData(byte[] buffer, uint size)
+    {
+        _buffer = buffer;
         if (BitConverter.ToUInt32(_buffer, 0) != HidNative.RIM_TYPEHID) return;
         var hDevice = (IntPtr)BitConverter.ToInt64(_buffer, 8);
         int header = (int)HidNative.RawInputHeaderSize;
@@ -194,6 +339,10 @@ internal sealed class HidPad : IDisposable
     public string Name { get; private set; } = "";
     public string Layout { get; private set; } = "generic";
     public string InstanceId { get; private set; } = "";
+    /// <summary>The device-interface path, for opening the pad directly while resting.</summary>
+    public string Path { get; private set; } = "";
+    /// <summary>The longest input report the pad sends, report id included, from its caps.</summary>
+    public int InputReportLength { get; private set; }
     public uint Vid { get; private set; }
     public uint Pid { get; private set; }
     public int ButtonCount { get; private set; }
@@ -441,7 +590,7 @@ internal sealed class HidPad : IDisposable
             return null;
         }
 
-        var pad = new HidPad { _preparsed = preparsed, Vid = info.dwVendorId, Pid = info.dwProductId, InstanceId = InstanceIdOf(path) };
+        var pad = new HidPad { _preparsed = preparsed, Vid = info.dwVendorId, Pid = info.dwProductId, InstanceId = InstanceIdOf(path), Path = path };
         (pad.Layout, pad._map) = LayoutFor(info.dwVendorId, info.dwProductId);
         pad.Name = ProductString(path) ?? $"{pad.Layout} controller {info.dwVendorId:X4}:{info.dwProductId:X4}";
         if (!pad.ReadCaps()) { pad.Dispose(); return null; }
@@ -454,6 +603,7 @@ internal sealed class HidPad : IDisposable
     private bool ReadCaps()
     {
         if (HidNative.HidP_GetCaps(_preparsed, out var caps) != HidNative.HIDP_STATUS_SUCCESS) return false;
+        InputReportLength = caps.InputReportByteLength;
         _maxButtons = HidNative.HidP_MaxUsageListLength(HidNative.HidP_Input, HidNative.USAGE_PAGE_BUTTON, _preparsed);
         _maxGeneric = HidNative.HidP_MaxUsageListLength(HidNative.HidP_Input, HidNative.USAGE_PAGE_GENERIC, _preparsed);
         ButtonCount = (int)_maxButtons;

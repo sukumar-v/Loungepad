@@ -61,7 +61,7 @@
           <div class="playing-info">
             <div class="playing-name" id="playingName">—</div>
             <div class="playing-meta mono" id="playingMeta"></div>
-            <div class="playing-hint"><span class="btn-slot" data-btn="A"></span><span>Resume</span><span class="btn-slot" data-btn="Y"></span><span>Options</span></div>
+            <div class="playing-hint"><span class="btn-slot" data-btn="A"></span><span>Resume</span><span class="btn-slot" data-btn="Y" data-kb="Ctrl"></span><span>Options</span></div>
           </div>
         </div>
       </section>
@@ -206,6 +206,36 @@
       </div>
 
       <footer class="legend" id="statsFoot"></footer>
+    </div>
+  </div>
+
+  <!-- ============ FIRST-RUN SETUP ============
+       What a new install opens on, as a box over the blurred library like Settings: the steps and
+       what is being found in the background down the left, one step's questions on the right. The
+       rows are Settings' own. On the Look step the box steps aside so the library shows through,
+       because the library is the preview. Built by onboarding.js. -->
+  <div class="screen" id="screen-onboarding" data-focus-scope>
+    <div class="onb-box">
+      <aside class="onb-rail">
+        <div class="onb-brand">Loungepad</div>
+        <nav class="onb-steps" id="onbSteps"></nav>
+        <div class="onb-bg" id="onbBg"></div>
+      </aside>
+      <main class="onb-main">
+        <div class="onb-head">
+          <div class="onb-kicker mono" id="onbKicker"></div>
+          <h1 class="onb-title" id="onbTitle"></h1>
+          <p class="onb-lede" id="onbLede"></p>
+        </div>
+        <div class="settings-scroll onb-rows" id="onbRows"></div>
+        <div class="onb-foot">
+          <footer class="legend" id="onbFoot"></footer>
+          <div class="pill-btn pill-primary onb-next" id="onbNext" data-focusable data-focus-key="onb:next">
+            <div class="pill-a-badge btn-slot" data-btn="A"></div>
+            <span id="onbNextLabel">Continue</span>
+          </div>
+        </div>
+      </main>
     </div>
   </div>
 
@@ -532,5 +562,7 @@
 <script src="activity.js"></script>
 <!-- Settings → General → Import from Playnite. -->
 <script src="playnite.js"></script>
+<!-- The first-run setup, last: every screen it borrows rows from is defined above it. -->
+<script src="onboarding.js"></script>
 </body>
 </html>

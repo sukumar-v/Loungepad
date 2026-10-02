@@ -237,13 +237,14 @@ function updatePlayingMeta() {
   if (!el || !g) return;
   const since = S.sessionStart ? new Date(S.sessionStart) : null;
   const dur = since && !isNaN(since) ? ` · ${fmtDuration((Date.now() - since) / 1000)}` : "";
-  el.textContent = (g.platform + " · RUNNING" + dur).toUpperCase();
+  el.textContent = (g.platform + (S.gamePaused ? " · PAUSED" : " · RUNNING") + dur).toUpperCase();
 }
 
 function renderIngameStats() {
   const el = $("ingameStats");
   if (!el) return;
   const bits = [];
+  if (S.gamePaused) bits.push("PAUSED");
   const since = S.sessionStart ? new Date(S.sessionStart) : null;
   if (since && !isNaN(since)) bits.push(`PLAYING FOR ${fmtDuration((Date.now() - since) / 1000)}`);
   const t = S.telemetry && S.telemetry.sample;
@@ -435,7 +436,7 @@ function achInput(btn) {
   const items = achItems();
   switch (btn) {
     case "Up": case "Down":
-      if (navMove(btn)) {
+      if (listMove(btn)) {
         const el = focusEl();
         if (el && el.dataset.rowIndex !== undefined) achState.idx = parseInt(el.dataset.rowIndex, 10);
       }
@@ -779,7 +780,7 @@ function actInput(btn) {
   const sessions = actSessions();
   switch (btn) {
     case "Up": case "Down":
-      if (navMove(btn)) {
+      if (listMove(btn)) {
         const el = focusEl();
         if (el && el.dataset.rowIndex !== undefined) actState.idx = parseInt(el.dataset.rowIndex, 10);
         renderActFoot(sessions);
@@ -1562,9 +1563,10 @@ function statsInput(btn) {
   // As in Settings: inside a category the highlight stays among its rows and comes round at the
   // ends; B is the way back to the categories.
   const inRows = (x) => x.dataset.rowIndex !== undefined;
+  const inTabs = (x) => x.dataset.statsTab !== undefined;
   switch (btn) {
     case "Up": case "Down":
-      if (row ? paneMove(btn, inRows) : navMove(btn)) syncStatsPane();
+      if (row ? paneMove(btn, inRows) : onTab ? paneMove(btn, inTabs) : navMove(btn)) syncStatsPane();
       break;
     case "Left": case "Right":
       if (row && el.dataset.navLock === "horizontal") { row.adjust(btn === "Right" ? 1 : -1); break; }
@@ -1763,7 +1765,7 @@ function stepDay(dir) {
 function dayInput(btn) {
   switch (btn) {
     case "Up": case "Down":
-      if (navMove(btn)) {
+      if (listMove(btn)) {
         const el = focusEl();
         if (el && el.dataset.rowIndex !== undefined) dayState.idx = parseInt(el.dataset.rowIndex, 10);
         renderDayFoot(dayEntries(dayDetail(dayState.key)));

@@ -77,8 +77,15 @@ internal class GamepadService : IDisposable
     /// </summary>
     public volatile bool MenuOwnsStick;
 
-    /// <summary>Displays are blanked; the pad is inert until a button wakes them.</summary>
+    /// <summary>Resting (see RestService): the pad is inert until a button press, which wakes and
+    /// is swallowed.</summary>
     public volatile bool Suspended;
+
+    private long _lastPadTick = long.MinValue / 2;
+    /// <summary>Milliseconds since any pad was last touched -- a button, a stick past the noise,
+    /// the touchpad -- for the idle timer. Windows counts none of that as input, so
+    /// GetLastInputInfo alone would rest a PC in the middle of a game.</summary>
+    public long PadInputAgeMs => Environment.TickCount64 - Volatile.Read(ref _lastPadTick);
 
     /// <summary>
     /// The built-in on-screen keyboard is up and takes every button. Set for the keyboard the
@@ -348,6 +355,7 @@ internal class GamepadService : IDisposable
                 }
                 if (changed || now - lastPadInputAt > PadQuietMs) PadUsed?.Invoke(layout, name);
                 lastPadInputAt = now;
+                Volatile.Write(ref _lastPadTick, Environment.TickCount64);
             }
 
             if (now >= nextBatteryPoll)

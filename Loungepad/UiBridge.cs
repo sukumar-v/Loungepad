@@ -31,7 +31,11 @@ public class UiBridge
     private readonly ThemeService _themes;
     private readonly UpdateService _updates;
     private readonly MetadataService _metadata = new();
-    private readonly SteamAccountService _steam = new();
+    /// <summary>A Steam sign-in, for a profile whose games are private. Kept apart from _accounts:
+    /// Steam's owned games already come in through _steam and OwnedSteamGames, and the sign-in is
+    /// only a better way for _steam to ask.</summary>
+    private readonly SteamWebSession _steamWeb = new();
+    private readonly SteamAccountService _steam;
     private readonly GamePassCatalogService _gamePass = new();
     /// <summary>The stores one signs in to, keyed as the page names them. Filled in the
     /// constructor because Xbox reads a setting.</summary>
@@ -80,6 +84,7 @@ public class UiBridge
         _keyboard = keyboard;
         _windows = windows;
         _themes = themes;
+        _steam = new SteamAccountService(_steamWeb);
         foreach (var account in new IStoreAccount[]
                  {
                      new EpicAccountClient(),
@@ -171,6 +176,7 @@ public class UiBridge
                 // every per-game override, so re-running it costs nothing.
                 StartScan();
                 DetectApps();
+                RefreshWake();
                 break;
 
             case "launch":
@@ -207,12 +213,22 @@ public class UiBridge
                 break;
 
             case "storeSignIn":
-                if (msg["store"]?.GetValue<string>() is { } signIn && _accounts.TryGetValue(signIn, out var accountIn))
+                if (msg["store"]?.GetValue<string>() == SteamWebSession.Store) _ = SignInSteamAsync();
+                else if (msg["store"]?.GetValue<string>() is { } signIn && _accounts.TryGetValue(signIn, out var accountIn))
                     _ = SignInAsync(accountIn);
                 break;
 
             case "storeSignOut":
-                if (msg["store"]?.GetValue<string>() is { } signOut && _accounts.TryGetValue(signOut, out var accountOut))
+                if (msg["store"]?.GetValue<string>() == SteamWebSession.Store)
+                {
+                    // Back to the public route (or the user's key): the next scan asks that way,
+                    // and a private profile's uninstalled games then leave the library.
+                    _steamWeb.SignOut();
+                    Push(new { type = "toast", message = "Signed out of Steam" });
+                    PushState();
+                    StartScan(force: true);
+                }
+                else if (msg["store"]?.GetValue<string>() is { } signOut && _accounts.TryGetValue(signOut, out var accountOut))
                 {
                     accountOut.SignOut();
                     Push(new { type = "toast", message = $"Signed out of {accountOut.DisplayName}" });
@@ -351,10 +367,16 @@ public class UiBridge
             //
             // The one thing kept is the TV display. Which screen is the television is a fact
             // about the room rather than a preference, and clearing it moves the launcher off
-            // the screen the user is looking at -- a restore they would have to undo blind.
+            // the screen the user is looking at -- a restore they would have to undo blind. The
+            // first-run setup's mark is kept too: a restore is not a new install, and the welcome
+            // screen coming back after it would read as the launcher having been wiped.
             case "resetSettings":
             {
-                var defaults = new AppSettings { TvDeviceName = _settings.Settings.TvDeviceName };
+                var defaults = new AppSettings
+                {
+                    TvDeviceName = _settings.Settings.TvDeviceName,
+                    OnboardingVersion = _settings.Settings.OnboardingVersion,
+                };
                 var startupChanged = defaults.LaunchOnStartup != StartupService.IsRegistered();
                 CopySettings(defaults);
                 _settings.Save();
@@ -402,12 +424,70 @@ public class UiBridge
             }
 
             case "shortcut":
-                if (msg["id"]?.GetValue<string>() is { } sid) { _windows.RunShortcut(sid); _window.CloseOverlay(false); }
+                if (msg["id"]?.GetValue<string>() is { } sid)
+                {
+                    // Sleep sits in the shortcuts list but is rest mode's: the game is frozen and
+                    // the pad parked first, so the machine comes back the way it went.
+                    if (sid == "sleepPc") { _ = _window.Rest.Sleep("the Power Wheel"); break; }
+                    _windows.RunShortcut(sid);
+                    _window.CloseOverlay(false);
+                }
                 break;
 
-            case "suspend":
-                _ = _window.Suspend();
+            // ---- rest mode (see RestService) ----
+
+            case "rest":
+                _window.Rest.Rest("asked for");
                 break;
+
+            // Settings → General → Rest and sleep → Sleep the PC now (the page confirms first).
+            case "sleepPc":
+                _ = _window.Rest.Sleep("asked for");
+                break;
+
+            // The in-game menu's pause: frozen where it stands, or thawed. Going back to the game
+            // by any other route (Resume, the resume card) thaws it too.
+            case "pauseGame":
+            {
+                if (!_launcher.GameRunning) break;
+                if (_launcher.Paused) _launcher.Resume();
+                else if (_launcher.Pause() == 0) PushToast("Nothing of the game could be paused");
+                PushGameState();
+                break;
+            }
+
+            case "restRefresh":
+                RefreshWake(force: msg["force"]?.GetValue<bool>() ?? false);
+                break;
+
+            // Settings → General → Rest and sleep: allow a controller device to wake the PC.
+            // Elevated, so one UAC prompt; the answer is re-read afterwards either way.
+            case "wakeAllow":
+            {
+                var name = msg["name"]?.GetValue<string>();
+                if (string.IsNullOrWhiteSpace(name)) break;
+                _ = WakeInfo.EnableWakeAsync(name).ContinueWith(t => _window.Dispatcher.BeginInvoke(() =>
+                {
+                    PushToast(t.IsCompletedSuccessfully && t.Result
+                        ? $"{name} may wake the PC now"
+                        : "Windows did not allow it, or the prompt was declined");
+                    RefreshWake(force: true);
+                }));
+                break;
+            }
+
+            case "signInOnWake":
+            {
+                var on = msg["on"]?.GetValue<bool>() ?? false;
+                _ = WakeInfo.SetSignInOnWakeAsync(on).ContinueWith(t => _window.Dispatcher.BeginInvoke(() =>
+                {
+                    PushToast(t.IsCompletedSuccessfully && t.Result
+                        ? (on ? "Windows asks for a sign-in after a wake again" : "No sign-in after a wake: the pad lands straight back where it was")
+                        : "Windows did not accept the change, or the prompt was declined");
+                    RefreshWake(force: true);
+                }));
+                break;
+            }
 
             // ---- actions: the wheel and Settings → Actions ----
 
@@ -585,6 +665,8 @@ public class UiBridge
             }
 
             case "resumeGame":
+                // Back to the game means a running game: a frozen one is thawed on the way.
+                _launcher.Resume();
                 _window.CloseOverlay(true);
                 break;
 
@@ -1025,6 +1107,32 @@ public class UiBridge
                 Log.Info($"UI: {msg["msg"]?.GetValue<string>()}");
                 break;
 
+            // ---- The first-run setup ----
+            // Its screens ask about the PC here. Nothing in them is a setting of its own except
+            // OnboardingVersion, which goes through saveSettings like everything else; every change
+            // they make is one the Settings rows make, through the same commands.
+
+            case "onboardingProbe":
+                _ = ProbeFirstRunAsync();
+                break;
+
+            // Asked again every few seconds while the sign-in step is up, so a PIN set up in
+            // Windows' own Settings shows as done the moment Loungepad is back.
+            case "onboardingPin":
+                _ = PushPinAsync();
+                break;
+
+            case "onboardingVortex":
+            {
+                var asked = msg["mode"]?.GetValue<string>();
+                _ = OnboardVortexAsync(asked is "connect" or "restart" ? asked : "peek");
+                break;
+            }
+
+            case "onboardingSignInOptions":
+                _ = OpenSignInOptionsAsync();
+                break;
+
             // ---- Mods ----
             // Every answer is one "mods" push carrying the whole screen for one game: which state
             // it is in (Vortex missing, needs a restart, game not set up, ready…), the sentence
@@ -1445,6 +1553,96 @@ public class UiBridge
         }
     }
 
+    // ---- The first-run setup ----
+
+    /// <summary>
+    /// What the setup screens need to know before they offer anything: the launchers on this PC,
+    /// whether Playnite has a library here, whether Windows has a PIN, and where Vortex stands. All
+    /// of it read-only. Vortex is then peeked at in the background -- only a Vortex that is running
+    /// and was connected before can answer that, and nothing is started for it.
+    /// </summary>
+    private async Task ProbeFirstRunAsync()
+    {
+        var (launchers, playnite, vortex) = await Task.Run(() =>
+            (FirstRun.Launchers(), PlayniteImport.FindDataDir(), _mods.Status(refresh: true)));
+        var pin = await FirstRun.PinSetUpAsync();
+        Push(new
+        {
+            type = "onboarding",
+            launchers = new { steam = launchers.Steam, epic = launchers.Epic, galaxy = launchers.Galaxy, xboxApp = launchers.XboxApp },
+            playnite = new { found = playnite is not null, dir = playnite },
+            pin,
+            vortex,
+        });
+        if (vortex.Installed) await OnboardVortexAsync("peek");
+    }
+
+    private async Task PushPinAsync() => Push(new { type = "onboardingPin", pin = await FirstRun.PinSetUpAsync() });
+
+    private CancellationTokenSource? _onboardVortexCts;
+
+    /// <summary>Vortex and the games it manages, for the setup's Vortex step. See ModService.SummaryAsync
+    /// for what each mode may do; a newer request cancels the one before it.</summary>
+    private async Task OnboardVortexAsync(string mode)
+    {
+        _onboardVortexCts?.Cancel();
+        var cts = _onboardVortexCts = new CancellationTokenSource();
+        Push(new { type = "onboardingVortex", busy = true, mode });
+        var library = _library.Games.ToList();
+        VortexSummary sum;
+        try { sum = await Task.Run(() => _mods.SummaryAsync(library, mode, cts.Token), cts.Token); }
+        catch (OperationCanceledException) { return; }
+        catch (Exception ex)
+        {
+            Log.Info($"First run: Vortex: {ex}");
+            sum = new VortexSummary { Vortex = _mods.Status(), Error = ex.Message };
+        }
+        if (cts.IsCancellationRequested) return;
+        if (mode != "peek")
+        {
+            var why = sum.Error ?? sum.Vortex.Error;
+            Log.Info($"First run: Vortex {mode}: bridge {(sum.Vortex.BridgeReady ? "ready" : "not ready")}, {sum.Games.Count} managed game(s){(why is null ? "" : " -- " + why)}");
+        }
+        Push(new { type = "onboardingVortex", busy = false, mode, vortex = sum.Vortex, games = sum.Games, error = sum.Error });
+    }
+
+    /// <summary>
+    /// Windows' sign-in options, where a PIN is set up, with Loungepad out of the way: it is topmost
+    /// on the TV and Settings would open behind it. Settings also opens wherever Windows last put
+    /// it, which is usually the desk monitor, so its window is moved to the TV once it has the
+    /// foreground. Only a frame window that turns up in the first few seconds is moved -- the
+    /// Settings app is hosted by ApplicationFrameHost like every Store app, and a window that
+    /// arrives later could be anything.
+    /// </summary>
+    private async Task OpenSignInOptionsAsync()
+    {
+        _window.Park();
+        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("ms-settings:signinoptions") { UseShellExecute = true }); }
+        catch (Exception ex)
+        {
+            _window.Unpark();
+            Push(new { type = "toast", message = $"Could not open Windows' sign-in options: {ex.Message}" });
+            return;
+        }
+        Log.Info("First run: opened Windows' sign-in options");
+        if (_settings.Settings.TvDeviceName is not { } tv) return;
+        var until = DateTime.UtcNow + TimeSpan.FromSeconds(8);
+        while (DateTime.UtcNow < until)
+        {
+            await Task.Delay(250);
+            var fg = Loungepad.Interop.NativeMethods.GetForegroundWindow();
+            if (fg == IntPtr.Zero) continue;
+            Loungepad.Interop.NativeMethods.GetWindowThreadProcessId(fg, out var pid);
+            string name;
+            try { using var p = System.Diagnostics.Process.GetProcessById((int)pid); name = p.ProcessName; }
+            catch { continue; }
+            if (!name.Equals("ApplicationFrameHost", StringComparison.OrdinalIgnoreCase)
+                && !name.Equals("SystemSettings", StringComparison.OrdinalIgnoreCase)) continue;
+            if (_windows.DisplayOf(fg) != tv) _windows.MoveToDisplay(fg, tv);
+            return;
+        }
+    }
+
     // ---- The Xbox button: who else takes it ----
 
     /// <summary>Set while Steam is being closed, edited and reopened, so the row can say so and a
@@ -1671,6 +1869,11 @@ public class UiBridge
         t.KeepFocus = s.KeepFocus;
         t.LaunchOnStartup = s.LaunchOnStartup;
         t.AutoUpdate = s.AutoUpdate;
+        t.OnboardingVersion = Math.Max(0, s.OnboardingVersion);
+        t.RestAfterMinutes = Math.Clamp(s.RestAfterMinutes, 0, 1440);
+        t.RestDuringGame = s.RestDuringGame;
+        t.RestPausesGame = s.RestPausesGame;
+        t.SleepAfterRestMinutes = Math.Clamp(s.SleepAfterRestMinutes, -1, 1440);
         t.GamepadMouseEnabled = s.GamepadMouseEnabled;
         t.GamepadMouseDuringGame = s.GamepadMouseDuringGame;
         t.Deadzone = Math.Clamp(s.Deadzone, 0.05, 0.40);
@@ -1729,6 +1932,9 @@ public class UiBridge
         {
             foreach (var w in open.Take(MaxThumbnails))
             {
+                // PrintWindow waits on the window's thread, and a frozen game's never answers:
+                // the switcher would hang here until the game was thawed.
+                if (_launcher.Paused && _launcher.OwnsWindow(new IntPtr(w.Handle))) continue;
                 WindowShot shot;
                 try { shot = _windows.CaptureWindow(new IntPtr(w.Handle)); }
                 catch (Exception ex) { Log.Info($"Thumbnail for '{w.Title}' failed: {ex.Message}"); continue; }
@@ -1764,33 +1970,61 @@ public class UiBridge
         _scanning = true;
         if (!quiet) Push(new { type = "scanning", busy = true });
         var settings = _settings.Settings;
+        // Only a scan somebody can see reports its steps: a quiet one is a manifest write mid-download.
+        if (!quiet) BeginSteps(settings);
+        Action<string, string, int?> step = quiet ? (_, _, _) => { } : SetStep;
         Task.Run(async () =>
         {
             var before = InstallSignature();
             try
             {
                 // Emulators and ROM folders first, so anything found is scanned in the same pass.
+                if (settings.DetectEmulators) step("emulators", "running", null);
                 var detected = settings.DetectEmulators ? EmulatorDetection.Run(_library) : null;
+                if (settings.DetectEmulators) step("emulators", "done", _library.Emulators.Count);
                 if (!quiet && detected is { } d && (d.Emulators.Count > 0 || d.Folders.Count > 0))
                     _ = _window.Dispatcher.BeginInvoke(() => Push(new { type = "toast", message = DetectionToast(d) }));
 
-                var found = _scanner.ScanAll();
-                found.AddRange(_scanner.ScanEmulated(_library.RomFolders.ToList()));
+                var found = _scanner.ScanAll(step);
+                step("roms", "running", null);
+                var roms = _scanner.ScanEmulated(_library.RomFolders.ToList());
+                step("roms", "done", roms.Count);
+                found.AddRange(roms);
                 // What the accounts own but the disk does not have. Each source is independent
                 // and each is optional; NotAlreadyFound keeps an installed game from appearing
                 // a second time as an owned one.
                 var owned = new List<Game>();
                 if (settings.SteamShowOwned)
-                    owned.AddRange(_scanner.OwnedSteamGames(await _steam.GetOwnedAsync(settings, force), found));
+                {
+                    step("steamOwned", "running", null);
+                    var steamOwned = _scanner.OwnedSteamGames(await _steam.GetOwnedAsync(settings, force), found);
+                    owned.AddRange(steamOwned);
+                    step("steamOwned", _steam.Status.Error is null ? "done" : "failed", steamOwned.Count);
+                }
                 foreach (var account in _accounts.Values)
                     if (account.Status.SignedIn)
-                        owned.AddRange(await account.GetOwnedAsync(force));
+                    {
+                        step(account.Store + "Owned", "running", null);
+                        var theirs = await account.GetOwnedAsync(force);
+                        owned.AddRange(theirs);
+                        step(account.Store + "Owned", account.Status.Error is null ? "done" : "failed", theirs.Count);
+                    }
                 if (settings.GamePassCatalog)
-                    owned.AddRange(await _gamePass.GetAsync(force));
+                {
+                    step("gamePass", "running", null);
+                    var pass = await _gamePass.GetAsync(force);
+                    owned.AddRange(pass);
+                    step("gamePass", _gamePass.Status.Error is null ? "done" : "failed", pass.Count);
+                }
                 found.AddRange(LibraryScanner.NotAlreadyFound(found, owned));
                 _library.MergeScanned(found);
             }
-            catch (Exception ex) { Log.Info($"Scan failed: {ex.Message}"); }
+            catch (Exception ex)
+            {
+                Log.Info($"Scan failed: {ex.Message}");
+                // Whatever the scan had not reached is not coming: say so rather than spin forever.
+                if (!quiet) FailOpenSteps();
+            }
             finally
             {
                 _scanning = false;
@@ -1806,9 +2040,74 @@ public class UiBridge
             // The achievement lists, after the art: the pass is paced and the library is already
             // on screen, so nothing waits on it. A quiet scan is a manifest write mid-download,
             // which is no reason to walk the library again.
-            if (!quiet) await _achievements.RefreshAllAsync(force: false);
+            if (!quiet)
+            {
+                if (settings.AchievementsEnabled) step("achievements", "running", null);
+                try { await _achievements.RefreshAllAsync(force: false); }
+                finally { if (settings.AchievementsEnabled) step("achievements", "done", null); }
+            }
         });
     }
+
+    // ---- the scan, step by step ----
+    // What the first-run setup draws while it asks its questions: each source of games in the last
+    // scan somebody could see, then the art and the achievement passes that follow it. The page
+    // names the steps; the host only says where each one stands.
+
+    private sealed record ScanStep(string Id, string State, int? Count);
+    private readonly object _stepsLock = new();
+    private readonly List<ScanStep> _steps = new();
+
+    /// <summary>Every step the coming scan will take, up front, so the page can list what is still
+    /// to come rather than have the list grow. A source that is switched off, or an account that
+    /// is not signed in, is "off" and says so.</summary>
+    private void BeginSteps(AppSettings s)
+    {
+        lock (_stepsLock)
+        {
+            _steps.Clear();
+            void Add(string id, bool on) => _steps.Add(new ScanStep(id, on ? "pending" : "off", null));
+            Add("emulators", s.DetectEmulators);
+            foreach (var id in new[] { "steam", "epic", "gog", "xbox", "roms" }) Add(id, true);
+            Add("steamOwned", s.SteamShowOwned);
+            foreach (var account in _accounts.Values) Add(account.Store + "Owned", account.Status.SignedIn);
+            Add("gamePass", s.GamePassCatalog);
+            // A pass already running from the last scan carries on; this scan's call joins it.
+            _steps.Add(new ScanStep("metadata", _enriching ? "running" : "pending", null));
+            Add("achievements", s.AchievementsEnabled);
+        }
+        PushScanProgress();
+    }
+
+    /// <summary>From any thread. The push goes through the dispatcher, like every other.</summary>
+    private void SetStep(string id, string state, int? count)
+    {
+        lock (_stepsLock)
+        {
+            var i = _steps.FindIndex(x => x.Id == id);
+            var next = new ScanStep(id, state, count);
+            if (i >= 0) _steps[i] = next; else _steps.Add(next);
+        }
+        _ = _window.Dispatcher.BeginInvoke(PushScanProgress);
+    }
+
+    /// <summary>The scan's own steps that were still to come when it failed. Not the passes after
+    /// it, which still run.</summary>
+    private void FailOpenSteps()
+    {
+        lock (_stepsLock)
+            for (var i = 0; i < _steps.Count; i++)
+                if (_steps[i] is { State: "pending" or "running" } open && open.Id is not ("metadata" or "achievements"))
+                    _steps[i] = open with { State = "failed" };
+        _ = _window.Dispatcher.BeginInvoke(PushScanProgress);
+    }
+
+    private object ScanStepsPayload()
+    {
+        lock (_stepsLock) return _steps.Select(x => new { id = x.Id, state = x.State, count = x.Count }).ToList();
+    }
+
+    private void PushScanProgress() => Push(new { type = "scanProgress", steps = ScanStepsPayload() });
 
     /// <summary>"Found RetroArch and PCSX2; added Game Boy Advance and Nintendo DS ROMs".</summary>
     private static string DetectionToast(DetectionSummary d)
@@ -1918,6 +2217,34 @@ public class UiBridge
     }
 
     /// <summary>
+    /// Steam's sign-in, the same window and the same one-at-a-time rule as the other stores'. Being
+    /// signed in is the opt-in for the rest of the library, as it is for Epic, GOG and Xbox, so a
+    /// successful sign-in turns "show games you own" on and rescans.
+    /// </summary>
+    private async Task SignInSteamAsync()
+    {
+        if (_signingIn) return;
+        _signingIn = true;
+        _window.BeginModalDialog();
+        var ok = false;
+        try { ok = await _steamWeb.SignInAsync(_window); }
+        catch (Exception ex) { Log.Info($"steam: sign-in failed ({ex})"); }
+        finally
+        {
+            _window.EndModalDialog();
+            _signingIn = false;
+        }
+        if (ok && !_settings.Settings.SteamShowOwned)
+        {
+            _settings.Settings.SteamShowOwned = true;
+            _settings.Save();
+        }
+        PushState();
+        Push(new { type = "toast", message = ok ? "Signed in to Steam" : "Steam sign-in cancelled" });
+        if (ok) StartScan(force: true);
+    }
+
+    /// <summary>
     /// Only Steam writes a manifest the watcher can see. Epic, GOG and the Microsoft Store install
     /// wherever the user pointed them, so after asking one of them to install, the library is
     /// re-read once a minute until the game is on disk or three hours have passed -- quietly, so
@@ -1956,6 +2283,7 @@ public class UiBridge
     {
         if (_enriching) return;
         _enriching = true;
+        SetStep("metadata", "running", null);
         try
         {
             // A snapshot: a rescan may replace the library while this is in flight, and its merge
@@ -1975,7 +2303,11 @@ public class UiBridge
             if (changed > 0) _ = _window.Dispatcher.BeginInvoke(PushState);
         }
         catch (Exception ex) { Log.Info($"Metadata pass failed: {ex.Message}"); }
-        finally { _enriching = false; }
+        finally
+        {
+            _enriching = false;
+            SetStep("metadata", "done", null);
+        }
     }
 
     private void AddManualGame()
@@ -2148,13 +2480,20 @@ public class UiBridge
             // row; the lists themselves are asked for by page.
             achievements = _achievements.Summaries(),
             scanning = _scanning,
+            // Where the last scan and its passes stand, source by source (see BeginSteps), so a
+            // page that opens its first-run setup mid-scan has the progress strip at once.
+            scanProgress = ScanStepsPayload(),
             steamAccount = _steam.Status,
             actions = ActionsPayload(icons: false),
             // Who else acts on the Xbox button, for Settings → Controller → Windows and Steam and
             // the menu combo's warning. Two registry reads and one cached file read.
             xboxButton = XboxButtonState(),
+            // Rest mode's phase, whether the game is frozen, and what can wake this PC (the last
+            // answer; see RefreshWake).
+            rest = RestPayload(),
             stores = new
             {
+                steam = _steamWeb.Status,
                 epic = _accounts["epic"].Status,
                 gog = _accounts["gog"].Status,
                 xbox = _accounts["xbox"].Status,
@@ -2303,7 +2642,46 @@ public class UiBridge
     public void PushToast(string message) => Push(new { type = "toast", message });
 
     public void PushGameState() =>
-        Push(new { type = "game", running = _launcher.GameRunning, id = _launcher.RunningGameId, since = _activity.Current?.Start });
+        Push(new { type = "game", running = _launcher.GameRunning, id = _launcher.RunningGameId, since = _activity.Current?.Start, paused = _launcher.Paused });
+
+    // ---- rest mode ----
+
+    private WakeReport? _wake;
+    private DateTime _wakeAt;
+    private bool _wakeBusy;
+
+    /// <summary>
+    /// What can wake this PC, for Settings → General → Rest and sleep. Read off the UI thread --
+    /// it spawns powercfg -- and pushed on its own message when it lands; a state push carries
+    /// the last answer. Re-read at most every half minute unless forced, which an elevated change
+    /// does.
+    /// </summary>
+    private void RefreshWake(bool force = false)
+    {
+        if (_wakeBusy || (!force && _wake is not null && DateTime.UtcNow - _wakeAt < TimeSpan.FromSeconds(30))) return;
+        _wakeBusy = true;
+        Task.Run(WakeInfo.Read).ContinueWith(t => _window.Dispatcher.BeginInvoke(() =>
+        {
+            _wakeBusy = false;
+            if (t.IsCompletedSuccessfully) { _wake = t.Result; _wakeAt = DateTime.UtcNow; }
+            else Log.Info($"Wake: reading what can wake the PC failed: {t.Exception?.GetBaseException().Message}");
+            PushRest();
+        }));
+    }
+
+    private object RestPayload() => new
+    {
+        phase = _window.Rest.Current.ToString().ToLowerInvariant(),
+        paused = _launcher.Paused,
+        wake = _wake is null ? null : new
+        {
+            canSleep = _wake.CanSleep, modernStandby = _wake.ModernStandby, signInOnWake = _wake.SignInOnWake,
+            devices = _wake.Devices, lastWake = _wake.LastWake,
+        },
+    };
+
+    /// <summary>The rest phase or the frozen game changed, or the wake facts were re-read.</summary>
+    public void PushRest() => Push(new { type = "rest", rest = RestPayload() });
 
     /// <summary>The latest reading during a session, for the in-game menu's readout.</summary>
     private void PushTelemetry(ActivityService.Live live) =>
@@ -2536,9 +2914,9 @@ public class UiBridge
     public void PushKeyboardDismissed() => Push(new { type = "keyboardDismissed" });
 
     /// <summary>
-    /// The keyboard's own options page changed one of its switches. Only those five fields go, and
-    /// the page merges them into its copy rather than taking a whole settings object: a full copy
-    /// would overwrite a change the page had made and not yet saved.
+    /// The keyboard's own options page changed one of its switches or its size. Only those six
+    /// fields go, and the page merges them into its copy rather than taking a whole settings object:
+    /// a full copy would overwrite a change the page had made and not yet saved.
     /// </summary>
     public void PushKeyboardOptions()
     {
@@ -2553,6 +2931,7 @@ public class UiBridge
                 keyboardNavKeys = s.KeyboardNavKeys,
                 keyboardNumpad = s.KeyboardNumpad,
                 keyboardModifiers = s.KeyboardModifiers,
+                keyboardScale = s.KeyboardScale,
             },
         });
     }

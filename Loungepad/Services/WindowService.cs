@@ -422,16 +422,14 @@ public class WindowService
 
 
     /// <summary>
-    /// "Suspend": drop the displays into standby without suspending the machine. Sleep would need
-    /// Wake-on-LAN or a wake-capable receiver to come back from; this just blanks the TV, leaves
-    /// the session and anything running in it alone, and any gamepad button wakes it.
+    /// Rest: drop the displays into standby without suspending the machine (RestService decides
+    /// whether sleep follows). Leaves the session and anything running in it alone.
     /// </summary>
     public void BlankDisplays()
     {
-        NativeMethods.SendMessageTimeout(NativeMethods.HWND_BROADCAST, NativeMethods.WM_SYSCOMMAND,
-            new IntPtr(NativeMethods.SC_MONITORPOWER), new IntPtr(NativeMethods.MONITOR_OFF),
-            NativeMethods.SMTO_ABORTIFHUNG, 1000, out _);
-        Log.Info("Suspend: displays off");
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        MonitorPower(NativeMethods.MONITOR_OFF);
+        Log.Info($"Rest: displays off ({sw.ElapsedMilliseconds} ms)");
     }
 
     /// <summary>
@@ -441,9 +439,7 @@ public class WindowService
     /// </summary>
     public void WakeDisplays()
     {
-        NativeMethods.SendMessageTimeout(NativeMethods.HWND_BROADCAST, NativeMethods.WM_SYSCOMMAND,
-            new IntPtr(NativeMethods.SC_MONITORPOWER), new IntPtr(NativeMethods.MONITOR_ON),
-            NativeMethods.SMTO_ABORTIFHUNG, 1000, out _);
+        MonitorPower(NativeMethods.MONITOR_ON);
 
         var inputs = new[]
         {
@@ -451,7 +447,26 @@ public class WindowService
             new NativeMethods.INPUT { type = NativeMethods.INPUT_MOUSE, u = new NativeMethods.INPUTUNION { mi = new NativeMethods.MOUSEINPUT { dx = -1, dwFlags = NativeMethods.MOUSEEVENTF_MOVE } } },
         };
         NativeMethods.SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<NativeMethods.INPUT>());
-        Log.Info("Suspend: displays on");
+        Log.Info("Rest: displays on");
+    }
+
+    /// <summary>
+    /// SC_MONITORPOWER, sent to OUR OWN window. DefWindowProc turns it into the system-wide
+    /// display change whichever top-level window receives it, hidden or not. It used to be a
+    /// SendMessageTimeout broadcast with a one-second timeout per window, and every window that
+    /// does not pump messages -- a suspended Store app, a frozen game, anything flagged hung -- cost
+    /// the full second: 326 top-level windows on this PC, and the call blocked the UI thread for
+    /// 10 to 70 s on every rest, during which nothing dimmed, no timer ticked, and whatever was
+    /// pressed in the meantime woke it the moment the screen finally went dark. Three
+    /// milliseconds now. A broadcast is only used when there is no window yet, and posted rather
+    /// than sent, so it can never block.
+    /// </summary>
+    private void MonitorPower(int state)
+    {
+        if (_ownWindow != IntPtr.Zero)
+            NativeMethods.SendMessage(_ownWindow, NativeMethods.WM_SYSCOMMAND, new IntPtr(NativeMethods.SC_MONITORPOWER), new IntPtr(state));
+        else
+            NativeMethods.PostMessage(NativeMethods.HWND_BROADCAST, NativeMethods.WM_SYSCOMMAND, new IntPtr(NativeMethods.SC_MONITORPOWER), new IntPtr(state));
     }
 
     private static void Start(string target) =>

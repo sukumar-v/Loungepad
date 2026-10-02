@@ -19,13 +19,31 @@ public class LibraryScanner
         "Steamworks Common Redistributables", "Steam Linux Runtime", "Proton", "SteamVR"
     };
 
-    public List<Game> ScanAll()
+    /// <summary>Every store's installed games. <paramref name="report"/> hears about each store as
+    /// it goes -- (id, "running"|"done"|"failed", count) -- which is what the first-run setup's
+    /// progress strip draws; nothing else about the scan changes for it.</summary>
+    public List<Game> ScanAll(Action<string, string, int?>? report = null)
     {
         var games = new List<Game>();
-        try { games.AddRange(ScanSteam()); } catch (Exception ex) { Log.Info($"Steam scan failed: {ex.Message}"); }
-        try { games.AddRange(ScanEpic()); } catch (Exception ex) { Log.Info($"Epic scan failed: {ex.Message}"); }
-        try { games.AddRange(ScanGog()); } catch (Exception ex) { Log.Info($"GOG scan failed: {ex.Message}"); }
-        try { games.AddRange(ScanXbox()); } catch (Exception ex) { Log.Info($"Xbox scan failed: {ex.Message}"); }
+        void Run(string id, string name, Func<List<Game>> scan)
+        {
+            report?.Invoke(id, "running", null);
+            try
+            {
+                var found = scan();
+                games.AddRange(found);
+                report?.Invoke(id, "done", found.Count);
+            }
+            catch (Exception ex)
+            {
+                Log.Info($"{name} scan failed: {ex.Message}");
+                report?.Invoke(id, "failed", null);
+            }
+        }
+        Run("steam", "Steam", ScanSteam);
+        Run("epic", "Epic", ScanEpic);
+        Run("gog", "GOG", ScanGog);
+        Run("xbox", "Xbox", ScanXbox);
         return games;
     }
 

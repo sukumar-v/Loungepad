@@ -158,6 +158,10 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     public static extern IntPtr PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
 
+    /// <summary>Synchronous, so only ever to a window of this process (see WindowService.MonitorPower).</summary>
+    [DllImport("user32.dll")]
+    public static extern IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
     public const uint SMTO_ABORTIFHUNG = 0x0002;
 
     /// <summary>Broadcast form of SendMessage. The timeout matters: a plain broadcast blocks on
@@ -873,4 +877,94 @@ internal static class NativeMethods
 
     [DllImport("pdh.dll")]
     public static extern uint PdhCloseQuery(IntPtr hQuery);
+
+    // ---- Rest mode: idle time, sleep, and freezing a game (RestService, GameLaunchService, WakeInfo) ----
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct LASTINPUTINFO { public uint cbSize; public uint dwTime; }
+
+    /// <summary>The tick (GetTickCount, 32-bit) of the last keyboard or mouse input in this
+    /// session, whoever it went to. Compared unsigned against GetTickCount so the 49-day wrap
+    /// does not matter. A gamepad read through XInput or Raw Input is not input to Windows and
+    /// never moves it; the pad service keeps its own stamp.</summary>
+    [DllImport("user32.dll")]
+    public static extern bool GetLastInputInfo(ref LASTINPUTINFO plii);
+
+    [DllImport("kernel32.dll")]
+    public static extern uint GetTickCount();
+
+    /// <summary>Put the machine to sleep (or hibernate). Hybrid sleep, where Windows has it on,
+    /// is honoured. Returns only once the machine is back, so it is never called on the UI
+    /// thread; a FALSE within a moment means the request was refused.</summary>
+    [DllImport("powrprof.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.U1)]
+    public static extern bool SetSuspendState([MarshalAs(UnmanagedType.U1)] bool hibernate,
+        [MarshalAs(UnmanagedType.U1)] bool forceCritical, [MarshalAs(UnmanagedType.U1)] bool disableWakeEvent);
+
+    [DllImport("powrprof.dll")]
+    [return: MarshalAs(UnmanagedType.U1)]
+    public static extern bool IsPwrSuspendAllowed();
+
+    /// <summary>CallNtPowerInformation levels used here: SYSTEM_POWER_CAPABILITIES (76 bytes; S3
+    /// at byte 5, AoAc -- Modern Standby -- at byte 20) and the execution state (a ULONG of ES_*
+    /// bits: what is holding the system or the display awake right now).</summary>
+    public const int SystemPowerCapabilities = 4, SystemExecutionState = 16;
+    public const uint ES_SYSTEM_REQUIRED = 0x1, ES_DISPLAY_REQUIRED = 0x2;
+
+    [DllImport("powrprof.dll")]
+    public static extern uint CallNtPowerInformation(int level, IntPtr inBuf, uint inLen, byte[] outBuf, uint outLen);
+
+    // The active power scheme's "Require a password on wakeup" (CONSOLELOCK, under the no-subgroup
+    // guid). Readable by anyone; writing it is an elevated powercfg (see WakeInfo).
+    public static readonly Guid NO_SUBGROUP_GUID = new("fea3413e-7e05-4911-9a71-700331f1c294");
+    public static readonly Guid GUID_LOCK_CONSOLE_ON_WAKE = new("0e796bdb-100d-47d6-a2d5-f7d2daa51f51");
+
+    [DllImport("powrprof.dll")]
+    public static extern uint PowerGetActiveScheme(IntPtr rootKey, out IntPtr activeScheme);
+
+    [DllImport("powrprof.dll")]
+    public static extern uint PowerReadACValueIndex(IntPtr rootKey, ref Guid scheme, ref Guid subGroup, ref Guid setting, out uint value);
+
+    [DllImport("kernel32.dll")]
+    public static extern IntPtr LocalFree(IntPtr hMem);
+
+    /// <summary>Freeze and thaw every thread of a process at once: what PlayState does to pause a
+    /// game, and what a debugger's "break" is. Undocumented but unchanged since XP. The handle
+    /// needs PROCESS_SUSPEND_RESUME, which a game running elevated will refuse.</summary>
+    public const uint PROCESS_SUSPEND_RESUME = 0x0800;
+
+    [DllImport("ntdll.dll")]
+    public static extern int NtSuspendProcess(IntPtr hProcess);
+
+    [DllImport("ntdll.dll")]
+    public static extern int NtResumeProcess(IntPtr hProcess);
+
+    /// <summary>Sleep and wake, as the window hears them: suspend is about to happen; the machine
+    /// is back (always); the machine is back because somebody pressed something (sometimes).</summary>
+    public const int WM_POWERBROADCAST = 0x0218;
+    public const int PBT_APMSUSPEND = 0x0004, PBT_APMRESUMESUSPEND = 0x0007, PBT_APMRESUMEAUTOMATIC = 0x0012;
+
+    /// <summary>The session locking and unlocking, for a wake that has to wait for the sign-in.</summary>
+    public const int WM_WTSSESSION_CHANGE = 0x02B1;
+    public const int WTS_SESSION_LOCK = 0x7, WTS_SESSION_UNLOCK = 0x8;
+    public const int NOTIFY_FOR_THIS_SESSION = 0;
+
+    [DllImport("wtsapi32.dll", SetLastError = true)]
+    public static extern bool WTSRegisterSessionNotification(IntPtr hWnd, int dwFlags);
+
+    [DllImport("wtsapi32.dll")]
+    public static extern bool WTSUnRegisterSessionNotification(IntPtr hWnd);
+
+    /// <summary>The console display's state -- off, on, dimmed -- as a power setting notification:
+    /// WM_POWERBROADCAST with PBT_POWERSETTINGCHANGE and a POWERBROADCAST_SETTING (the GUID, a
+    /// length, then the byte). Registered on the main window for RestService.OnDisplayState.</summary>
+    public const int PBT_POWERSETTINGCHANGE = 0x8013;
+    public static readonly Guid GUID_CONSOLE_DISPLAY_STATE = new("6fe69556-704a-47a0-8f24-c28d936fda47");
+    public const int DEVICE_NOTIFY_WINDOW_HANDLE = 0;
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr RegisterPowerSettingNotification(IntPtr hRecipient, ref Guid powerSettingGuid, int flags);
+
+    [DllImport("user32.dll")]
+    public static extern bool UnregisterPowerSettingNotification(IntPtr handle);
 }

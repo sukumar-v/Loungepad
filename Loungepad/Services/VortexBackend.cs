@@ -137,6 +137,36 @@ public sealed class VortexBackend
 
     public static bool IsRunning => Process.GetProcessesByName("Vortex").Length > 0;
 
+    /// <summary>The bridge extension is in Vortex's plugins folder: this PC has been connected
+    /// before, from the Mods screen or the first-run setup.</summary>
+    public static bool PluginInstalled => File.Exists(Path.Combine(PluginDir, "index.js"));
+
+    /// <summary>
+    /// Where Vortex stands, without changing anything the user has not already agreed to: nothing
+    /// is started, nothing is waited for, and the extension is not put into a Vortex that has
+    /// never had it. Only an install that was connected before gets this run's token written, which
+    /// is what lets its running bridge answer at all.
+    /// </summary>
+    public async Task<ModManagerStatus> PeekAsync(CancellationToken ct)
+    {
+        var status = new ModManagerStatus { Installed = ExePath is not null, Path = ExePath, Version = Version, Running = IsRunning };
+        if (ExePath is null || !status.Running || !PluginInstalled) return status;
+        SyncPlugin();
+        if (await PingAsync(ct) is { } v)
+        {
+            status.Version = v is { Length: > 0 } ? v : Version;
+            var shipped = PluginVersion(Path.Combine(ShippedPluginDir, "info.json"));
+            if (shipped is not null && _bridgeVersion is not null && _bridgeVersion != shipped) status.NeedsRestart = true;
+            else status.BridgeReady = true;
+        }
+        else
+        {
+            status.NeedsRestart = true;
+            status.Error = PortTakenMessage();
+        }
+        return status;
+    }
+
     // ---- the extension ----
 
     /// <summary>
@@ -224,7 +254,7 @@ public sealed class VortexBackend
             }
             status.Running = true;
             status.NeedsRestart = true;
-            status.Error = "Vortex is running but has not loaded the Loungepad bridge yet. Restart Vortex once";
+            status.Error = PortTakenMessage() ?? "Vortex is running but has not loaded the Loungepad bridge yet. Restart Vortex once";
             return status;
         }
 
@@ -252,9 +282,51 @@ public sealed class VortexBackend
         status.Running = IsRunning;
         status.NeedsRestart = status.Running;
         status.Error = status.Running
-            ? "Vortex started but the Loungepad bridge did not answer. Restart Vortex once"
+            ? PortTakenMessage() ?? "Vortex started but the Loungepad bridge did not answer. Restart Vortex once"
             : "Vortex did not start";
         return status;
+    }
+
+    /// <summary>
+    /// Another extension in Vortex's plugins folder that listens on the bridge's port. Vortex loads
+    /// extensions in folder order, so the first to bind wins and the Loungepad bridge's own listen
+    /// fails with EADDRINUSE on every start: a restart changes nothing, and "restart Vortex once"
+    /// would send somebody round that loop for ever. The usual one is the Consolify bridge, the
+    /// same extension under the app's old name, which nothing removes now (see CLAUDE.md: the
+    /// migrations are gone at the user's request). Only reported while the bridge is not answering.
+    /// </summary>
+    public static List<string> ForeignBridges()
+    {
+        var found = new List<string>();
+        try
+        {
+            var plugins = Path.Combine(VortexDataDir, "plugins");
+            if (!Directory.Exists(plugins)) return found;
+            foreach (var dir in Directory.GetDirectories(plugins))
+            {
+                if (string.Equals(Path.GetFileName(dir), PluginFolderName, StringComparison.OrdinalIgnoreCase)) continue;
+                var index = Path.Combine(dir, "index.js");
+                if (!File.Exists(index)) continue;
+                string text;
+                try { text = File.ReadAllText(index); } catch { continue; }
+                if (!text.Contains(DefaultPort.ToString(), StringComparison.Ordinal)) continue;
+                string? name = null;
+                try { name = JsonNode.Parse(File.ReadAllText(Path.Combine(dir, "info.json")))?["name"]?.GetValue<string>(); } catch { }
+                found.Add(name is { Length: > 0 } ? name : Path.GetFileName(dir));
+            }
+        }
+        catch (Exception ex) { Log.Info($"Vortex bridge: could not look through the plugins folder: {ex.Message}"); }
+        return found;
+    }
+
+    private static string? PortTakenMessage()
+    {
+        var others = ForeignBridges();
+        if (others.Count == 0) return null;
+        var names = string.Join(" and ", others.Select(n => $"“{n}”"));
+        Log.Info($"Vortex bridge: {names} also listens on port {DefaultPort}");
+        return $"{names} in Vortex's extensions holds the port Loungepad's bridge needs, so Loungepad's cannot start. " +
+               "Remove it in Vortex under Extensions, then restart Vortex";
     }
 
     /// <summary>The version of the bridge extension that last answered, for the restart check.</summary>

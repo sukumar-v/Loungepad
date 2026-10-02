@@ -77,6 +77,27 @@ public sealed class ModExtension
     public bool Exact { get; set; }
 }
 
+/// <summary>
+/// The first-run setup's view of the mod manager: where it stands, and the games it has been set
+/// up for, each with how many mods it holds. A game is matched to the library the way the Mods
+/// screen matches it, by install path; one the library has no install of keeps Vortex's name and
+/// no <see cref="VortexSummaryGame.GameId"/>.
+/// </summary>
+public sealed class VortexSummary
+{
+    public ModManagerStatus Vortex { get; set; } = new();
+    public List<VortexSummaryGame> Games { get; set; } = new();
+    public string? Error { get; set; }
+}
+
+public sealed class VortexSummaryGame
+{
+    public string? GameId { get; set; }
+    public string Title { get; set; } = "";
+    public int Mods { get; set; }
+    public int Enabled { get; set; }
+}
+
 /// <summary>Where the mod manager stands, for the Settings row and the Mods screen's first line.</summary>
 public sealed class ModManagerStatus
 {

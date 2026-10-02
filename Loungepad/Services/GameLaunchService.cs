@@ -157,6 +157,9 @@ public class GameLaunchService
         {
             monitorCts.Cancel();
             monitorCts.Dispose();
+            // A game killed while frozen leaves handles behind and a Paused that would carry
+            // into the next session.
+            Resume();
             _runningInstallDir = null;
             lock (_pidGate) _pidCache.Clear();
 
@@ -337,6 +340,8 @@ public class GameLaunchService
     {
         if (!GameRunning) return 0;
         _closeRequested = true;
+        // A frozen process never reads the WM_CLOSE it is about to be posted.
+        Resume();
         int n = 0;
         foreach (var p in Process.GetProcesses())
         {
@@ -360,6 +365,67 @@ public class GameLaunchService
         var until = DateTime.UtcNow + timeout;
         while (GameRunning && DateTime.UtcNow < until) await Task.Delay(200);
         return !GameRunning;
+    }
+
+    // ---- pausing: the game frozen where it stands ----
+
+    /// <summary>Whether the running game's processes are frozen (see Pause).</summary>
+    public bool Paused { get; private set; }
+    /// <summary>Paused or thawed, for the page's in-game menu. Raised off the UI thread as often as on it.</summary>
+    public event Action<bool>? PausedChanged;
+    private readonly List<IntPtr> _pausedHandles = new();
+    private readonly object _pauseGate = new();
+
+    /// <summary>
+    /// Freeze every process of the running game where it stands -- NtSuspendProcess on each, the
+    /// way PlayState does it for Playnite -- so it stops drawing, computing and listening while
+    /// nobody is playing, and picks up exactly there when thawed. The handles are kept open until
+    /// then, which is what the thaw needs and what stops a pid being reused underneath it.
+    /// Returns how many froze; 0 when nothing is running or nothing could be opened (a game
+    /// running elevated refuses the handle). A game that is already frozen is left alone, so
+    /// the caller that froze it is the one that thaws it.
+    /// </summary>
+    public int Pause()
+    {
+        int n = 0;
+        lock (_pauseGate)
+        {
+            if (Paused || !GameRunning) return 0;
+            foreach (var pid in TrackedPids())
+            {
+                var h = NativeMethods.OpenProcess(NativeMethods.PROCESS_SUSPEND_RESUME, false, pid);
+                if (h == IntPtr.Zero) { Log.Info($"Pause: could not open pid {pid}"); continue; }
+                int rc = NativeMethods.NtSuspendProcess(h);
+                if (rc != 0) { Log.Info($"Pause: NtSuspendProcess on pid {pid} answered 0x{rc:X8}"); NativeMethods.CloseHandle(h); continue; }
+                _pausedHandles.Add(h);
+                n++;
+            }
+            if (n > 0) Paused = true;
+        }
+        Log.Info(n > 0 ? $"Pause: froze {n} process(es) of the game" : "Pause: nothing of the game could be frozen");
+        if (n > 0) PausedChanged?.Invoke(true);
+        return n;
+    }
+
+    /// <summary>Thaw what Pause froze. Safe to call at any time; a no-op when nothing is frozen.</summary>
+    public void Resume()
+    {
+        bool was;
+        lock (_pauseGate)
+        {
+            was = Paused;
+            // In reverse, so a launcher that watches its child sees the child alive first.
+            for (int i = _pausedHandles.Count - 1; i >= 0; i--)
+            {
+                NativeMethods.NtResumeProcess(_pausedHandles[i]);
+                NativeMethods.CloseHandle(_pausedHandles[i]);
+            }
+            _pausedHandles.Clear();
+            Paused = false;
+        }
+        if (!was) return;
+        Log.Info("Pause: the game is running again");
+        PausedChanged?.Invoke(false);
     }
 
     /// <summary>Is this pid one of the game's own processes (launcher, chained exe, game)?</summary>
@@ -485,7 +551,8 @@ public class GameLaunchService
         {
             try
             {
-                var tv = _displays.GetDisplay(tvDeviceName);
+                // SetWindowPos waits on the window's thread, and a frozen thread never answers.
+                var tv = Paused ? null : _displays.GetDisplay(tvDeviceName);
                 if (tv is not null) EnforceOnTv(tv);
             }
             catch (Exception ex) { Log.Info($"Window monitor: {ex.Message}"); }

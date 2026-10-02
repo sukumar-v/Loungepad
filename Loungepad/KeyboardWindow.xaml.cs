@@ -45,7 +45,7 @@ public readonly record struct TargetState(IntPtr Focus, IntPtr CaretWindow, int 
 /// What it is made of is KeyboardLayout's business: the letters, and whichever of the function
 /// row, navigation block, number pad and Ctrl/Win/Alt are switched on. Above them is a bar of word
 /// suggestions (WordPredictor) with a gear at its right end, which swaps the keys for the switches
-/// that decide all of that -- the same five as Settings → Keyboard.
+/// that decide all of that -- the same five as Settings → Keyboard -- and the keyboard's size.
 /// </summary>
 public partial class KeyboardWindow : Window
 {
@@ -71,7 +71,7 @@ public partial class KeyboardWindow : Window
 
     private double _keySize = 64, _gap = 6, _scale = 1;
     private DisplayInfo? _display;
-    private TextBlock? _barNote;
+    private TextBlock? _barNote, _sizeValue;
 
     // ---- suggestions ----
     private readonly WordPredictor _predictor = new();
@@ -91,6 +91,13 @@ public partial class KeyboardWindow : Window
     /// <summary>A switch on the options page changed. The keyboard has already rebuilt itself; the
     /// owner keeps the settings in step.</summary>
     public event Action<KeyboardOptions>? OptionsChanged;
+
+    /// <summary>The options page's size steps changed the size. Same contract: already applied,
+    /// the owner saves it. Settings → Keyboard → Keyboard size is the same number.</summary>
+    public event Action<double>? ScaleChanged;
+
+    // The Settings slider's range; the keyboard's own steps are coarser, a tenth at a time.
+    public const double ScaleMin = 0.6, ScaleMax = 1.6, ScaleStep = 0.1;
 
     public KeyboardWindow()
     {
@@ -373,6 +380,7 @@ public partial class KeyboardWindow : Window
         _layout = _optionsPage ? KeyboardLayout.Options(_options) : KeyboardLayout.Keys(_options, _symbols);
         Board.Children.Clear();
         _barNote = null;
+        _sizeValue = null;
 
         Grip.Height = Math.Round(_keySize * 0.44);
         Grip.Margin = new Thickness(0, 0, 0, Math.Round(_keySize * 0.10));
@@ -394,13 +402,32 @@ public partial class KeyboardWindow : Window
                 Foreground = NoteInk,
                 VerticalAlignment = VerticalAlignment.Center,
             };
+            // On the options page the note stops short of the size steps.
+            double noteCols = _optionsPage ? KeyboardLayout.SizeDownX(_layout.Width) : _layout.Width - 1;
             Board.Children.Add(new Border
             {
-                Width = Math.Max(0, (_layout.Width - 1) * Unit - _gap),
+                Width = Math.Max(0, noteCols * Unit - _gap),
                 Height = BarHeight,
                 Padding = new Thickness(Math.Round(_keySize * 0.2), 0, 0, 0),
                 Child = _barNote,
             });
+        }
+
+        // The size between its two steps: a reading, not a key, so the D-pad goes − + gear.
+        if (_optionsPage)
+        {
+            _sizeValue = new TextBlock
+            {
+                FontSize = Math.Round(_keySize * 0.26),
+                FontFamily = TextFont,
+                Foreground = KeyInk,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            var value = new Border { Width = 2 * Unit - _gap, Height = BarHeight, Child = _sizeValue };
+            Canvas.SetLeft(value, Math.Round(KeyboardLayout.SizeValueX(_layout.Width) * Unit));
+            Canvas.SetTop(value, RowTop(0));
+            Board.Children.Add(value);
         }
 
         foreach (var s in _layout.Slots)
@@ -698,6 +725,7 @@ public partial class KeyboardWindow : Window
     private void Paint()
     {
         bool show = Armed;
+        if (_sizeValue is { } sv) sv.Text = $"Size {Math.Round(_scale * 100)}%";
         foreach (var s in _layout.Slots)
         {
             if (s.Cell is not { } cell) continue;
@@ -743,10 +771,13 @@ public partial class KeyboardWindow : Window
             };
             cell.Background = focused ? FocusFill : latched ? LatchFill : KeyFill;
             cell.BorderBrush = focused ? FocusEdge : KeyEdge;
+            // A size step that has reached its end is drawn spent; pressing it does nothing.
+            bool spent = (key.Action == KeyAction.SizeDown && _scale <= ScaleMin + 0.001)
+                      || (key.Action == KeyAction.SizeUp && _scale >= ScaleMax - 0.001);
             if (s.Label is { } tb)
             {
                 if (key.Action != KeyAction.Options) tb.Text = Face(key);
-                tb.Foreground = focused ? FocusInk : KeyInk;
+                tb.Foreground = focused ? FocusInk : spent ? NoteInk : KeyInk;
             }
         }
     }
@@ -796,6 +827,8 @@ public partial class KeyboardWindow : Window
         {
             case KeyAction.Options: ToggleOptionsPage(); return;
             case KeyAction.Option:  SetOption(key.Option, !_options[key.Option]); return;
+            case KeyAction.SizeDown: StepScale(-1); return;
+            case KeyAction.SizeUp:   StepScale(1); return;
         }
         if (_optionsPage) return;
 
@@ -1084,6 +1117,22 @@ public partial class KeyboardWindow : Window
     {
         _options = _options.With(option, on);
         OptionsChanged?.Invoke(_options);
+        Relayout();
+    }
+
+    /// <summary>
+    /// A tenth bigger or smaller, from the keyboard itself, so trying a size does not mean leaving
+    /// it for Settings. The board is rebuilt at the new size and stays where it was (or re-parks at
+    /// the bottom if it was never dragged); the highlight stays on the step, since the keys are
+    /// records and the rebuilt one equals the old. FitToDisplay may still cap a size the screen
+    /// cannot take, as it does for the slider.
+    /// </summary>
+    private void StepScale(int dir)
+    {
+        var next = Math.Round(Math.Clamp(_scale + dir * ScaleStep, ScaleMin, ScaleMax), 2);
+        if (Math.Abs(next - _scale) < 0.001) return;
+        _scale = next;
+        ScaleChanged?.Invoke(_scale);
         Relayout();
     }
 }

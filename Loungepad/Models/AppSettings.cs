@@ -133,6 +133,33 @@ public class AppSettings
     /// install it the next time the app starts. Off, nothing is fetched until Settings or the tray
     /// asks. See UpdateService.</summary>
     public bool AutoUpdate { get; set; } = true;
+    /// <summary>The newest first-run setup this install has been through, finished or skipped. 0 is
+    /// a new install and the page opens its setup screens over the library; a later setup that
+    /// adds a step raises the page's own number (ONBOARDING_VERSION in onboarding.js), and only
+    /// then does it show again. A settings file from before the setup existed is read as 1 by
+    /// SettingsStore.Load: that install was set up by hand, and nobody wants a welcome screen on
+    /// the hundredth start.</summary>
+    public int OnboardingVersion { get; set; }
+
+    // Rest and sleep (see RestService)
+    /// <summary>Minutes without a touch on the pad, the keyboard or the mouse before the launcher
+    /// rests: the TV goes dark, the game is frozen, and one press on the pad brings both back.
+    /// 0 never rests on its own; the Power Wheel still can. An hour is what both consoles ship
+    /// with, long enough for a cutscene.</summary>
+    public int RestAfterMinutes { get; set; } = 60;
+    /// <summary>Whether the idle timer runs while a game is running. Off for anyone who leaves a
+    /// game grinding by itself; on, like a console, for everyone else.</summary>
+    public bool RestDuringGame { get; set; } = true;
+    /// <summary>Freeze the game's processes while resting (the way PlayState does), so it draws
+    /// nothing and computes nothing until the wake. Off leaves it running to a dark screen -- for
+    /// an online game, or one whose anti-cheat objects to being frozen.</summary>
+    public bool RestPausesGame { get; set; } = true;
+    /// <summary>Once resting, how long before the PC itself is put to sleep: -1 never (screen off
+    /// only, any pad wakes it), 0 straight away, otherwise minutes. Sleep is where the electricity
+    /// goes; what can wake it from there is the hardware's business, and Settings says which. Off
+    /// by default (the user's call, Oct 2026): most pads cannot wake a sleeping PC, and a default
+    /// that sends somebody to the desk for the mouse is the wrong default for a couch.</summary>
+    public int SleepAfterRestMinutes { get; set; } = -1;
 
     // Gamepad → mouse
     public bool GamepadMouseEnabled { get; set; } = true;
@@ -187,9 +214,12 @@ public class AppSettings
     public int KeyRepeatDelayMs { get; set; } = 350;
     /// <summary>Gap between repeats once it is moving; smaller is faster.</summary>
     public int KeyRepeatIntervalMs { get; set; } = 90;
-    /// <summary>Shows and hides the on-screen keyboard. RB rather than Start because Start is the
-    /// launcher's own Menu button, and in Press mode the keyboard takes the press outright.</summary>
-    public string KeyboardToggleButton { get; set; } = "RB";
+    /// <summary>Shows and hides the on-screen keyboard. View ("Back"; Create on a DualSense), the
+    /// button a console's own keyboard sits nearest. On the library the page claims View for search
+    /// (GamepadService.UiClaimedButtons), and search raises the keyboard anyway, so the one place View
+    /// already had a job loses nothing. Not Start: that is the launcher's Menu button, and in Press
+    /// mode the keyboard would take the press outright.</summary>
+    public string KeyboardToggleButton { get; set; } = "Back";
     /// <summary>"Press" (a tap) or "Hold". A tap is the quicker of the two and is the default;
     /// Hold is for anyone whose toggle button also has a job inside the launcher.</summary>
     public string KeyboardToggleMode { get; set; } = "Press";
@@ -203,8 +233,10 @@ public class AppSettings
     /// always allowed regardless, so this can never strand one on screen.
     /// </summary>
     public bool KeyboardInGame { get; set; }
-    /// <summary>Builtin (the Loungepad keyboard) | TabTip | Osk.</summary>
-    public string KeyboardApp { get; set; } = "TabTip";
+    /// <summary>Builtin (the Loungepad keyboard) | TabTip | Osk. The Loungepad keyboard by default:
+    /// it is driven by the pad out of the box and never takes the foreground, where TabTip answers a
+    /// pad only on a layout picked by hand in its own settings, and Osk not at all.</summary>
+    public string KeyboardApp { get; set; } = "Builtin";
     /// <summary>Multiplier on the Loungepad keyboard's key size, 0.6 .. 1.6. The base size is a
     /// fraction of the display height, so this only nudges it away from that.</summary>
     public double KeyboardScale { get; set; } = 1.0;

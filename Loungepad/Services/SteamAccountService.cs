@@ -50,9 +50,11 @@ public class SteamAccountStatus
 /// because a profile's own key can read it whatever the privacy setting says.
 ///
 /// The community profile page used to be the keyless way in (games?tab=all, and before that the
-/// ?xml=1 feed). Both now redirect to a login page for every profile, public or not, so there is
-/// no keyless route left. Nothing local helps either: the client's per-account librarycache holds
-/// achievement pointers rather than names, and licensecache is encrypted.
+/// ?xml=1 feed). Both now redirect to a login page for every profile, public or not. Nothing local
+/// helps either: the client's per-account librarycache holds achievement pointers rather than
+/// names, and licensecache is encrypted. What does work without a key, for a private profile too,
+/// is a sign-in on Steam's own page (SteamWebSession): the token it yields is the owner's, and goes
+/// first whenever there is one.
 ///
 /// The account itself needs no login. Steam writes every account that has signed in on this PC
 /// to config/loginusers.vdf, and the most recent one is the person on the sofa.
@@ -69,11 +71,15 @@ public class SteamAccountService
     private static readonly HttpClient Http = CreateClient();
     private OwnedLibrary? _cache;
     private bool _cacheLoaded;
+    /// <summary>A sign-in on Steam's own page, for a profile that keeps its games private. When there
+    /// is one it goes first: the account's own token reads the library whatever the privacy says.</summary>
+    private readonly SteamWebSession? _web;
 
     public SteamAccountStatus Status { get; } = new();
 
-    public SteamAccountService()
+    public SteamAccountService(SteamWebSession? web = null)
     {
+        _web = web;
         // So the Settings row can name the account before the first fetch has happened.
         var account = DetectAccount();
         Status.SteamId = account?.SteamId;
@@ -142,6 +148,8 @@ public class SteamAccountService
     public async Task<IReadOnlyList<OwnedGame>> GetOwnedAsync(AppSettings settings, bool force,
         CancellationToken ct = default)
     {
+        if (_web is { SignedIn: true } web) return await GetOwnedSignedInAsync(web, force, ct);
+
         var account = DetectAccount();
         Status.SteamId = account?.SteamId;
         Status.PersonaName = account?.PersonaName;
@@ -171,8 +179,8 @@ public class SteamAccountService
         }
 
         const string Private =
-            "Steam keeps this profile's game details private. Make them public under Steam's " +
-            "privacy settings, or add your own Web API key below";
+            "Steam keeps this profile's game details private. Sign in to Steam below to read them " +
+            "without making anything public, or add your own Web API key";
 
         try
         {
@@ -227,6 +235,71 @@ public class SteamAccountService
                 ? $"Could not reach Steam; showing the library from {cached.FetchedAt.ToLocalTime():d MMM}"
                 : "Could not reach Steam";
             Log.Info($"Steam library fetch failed: {ex.Message}");
+            return Report(cached);
+        }
+    }
+
+    /// <summary>
+    /// The library through the sign-in: the account's own token, so a private profile answers. The
+    /// account is the one that signed in, which need not be the one this PC's Steam client last used;
+    /// its name comes from the client's login list when the two match.
+    /// </summary>
+    private async Task<IReadOnlyList<OwnedGame>> GetOwnedSignedInAsync(SteamWebSession web, bool force, CancellationToken ct)
+    {
+        var steamId = web.SteamId!;
+        var local = DetectAccount();
+        Status.SteamId = steamId;
+        Status.PersonaName = local?.SteamId == steamId ? local.PersonaName : null;
+        web.Status.User = Status.PersonaName ?? steamId;
+        var cached = Cached(steamId);
+        if (!force && cached is not null && DateTime.UtcNow - cached.FetchedAt < Freshness)
+        {
+            Status.Error = null;
+            return Report(cached);
+        }
+
+        var auth = await web.TokenAsync(ct);
+        if (auth is null)
+        {
+            Status.Error = web.Status.Error ?? "Sign in to Steam again";
+            return Report(cached);
+        }
+        try
+        {
+            var url = "https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/" +
+                      $"?access_token={Uri.EscapeDataString(auth.Value.Token)}&steamid={auth.Value.SteamId}" +
+                      "&include_appinfo=1&include_played_free_games=1&format=json";
+            using var res = await Http.GetAsync(url, ct);
+            if (res.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+            {
+                Status.Error = "Steam did not accept the sign-in. Sign in again";
+                Log.Info($"Steam library (signed in): {(int)res.StatusCode}");
+                return Report(cached);
+            }
+            if (!res.IsSuccessStatusCode)
+            {
+                Status.Error = $"Could not fetch the library ({(int)res.StatusCode})";
+                Log.Info($"Steam library (signed in): {(int)res.StatusCode}");
+                return Report(cached);
+            }
+            var games = Parse(await res.Content.ReadAsStringAsync(ct));
+            if (games is null)
+            {
+                Status.Error = "Steam answered with no library for this account";
+                return Report(cached);
+            }
+            var lib = new OwnedLibrary { SteamId = steamId, FetchedAt = DateTime.UtcNow, Games = games };
+            SaveCache(lib);
+            Status.Error = null;
+            Log.Info($"Steam library: {games.Count} game(s), through the sign-in");
+            return Report(lib);
+        }
+        catch (Exception ex)
+        {
+            Status.Error = cached is not null
+                ? $"Could not reach Steam; showing the library from {cached.FetchedAt.ToLocalTime():d MMM}"
+                : "Could not reach Steam";
+            Log.Info($"Steam library fetch (signed in) failed: {ex.Message}");
             return Report(cached);
         }
     }

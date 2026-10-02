@@ -92,8 +92,9 @@ public class GogAccountClient : IStoreAccount
         return (acct.UserId, acct.AccessToken);
     }
 
-    /// <summary>Galaxy's install route beats a web page, but only when Galaxy is here to take it.</summary>
-    private static bool GalaxyInstalled()
+    /// <summary>Galaxy's install route beats a web page, but only when Galaxy is here to take it.
+    /// Also asked by the first-run setup, which lists the launchers on this PC.</summary>
+    internal static bool GalaxyInstalled()
     {
         try
         {
