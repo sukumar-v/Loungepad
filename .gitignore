@@ -73,3 +73,13 @@ dist/
 
 # Wrangler's local state for the metadata proxy (build output, dev cache)
 .wrangler/
+
+# The trailer project: a Remotion app, its node_modules, the screen recordings, the music and
+# the rendered video. Large, and only needed to remake the trailer, the README screenshots and
+# the header lockup, so it stays out of the repository.
+/trailer/
+
+# Video never belongs in the repository: a clone would carry it forever.
+*.mp4
+*.mkv
+*.mov

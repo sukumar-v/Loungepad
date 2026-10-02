@@ -1,7 +1,6 @@
 <#
 .SYNOPSIS
-    Cuts every logo asset out of the master: Loungepad\Loungepad.ico, loungepad-icon.png and the
-    README's header, assets\loungepad-logo.jpg.
+    Cuts the app icon out of the master: Loungepad\Loungepad.ico and loungepad-icon.png.
 
 .DESCRIPTION
     The master is assets\raw\Loungepad_logo.jpg, the full lockup at 2752x1536: the badge on the
@@ -100,19 +99,4 @@ $w.Flush()
 [System.IO.File]::WriteAllBytes((Join-Path $repo 'Loungepad\Loungepad.ico'), $ico.ToArray())
 $w.Dispose(); $masked.Dispose()
 
-# The README's header: the whole lockup, cut close round the badge and the wordmark.
-$lockup = New-Object System.Drawing.Rectangle(234, 330, 2284, 875)
-$lw = 1200; $lh = [int][Math]::Round($lw * $lockup.Height / $lockup.Width)
-$src = [System.Drawing.Image]::FromFile($master)
-$header = New-Object System.Drawing.Bitmap($lw, $lh)
-$g = [System.Drawing.Graphics]::FromImage($header)
-$g.InterpolationMode = 'HighQualityBicubic'; $g.PixelOffsetMode = 'HighQuality'
-$g.DrawImage($src, (New-Object System.Drawing.Rectangle(0, 0, $lw, $lh)), $lockup, [System.Drawing.GraphicsUnit]::Pixel)
-$g.Dispose(); $src.Dispose()
-$jpeg = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq 'image/jpeg' }
-$quality = New-Object System.Drawing.Imaging.EncoderParameters(1)
-$quality.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter([System.Drawing.Imaging.Encoder]::Quality, [long]90)
-$header.Save((Join-Path $repo 'assets\loungepad-logo.jpg'), $jpeg, $quality)
-$header.Dispose()
-
-Write-Host "Wrote Loungepad\Loungepad.ico ($($sizes -join ', ') px), loungepad-icon.png and assets\loungepad-logo.jpg"
+Write-Host "Wrote Loungepad\Loungepad.ico ($($sizes -join ', ') px) and loungepad-icon.png"

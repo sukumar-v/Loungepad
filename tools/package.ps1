@@ -74,6 +74,12 @@ foreach ($doc in "README.md", "LICENSE", "NOTICE", "CONTRIBUTING.md") {
     $path = Join-Path $repo $doc
     if (Test-Path $path) { Copy-Item $path $staging -Force }
 }
+# The README links into docs\ for the long version of everything.
+$docs = Join-Path $repo "docs"
+if (Test-Path $docs) {
+    New-Item -ItemType Directory -Force (Join-Path $staging "docs") | Out-Null
+    Copy-Item (Join-Path $docs "*.md") (Join-Path $staging "docs") -Force
+}
 
 $zip = Join-Path $dist "Loungepad-v$Version-$Runtime.zip"
 if (Test-Path $zip) { Remove-Item $zip -Force }
