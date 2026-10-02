@@ -1,0 +1,12 @@
+# Cloudflare Worker (static assets) for loungepad.app. The site is this folder as it is: no build.
+#
+# Connected to GitHub through Workers Builds: root directory `website`, no build command, deploy
+# command `npx wrangler deploy`. By hand, from this folder: `npx wrangler deploy`.
+#
+# `name` has to be the name of the Worker in the Cloudflare dashboard, or the build fails.
+name = "loungepad"
+compatibility_date = "2026-10-02"
+
+[assets]
+directory = "."
+# Without this, a path that is not a file is a plain 404; the site is one page, so that is right.

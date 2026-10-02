@@ -1,0 +1,7 @@
+# The assets directory is this whole folder, so keep what is not the site out of the upload.
+design
+HANDOFF.md
+README.md
+wrangler.toml
+.assetsignore
+node_modules
