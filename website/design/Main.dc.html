@@ -1,0 +1,931 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loungepad — turn a Windows 11 PC into a console</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{--accent:#F0A253;--accent-10:rgba(240,162,83,.1);--accent-15:rgba(240,162,83,.15);--accent-20:rgba(240,162,83,.2);--accent-30:rgba(240,162,83,.3);--accent-40:rgba(240,162,83,.4);--accent-50:rgba(240,162,83,.5)}
+html{scroll-behavior:smooth;background:#05070B}
+body{margin:0;background:#05070B}
+a{color:#F2F5FA}a:hover{color:var(--accent)}
+::selection{background:var(--accent);color:#08080A}
+[data-nav]{scroll-margin:110px 0 120px}
+[data-nav]:focus{outline:none}
+.lp-gallery::-webkit-scrollbar{display:none}
+
+/* The highlight: the launcher's own 3px accent ring and 44px glow, for the mouse, the keyboard and a pad alike. */
+.lp-f{transition:box-shadow 180ms linear,transform 180ms cubic-bezier(.2,.9,.2,1),background-color 180ms linear,color 180ms linear}
+.lp-f:hover,.lp-f:focus-visible,[data-input="pad"] .lp-f:focus,[data-input="key"] .lp-f:focus{box-shadow:0 0 0 3px var(--accent),0 0 44px 6px var(--accent-30);transform:scale(1.04)}
+.lp-btn-primary{box-shadow:0 14px 44px -12px var(--accent-50)}
+.lp-btn-primary:hover,.lp-btn-primary:focus-visible,[data-input="pad"] .lp-btn-primary:focus,[data-input="key"] .lp-btn-primary:focus{box-shadow:0 0 0 3px #F2F5FA,0 0 54px 10px var(--accent-40);color:#08080A}
+.lp-ghost:hover,.lp-ghost:focus-visible{background-color:rgba(242,245,250,.1);color:#F2F5FA}
+.lp-link{text-decoration:none;transition:color 180ms linear}
+.lp-link:hover,.lp-link:focus-visible{color:var(--accent)}
+.lp-hint{transition:background-color 180ms linear}
+.lp-hint:hover,.lp-hint:focus-visible,[data-input="pad"] .lp-hint:focus{background-color:rgba(242,245,250,.1);color:#F2F5FA}
+.lp-padhint{display:none}
+[data-input="pad"] .lp-padhint,[data-input="key"] .lp-padhint{display:inline-flex}
+
+/* The TV in the hero. */
+.lp-tv{box-shadow:inset 0 0 0 1px rgba(255,255,255,.04);transition:box-shadow 180ms linear,transform 180ms cubic-bezier(.2,.9,.2,1)}
+.lp-tv:focus-visible,[data-input="pad"] .lp-tv:focus,[data-input="key"] .lp-tv:focus{box-shadow:0 0 0 3px var(--accent),0 0 60px 8px var(--accent-30)}
+.lp-tv:hover .lp-open,.lp-tv:focus-visible .lp-open,[data-input="pad"] .lp-tv:focus .lp-open,[data-input="key"] .lp-tv:focus .lp-open{opacity:1;transform:none}
+.lp-tile .lp-art{transition:transform 180ms cubic-bezier(.2,.9,.2,1),box-shadow 180ms linear}
+.lp-tile:hover .lp-art,.lp-tile:focus-visible .lp-art,[data-input="pad"] .lp-tile:focus .lp-art,[data-input="key"] .lp-tile:focus .lp-art{transform:scale(1.03);box-shadow:0 0 0 3px var(--accent),0 0 44px 6px var(--accent-30)}
+.lp-tile:focus-visible .lp-art,[data-input="pad"] .lp-tile:focus .lp-art,[data-input="key"] .lp-tile:focus .lp-art{animation:lpPulse 2.4s ease-in-out infinite}
+.lp-tile:hover .lp-open,.lp-tile:focus-visible .lp-open,[data-input="pad"] .lp-tile:focus .lp-open,[data-input="key"] .lp-tile:focus .lp-open{opacity:1;transform:none}
+.lp-tile:hover .lp-tile-title,.lp-tile:focus-visible .lp-tile-title{color:#FFFFFF}
+
+@keyframes lpPulse{0%,100%{box-shadow:0 0 0 3px var(--accent),0 0 44px 6px var(--accent-30)}50%{box-shadow:0 0 0 3px var(--accent),0 0 64px 12px var(--accent-40)}}
+@keyframes lpProgress{from{width:0}to{width:100%}}
+@keyframes lpFade{from{opacity:0}to{opacity:1}}
+@keyframes lpWheelIn{from{opacity:0;transform:scale(.9) rotate(-8deg)}to{opacity:1;transform:none}}
+@keyframes lpRise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+@keyframes lpBlink{0%,100%{opacity:1}50%{opacity:.35}}
+
+@media (max-width:760px){
+  .lp-nav{display:none !important}
+  .lp-hide-sm{display:none !important}
+  .lp-ctas > a{flex:1 1 100%;justify-content:center}
+  .lp-tv-frame{padding:6px !important;border-radius:12px !important}
+  .lp-tv{border-radius:6px !important}
+  .lp-console{border-radius:6px !important}
+  .lp-wheel-spoke{width:88px !important;height:70px !important;font-size:12.5px !important;border-radius:14px !important}
+}
+@media (max-width:480px){.lp-hide-xs{display:none !important}}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{animation-duration:1ms !important;animation-iteration-count:1 !important;transition-duration:1ms !important}
+}
+</style>
+</helmet>
+
+<div data-lp-root="1" data-input="{{input}}" onKeyDown="{{onKey}}" onMouseMove="{{onMove}}" style="position: relative; isolation: isolate; background: #05070B; color: #F2F5FA; font-family: Manrope, 'Segoe UI', system-ui, sans-serif; overflow-x: clip; -webkit-font-smoothing: antialiased">
+
+<div data-scope="page">
+
+<!-- ============ HERO: the message, then the TV ============ -->
+<section id="top" style="position: relative; padding: 0 clamp(20px, 5vw, 72px) 96px">
+
+<!-- One soft glow, the colour of the logo, behind the heading. Nothing else behind the text. -->
+<div aria-hidden="true" style="position: absolute; left: 50%; top: -360px; width: min(1300px, 140%); height: 900px; transform: translateX(-50%); border-radius: 50%; background: radial-gradient(ellipse at center, var(--accent-15, rgba(240,162,83,0.15)) 0%, rgba(240,162,83,0) 62%); z-index: -1; pointer-events: none"></div>
+
+<header style="max-width: 1296px; margin: 0 auto; display: flex; align-items: center; gap: 32px; padding: 24px 0">
+<a href="#top" data-nav="1" class="lp-link" aria-label="Loungepad, back to the top" style="display: flex; align-items: center; gap: 12px; color: #F2F5FA; border-radius: 10px; flex-shrink: 0">
+<img src="assets/lp-icon.png" alt="" style="width: 34px; height: 34px; display: block">
+<span style="font-size: 22px; font-weight: 600; letter-spacing: -0.01em">loungepad</span>
+</a>
+<div style="flex-grow: 1"></div>
+<nav class="lp-nav" aria-label="Sections" style="display: flex; align-items: center; gap: 32px; font-size: 16px; font-weight: 500">
+<a href="#library" data-nav="1" class="lp-link" style="color: rgba(242,245,250,0.78); padding: 10px 0">Features</a>
+<a href="#controllers" data-nav="1" class="lp-link" style="color: rgba(242,245,250,0.78); padding: 10px 0">Controllers</a>
+<a href="#install" data-nav="1" class="lp-link" style="color: rgba(242,245,250,0.78); padding: 10px 0">Get started</a>
+</nav>
+<a href="https://github.com/sukumar-v/Loungepad/releases/latest" target="_blank" rel="noopener" data-nav="1" class="lp-f lp-btn-primary" style="display: inline-flex; align-items: center; height: 44px; padding: 0 20px; border-radius: 999px; background: var(--accent, #F0A253); color: #08080A; font-size: 15px; font-weight: 700; text-decoration: none; flex-shrink: 0; box-sizing: border-box">Download</a>
+</header>
+
+<div style="max-width: 920px; margin: 0 auto; padding-top: clamp(56px, 7vw, 100px); display: flex; flex-direction: column; align-items: center; text-align: center; animation: lpRise 600ms cubic-bezier(0.2, 0.9, 0.2, 1) both">
+<h1 style="margin: 0; font-size: clamp(44px, 6.4vw, 92px); line-height: 0.98; font-weight: 700; letter-spacing: -0.04em; text-wrap: balance">Turn a Windows&nbsp;11&nbsp;PC into a console.</h1>
+<p style="margin: 26px 0 0; max-width: 620px; font-size: clamp(18px, 1.6vw, 21px); line-height: 1.55; color: rgba(242,245,250,0.76); text-wrap: pretty">Your games, your apps, your whole PC — all from the couch, with nothing in your hands but a controller.</p>
+<div class="lp-ctas" style="margin-top: 38px; display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 14px; width: 100%">
+<a href="https://github.com/sukumar-v/Loungepad/releases/latest" target="_blank" rel="noopener" data-nav="1" class="lp-f lp-btn-primary" style="display: inline-flex; align-items: center; gap: 12px; height: 60px; padding: 0 28px 0 15px; border-radius: 999px; background: var(--accent, #F0A253); color: #08080A; font-size: 19px; font-weight: 700; text-decoration: none; box-sizing: border-box">
+<dc-import name="Glyph" btn="X" fam="{{fam}}" size="30" hint-size="30px,30px"></dc-import>
+<span>Download for Windows</span>
+</a>
+<a href="https://github.com/sukumar-v/Loungepad" target="_blank" rel="noopener" data-nav="1" class="lp-f lp-ghost" style="display: inline-flex; align-items: center; gap: 12px; height: 60px; padding: 0 24px 0 15px; border-radius: 999px; border: 1.5px solid rgba(242,245,250,0.26); color: #F2F5FA; font-size: 18px; font-weight: 600; text-decoration: none; box-sizing: border-box">
+<dc-import name="Glyph" btn="Y" fam="{{fam}}" size="30" hint-size="30px,30px"></dc-import>
+<span>Star on GitHub</span>
+</a>
+</div>
+<p style="margin: 22px 0 0; font-size: 15px; line-height: 1.5; color: rgba(242,245,250,0.62)">Free, for Windows 11</p>
+</div>
+
+<!-- The TV: the app itself, with its own glow spilling out behind it. -->
+<div style="position: relative; max-width: 1240px; margin: clamp(56px, 6vw, 84px) auto 0">
+<div style="position: relative; max-width: 1080px; margin: 0 auto">
+<div aria-hidden="true" style="position: absolute; left: 4%; right: 4%; top: 6%; bottom: 2%; z-index: -1; pointer-events: none">
+<sc-for list="{{shots}}" as="s" hint-placeholder-count="6">
+<img src="{{s.thumb}}" alt="" style="position: absolute; left: 0; top: 0; width: 100%; height: 100%; object-fit: cover; filter: blur(64px) saturate(1.6); opacity: {{s.glow}}; transition: opacity 900ms linear">
+</sc-for>
+</div>
+<div class="lp-tv-frame" style="position: relative; padding: 12px; border-radius: 20px; background: linear-gradient(180deg, #1B212C 0%, #0C0F15 100%); box-shadow: 0 0 0 1px rgba(255,255,255,0.09), inset 0 1px 0 rgba(255,255,255,0.08), 0 60px 140px -50px rgba(0,0,0,0.95)">
+<button type="button" data-nav="1" data-tv="1" class="lp-tv" onClick="{{openShot}}" onMouseEnter="{{hold}}" onMouseLeave="{{release}}" aria-label="{{tvLabel}}" style="position: relative; display: block; width: 100%; aspect-ratio: 16 / 9; margin: 0; padding: 0; border: 0; border-radius: 8px; overflow: hidden; background: #000; cursor: pointer">
+<sc-for list="{{shots}}" as="s" hint-placeholder-count="6">
+<img src="{{s.full}}" alt="" style="position: absolute; left: 0; top: 0; width: 100%; height: 100%; object-fit: cover; display: block; opacity: {{s.op}}; transition: opacity 700ms linear">
+</sc-for>
+<span class="lp-open" style="position: absolute; right: 18px; bottom: 18px; display: flex; align-items: center; gap: 9px; padding: 6px 15px 6px 6px; border-radius: 999px; background: rgba(5,7,11,0.82); font-size: 15px; font-weight: 600; color: #F2F5FA; opacity: 0; transform: translateY(6px); transition: opacity 180ms linear, transform 180ms cubic-bezier(0.2, 0.9, 0.2, 1)">
+<dc-import name="Glyph" btn="A" fam="{{fam}}" size="26" hint-size="26px,26px"></dc-import>
+<span>See it larger</span>
+</span>
+</button>
+<span aria-hidden="true" style="position: absolute; left: 50%; bottom: 3px; width: 5px; height: 5px; transform: translateX(-50%); border-radius: 50%; background: var(--accent, #F0A253); box-shadow: 0 0 8px var(--accent, #F0A253)"></span>
+</div>
+</div>
+
+<!-- The stand: a pedestal, and the low cabinet the TV sits on. -->
+<div aria-hidden="true" style="position: relative; width: 30%; max-width: 300px; height: clamp(22px, 3vw, 40px); margin: 0 auto">
+<span style="position: absolute; left: 50%; top: 0; width: 18%; min-width: 34px; height: 100%; transform: translateX(-50%); background: linear-gradient(90deg, #0E1219 0%, #283040 50%, #0E1219 100%)"></span>
+<span style="position: absolute; left: 0; right: 0; bottom: 0; height: 9px; border-radius: 6px 6px 3px 3px; background: linear-gradient(180deg, #2B3343 0%, #131822 100%); box-shadow: 0 6px 14px rgba(0,0,0,0.6)"></span>
+</div>
+<div aria-hidden="true" class="lp-console" style="position: relative; height: clamp(56px, 7.5vw, 96px); border-radius: 8px 8px 10px 10px; background: linear-gradient(180deg, #1F2634 0%, #131822 20%, #0E121A 100%); box-shadow: inset 0 1px 0 rgba(255,255,255,0.1), 0 50px 90px -40px rgba(0,0,0,0.95)">
+<div style="position: absolute; left: 10%; right: 10%; top: 0; height: 55%; overflow: hidden; border-radius: 8px; opacity: 0.45; -webkit-mask-image: linear-gradient(180deg, #000 0%, transparent 100%); mask-image: linear-gradient(180deg, #000 0%, transparent 100%)">
+<sc-for list="{{shots}}" as="s" hint-placeholder-count="6">
+<img src="{{s.thumb}}" alt="" style="position: absolute; left: 0; top: -60%; width: 100%; height: 220%; object-fit: cover; filter: blur(28px) saturate(1.5); opacity: {{s.op}}; transition: opacity 900ms linear">
+</sc-for>
+</div>
+<div style="position: absolute; left: 2.5%; right: 2.5%; top: 24%; bottom: 14%; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px">
+<span style="position: relative; border-radius: 4px; background: rgba(255,255,255,0.025); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.05)"><span style="position: absolute; left: 50%; top: 16%; width: 34px; height: 3px; transform: translateX(-50%); border-radius: 2px; background: rgba(242,245,250,0.16)"></span></span>
+<span style="position: relative; border-radius: 4px; background: rgba(255,255,255,0.025); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.05)"><span style="position: absolute; left: 50%; top: 16%; width: 34px; height: 3px; transform: translateX(-50%); border-radius: 2px; background: rgba(242,245,250,0.16)"></span></span>
+<span style="position: relative; border-radius: 4px; background: rgba(255,255,255,0.025); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.05)"><span style="position: absolute; left: 50%; top: 16%; width: 34px; height: 3px; transform: translateX(-50%); border-radius: 2px; background: rgba(242,245,250,0.16)"></span></span>
+</div>
+<span style="position: absolute; left: 6%; bottom: -16px; width: 10px; height: 16px; border-radius: 0 0 3px 3px; background: #0B0E14"></span>
+<span style="position: absolute; right: 6%; bottom: -16px; width: 10px; height: 16px; border-radius: 0 0 3px 3px; background: #0B0E14"></span>
+</div>
+<div aria-hidden="true" style="height: 44px; margin: 0 2%; background: radial-gradient(ellipse at 50% 0%, rgba(0,0,0,0.65) 0%, rgba(0,0,0,0) 70%)"></div>
+
+<div style="margin-top: 6px; display: flex; flex-direction: column; align-items: center">
+
+<div aria-live="polite" style="margin-top: 22px; text-align: center">
+<div style="font-size: 20px; font-weight: 600; letter-spacing: -0.01em">{{shotTitle}}</div>
+<div style="margin-top: 6px; font-size: 16px; line-height: 1.5; color: rgba(242,245,250,0.66)">{{shotSub}}</div>
+</div>
+<div role="group" aria-label="Choose a screen" style="margin-top: 10px; display: flex; align-items: center">
+<sc-for list="{{shots}}" as="s" hint-placeholder-count="6">
+<button type="button" onClick="{{s.pick}}" aria-label="{{s.aria}}" aria-pressed="{{s.pressed}}" style="width: 40px; height: 40px; padding: 0; border: 0; background: transparent; cursor: pointer; display: flex; align-items: center; justify-content: center">
+<span style="position: relative; display: block; width: {{s.dotW}}px; height: 7px; border-radius: 999px; overflow: hidden; background: {{s.dotBg}}; transition: width 240ms cubic-bezier(0.2, 0.9, 0.2, 1)">
+<sc-if value="{{s.prog}}" hint-placeholder-val="{{ false }}">
+<span style="position: absolute; left: 0; top: 0; height: 100%; background: var(--accent, #F0A253); animation: lpProgress 7s linear forwards"></span>
+</sc-if>
+<sc-if value="{{s.still}}" hint-placeholder-val="{{ false }}">
+<span style="position: absolute; left: 0; top: 0; width: 100%; height: 100%; background: var(--accent, #F0A253)"></span>
+</sc-if>
+</span>
+</button>
+</sc-for>
+</div>
+</div>
+</div>
+</section>
+
+<!-- ============ THE GRID, on the way down ============ -->
+<section id="library" aria-labelledby="lp-library-h" style="position: relative; padding: 120px clamp(20px, 5vw, 72px) 48px">
+<div style="max-width: 1296px; margin: 0 auto">
+<div style="display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 24px 48px">
+<div>
+<div style="font-family: 'IBM Plex Mono', Consolas, monospace; font-size: 13px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--accent, #F0A253)">What it does</div>
+<h2 id="lp-library-h" style="margin: 16px 0 0; max-width: 780px; font-size: clamp(34px, 4.2vw, 60px); line-height: 1.02; font-weight: 700; letter-spacing: -0.03em; text-wrap: balance">Built so you never walk over to the desk.</h2>
+</div>
+<p style="margin: 0; max-width: 440px; font-size: 17px; line-height: 1.6; color: rgba(242,245,250,0.72)">Most couch apps stop once your game starts. Loungepad keeps going: your controller runs the whole PC, not just the menu. Pick any screen to see it up close.</p>
+</div>
+
+<sc-for list="{{groups}}" as="grp" hint-placeholder-count="3">
+<div style="margin-top: 84px">
+<div style="display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px 18px; padding-bottom: 18px; border-bottom: 1px solid rgba(255,255,255,0.09)">
+<span style="font-family: 'IBM Plex Mono', Consolas, monospace; font-size: 13px; letter-spacing: 0.16em; color: var(--accent, #F0A253)">{{grp.no}}</span>
+<h3 style="margin: 0; font-size: clamp(24px, 2.2vw, 30px); font-weight: 600; letter-spacing: -0.015em">{{grp.title}}</h3>
+<span style="flex-grow: 1"></span>
+<span style="font-family: 'IBM Plex Mono', Consolas, monospace; font-size: 13px; letter-spacing: 0.16em; text-transform: uppercase; color: rgba(242,245,250,0.6)">{{grp.kicker}}</span>
+</div>
+<div style="margin-top: 34px; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 330px), 1fr)); gap: 44px 28px">
+<sc-for list="{{grp.items}}" as="f" hint-placeholder-count="6">
+<button type="button" data-nav="1" class="lp-tile" onClick="{{f.open}}" aria-label="{{f.aria}}" style="appearance: none; display: flex; flex-direction: column; gap: 16px; margin: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer">
+<span class="lp-art" style="position: relative; display: block; width: 100%; aspect-ratio: 16 / 9; border-radius: 10px; overflow: hidden; background: #11151E">
+<sc-if value="{{f.hasImg}}" hint-placeholder-val="{{ true }}">
+<img src="{{f.thumb}}" alt="" loading="lazy" style="position: absolute; left: 0; top: 0; width: 100%; height: 100%; object-fit: cover; display: block">
+</sc-if>
+<sc-if value="{{f.hasIcon}}" hint-placeholder-val="{{ false }}">
+<span style="position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background: radial-gradient(circle at 50% 58%, var(--accent-20, rgba(240,162,83,0.2)) 0%, transparent 60%), linear-gradient(160deg, #161C29 0%, #0B0F16 100%); color: var(--accent, #F0A253)">
+<svg viewBox="0 0 24 24" width="76" height="76" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{f.icon}}"></path></svg>
+</span>
+</sc-if>
+<span class="lp-open" style="position: absolute; right: 12px; bottom: 12px; display: flex; align-items: center; gap: 8px; padding: 5px 13px 5px 5px; border-radius: 999px; background: rgba(5,7,11,0.82); font-size: 14px; font-weight: 600; color: #F2F5FA; opacity: 0; transform: translateY(6px); transition: opacity 180ms linear, transform 180ms cubic-bezier(0.2, 0.9, 0.2, 1)">
+<dc-import name="Glyph" btn="A" fam="{{f.fam}}" size="22" hint-size="22px,22px"></dc-import>
+<span>View</span>
+</span>
+</span>
+<span style="display: flex; flex-direction: column; gap: 7px; padding: 0 2px">
+<span class="lp-tile-title" style="font-size: 20px; font-weight: 600; letter-spacing: -0.012em; line-height: 1.25; color: #F2F5FA">{{f.title}}</span>
+<span style="font-size: 15.5px; line-height: 1.5; color: rgba(242,245,250,0.68)">{{f.sub}}</span>
+</span>
+</button>
+</sc-for>
+</div>
+</div>
+</sc-for>
+</div>
+</section>
+
+<!-- ============ CONTROLLERS: Settings → Appearance, live ============ -->
+<section id="controllers" aria-labelledby="lp-pads-h" style="position: relative; padding: 120px clamp(20px, 5vw, 72px) 60px">
+<div style="max-width: 1296px; margin: 0 auto">
+<div style="display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 24px 48px">
+<div>
+<div style="font-family: 'IBM Plex Mono', Consolas, monospace; font-size: 13px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--accent, #F0A253)">Controllers</div>
+<h2 id="lp-pads-h" style="margin: 16px 0 0; max-width: 760px; font-size: clamp(34px, 4.2vw, 60px); line-height: 1.02; font-weight: 700; letter-spacing: -0.03em; text-wrap: balance">Any controller. Every button drawn as yours.</h2>
+</div>
+<p style="margin: 0; max-width: 450px; font-size: 17px; line-height: 1.6; color: rgba(242,245,250,0.72)">Xbox, PlayStation and Switch Pro controllers all work, and so do a keyboard and mouse. The buttons on screen always match the controller in your hands — pick up a PlayStation controller and the green A becomes a cross.</p>
+</div>
+
+<div style="margin-top: 56px; display: flex; flex-wrap: wrap; gap: 28px; align-items: stretch">
+
+<!-- The pad stage -->
+<div style="flex: 1 1 380px; min-width: 0; position: relative; overflow: hidden; display: flex; flex-direction: column; align-items: center; gap: 26px; padding: 44px 28px 32px; border-radius: 24px; border: 1px solid rgba(255,255,255,0.08); background: radial-gradient(circle at 50% 34%, var(--accent-15, rgba(240,162,83,0.15)) 0%, transparent 58%), #0B0F16; box-sizing: border-box">
+<div aria-hidden="true" style="position: relative; width: 236px; height: 236px">
+<span style="position: absolute; left: 50%; top: 50%; width: 150px; height: 150px; transform: translate(-50%, -50%); border-radius: 50%; border: 1px dashed rgba(242,245,250,0.12)"></span>
+<span style="position: absolute; left: 50%; top: 0; transform: translateX(-50%); display: flex"><dc-import name="Glyph" btn="Y" fam="{{fam}}" size="72" hint-size="72px,72px"></dc-import></span>
+<span style="position: absolute; left: 0; top: 50%; transform: translateY(-50%); display: flex"><dc-import name="Glyph" btn="X" fam="{{fam}}" size="72" hint-size="72px,72px"></dc-import></span>
+<span style="position: absolute; right: 0; top: 50%; transform: translateY(-50%); display: flex"><dc-import name="Glyph" btn="B" fam="{{fam}}" size="72" hint-size="72px,72px"></dc-import></span>
+<span style="position: absolute; left: 50%; bottom: 0; transform: translateX(-50%); display: flex"><dc-import name="Glyph" btn="A" fam="{{fam}}" size="72" hint-size="72px,72px"></dc-import></span>
+</div>
+<div style="text-align: center">
+<div style="font-size: 30px; font-weight: 700; letter-spacing: -0.02em">{{famName}}</div>
+<div style="margin-top: 8px; font-size: 15px; color: rgba(242,245,250,0.64)">{{famCaption}}</div>
+</div>
+<div role="group" aria-label="Show the buttons for" style="display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; padding: 6px; border-radius: 999px; background: rgba(242,245,250,0.05); border: 1px solid rgba(255,255,255,0.06)">
+<sc-for list="{{fams}}" as="c" hint-placeholder-count="4">
+<button type="button" data-nav="1" class="lp-f" onClick="{{c.pick}}" aria-pressed="{{c.pressed}}" style="height: 44px; padding: 0 18px; border-radius: 999px; border: 0; background: {{c.bg}}; color: {{c.ink}}; font-family: Manrope, 'Segoe UI', system-ui, sans-serif; font-size: 15px; font-weight: 600; cursor: pointer">{{c.name}}</button>
+</sc-for>
+</div>
+<div style="display: flex; align-items: flex-start; gap: 12px; max-width: 420px; padding: 14px 16px; border-radius: 14px; background: rgba(242,245,250,0.04); font-size: 14.5px; line-height: 1.5; color: rgba(242,245,250,0.74)">
+<span style="flex-shrink: 0; margin-top: 6px; width: 8px; height: 8px; border-radius: 50%; background: {{padDot}}; animation: lpBlink 1.6s ease-in-out infinite"></span>
+<span>{{detectLine}}</span>
+</div>
+<div style="width: 100%; padding-top: 22px; border-top: 1px solid rgba(255,255,255,0.08); display: flex; flex-direction: column; align-items: center; gap: 14px">
+<div style="font-family: 'IBM Plex Mono', Consolas, monospace; font-size: 12px; letter-spacing: 0.18em; text-transform: uppercase; color: rgba(242,245,250,0.6)">Colour · {{accentName}}</div>
+<div role="group" aria-label="Colour" style="display: flex; flex-wrap: wrap; justify-content: center; gap: 12px">
+<sc-for list="{{swatches}}" as="w" hint-placeholder-count="8">
+<button type="button" data-nav="1" onClick="{{w.pick}}" aria-label="{{w.aria}}" aria-pressed="{{w.pressed}}" title="{{w.name}}" style="width: 30px; height: 30px; padding: 0; border: 0; border-radius: 50%; background: {{w.hex}}; box-shadow: {{w.ring}}; cursor: pointer; transition: box-shadow 180ms linear, transform 180ms cubic-bezier(0.2, 0.9, 0.2, 1); transform: scale({{w.lift}})"></button>
+</sc-for>
+</div>
+<div style="font-size: 13.5px; color: rgba(242,245,250,0.6)">Pick a colour for the app. Go on, try one here.</div>
+</div>
+</div>
+
+<!-- The button map -->
+<div style="flex: 1.35 1 440px; min-width: 0; padding: 12px 32px; border-radius: 24px; border: 1px solid rgba(255,255,255,0.08); background: #0B0F16; box-sizing: border-box">
+<sc-if value="{{isPad}}" hint-placeholder-val="{{ true }}">
+<div style="display: flex; align-items: center; gap: 22px; padding: 22px 0; border-bottom: 1px solid rgba(255,255,255,0.07)">
+<span style="width: 104px; flex-shrink: 0; display: flex; gap: 8px; align-items: center"><dc-import name="Glyph" btn="LS" fam="{{fam}}" size="38" hint-size="44px,38px"></dc-import></span>
+<span style="display: flex; flex-direction: column; gap: 4px"><span style="font-size: 18px; font-weight: 600">The left stick is the mouse.</span><span style="font-size: 15px; line-height: 1.5; color: rgba(242,245,250,0.68)">Slow and precise near the centre, fast when you push all the way. Set the speed to suit you.</span></span>
+</div>
+<div style="display: flex; align-items: center; gap: 22px; padding: 22px 0; border-bottom: 1px solid rgba(255,255,255,0.07)">
+<span style="width: 104px; flex-shrink: 0; display: flex; gap: 8px; align-items: center"><dc-import name="Glyph" btn="A" fam="{{fam}}" size="38" hint-size="38px,38px"></dc-import><dc-import name="Glyph" btn="B" fam="{{fam}}" size="38" hint-size="38px,38px"></dc-import></span>
+<span style="display: flex; flex-direction: column; gap: 4px"><span style="font-size: 18px; font-weight: 600">Left and right click.</span><span style="font-size: 15px; line-height: 1.5; color: rgba(242,245,250,0.68)">Click anything in Windows. The right stick scrolls.</span></span>
+</div>
+<div style="display: flex; align-items: center; gap: 22px; padding: 22px 0; border-bottom: 1px solid rgba(255,255,255,0.07)">
+<span style="width: 104px; flex-shrink: 0; display: flex; gap: 8px; align-items: center"><dc-import name="Glyph" btn="Guide" fam="{{fam}}" size="38" hint-size="44px,38px"></dc-import></span>
+<span style="display: flex; flex-direction: column; gap: 4px"><span style="font-size: 18px; font-weight: 600">{{names.guide}}: the Power Wheel.</span><span style="font-size: 15px; line-height: 1.5; color: rgba(242,245,250,0.68)">Tap it from anywhere, even mid-game, to switch windows, close what's stuck or go to sleep. Hold it to come back to Loungepad.</span></span>
+</div>
+<div style="display: flex; align-items: center; gap: 22px; padding: 22px 0; border-bottom: 1px solid rgba(255,255,255,0.07)">
+<span style="width: 104px; flex-shrink: 0; display: flex; gap: 8px; align-items: center"><dc-import name="Glyph" btn="View" fam="{{fam}}" size="38" hint-size="44px,38px"></dc-import></span>
+<span style="display: flex; flex-direction: column; gap: 4px"><span style="font-size: 18px; font-weight: 600">{{names.view}}: the on-screen keyboard.</span><span style="font-size: 15px; line-height: 1.5; color: rgba(242,245,250,0.68)">Type a search, a password or a message. Text boxes bring it up on their own.</span></span>
+</div>
+<div style="display: flex; align-items: center; gap: 22px; padding: 22px 0; border-bottom: 1px solid rgba(255,255,255,0.07)">
+<span style="width: 104px; flex-shrink: 0; display: flex; gap: 8px; align-items: center"><dc-import name="Glyph" btn="Dpad" fam="{{fam}}" size="38" hint-size="38px,38px"></dc-import></span>
+<span style="display: flex; flex-direction: column; gap: 4px"><span style="font-size: 18px; font-weight: 600">The pointer gets out of the way.</span><span style="font-size: 15px; line-height: 1.5; color: rgba(242,245,250,0.68)">Use the D-pad and the pointer hides. Move the stick and it's back.</span></span>
+</div>
+<div style="display: flex; align-items: center; gap: 22px; padding: 22px 0">
+<span style="width: 104px; flex-shrink: 0; display: flex; gap: 8px; align-items: center"><dc-import name="Glyph" btn="Y" fam="{{fam}}" size="38" hint-size="38px,38px"></dc-import></span>
+<span style="display: flex; flex-direction: column; gap: 4px"><span style="font-size: 18px; font-weight: 600">Any button, any shortcut.</span><span style="font-size: 15px; line-height: 1.5; color: rgba(242,245,250,0.68)">Give an app's shortcut a button of its own — {{names.y}} for a new browser tab, say.</span></span>
+</div>
+<sc-if value="{{isPS}}" hint-placeholder-val="{{ false }}">
+<div style="display: flex; align-items: center; gap: 22px; padding: 22px 0; border-top: 1px solid rgba(255,255,255,0.07)">
+<span style="width: 104px; flex-shrink: 0; display: flex; gap: 8px; align-items: center"><dc-import name="Glyph" label="PAD" fam="{{fam}}" size="38" hint-size="54px,38px"></dc-import></span>
+<span style="display: flex; flex-direction: column; gap: 4px"><span style="font-size: 18px; font-weight: 600">The touchpad works like a laptop's.</span><span style="font-size: 15px; line-height: 1.5; color: rgba(242,245,250,0.68)">Tap to click, two fingers to scroll, pinch to zoom.</span></span>
+</div>
+</sc-if>
+</sc-if>
+<sc-if value="{{isKeyboard}}" hint-placeholder-val="{{ false }}">
+<div style="display: flex; align-items: center; gap: 22px; padding: 22px 0; border-bottom: 1px solid rgba(255,255,255,0.07)">
+<span style="width: 104px; flex-shrink: 0; display: flex; gap: 8px; align-items: center"><dc-import name="Glyph" btn="Dpad" fam="keyboard" size="38" hint-size="80px,38px"></dc-import></span>
+<span style="display: flex; flex-direction: column; gap: 4px"><span style="font-size: 18px; font-weight: 600">Arrow keys move.</span><span style="font-size: 15px; line-height: 1.5; color: rgba(242,245,250,0.68)">A keyboard and mouse work too, and the mouse can click anything.</span></span>
+</div>
+<div style="display: flex; align-items: center; gap: 22px; padding: 22px 0; border-bottom: 1px solid rgba(255,255,255,0.07)">
+<span style="width: 104px; flex-shrink: 0; display: flex; gap: 8px; align-items: center"><dc-import name="Glyph" btn="A" fam="keyboard" size="38" hint-size="70px,38px"></dc-import></span>
+<span style="display: flex; flex-direction: column; gap: 4px"><span style="font-size: 18px; font-weight: 600">Enter selects, Esc goes back.</span><span style="font-size: 15px; line-height: 1.5; color: rgba(242,245,250,0.68)">Right-click a game to open its menu.</span></span>
+</div>
+<div style="display: flex; align-items: center; gap: 22px; padding: 22px 0; border-bottom: 1px solid rgba(255,255,255,0.07)">
+<span style="width: 104px; flex-shrink: 0; display: flex; gap: 8px; align-items: center"><dc-import name="Glyph" btn="X" fam="keyboard" size="38" hint-size="38px,38px"></dc-import><dc-import name="Glyph" btn="Y" fam="keyboard" size="38" hint-size="38px,38px"></dc-import></span>
+<span style="display: flex; flex-direction: column; gap: 4px"><span style="font-size: 18px; font-weight: 600">X and Y are just X and Y.</span><span style="font-size: 15px; line-height: 1.5; color: rgba(242,245,250,0.68)">The buttons on screen turn into keys the moment you start typing.</span></span>
+</div>
+<div style="display: flex; align-items: center; gap: 22px; padding: 22px 0; border-bottom: 1px solid rgba(255,255,255,0.07)">
+<span style="width: 104px; flex-shrink: 0; display: flex; gap: 8px; align-items: center"><dc-import name="Glyph" label="/" fam="keyboard" size="38" hint-size="38px,38px"></dc-import></span>
+<span style="display: flex; flex-direction: column; gap: 4px"><span style="font-size: 18px; font-weight: 600">Slash searches.</span><span style="font-size: 15px; line-height: 1.5; color: rgba(242,245,250,0.68)">Start typing a game's name and jump straight to it.</span></span>
+</div>
+<div style="display: flex; align-items: center; gap: 22px; padding: 22px 0">
+<span style="width: 104px; flex-shrink: 0; display: flex; gap: 8px; align-items: center"><dc-import name="Glyph" label="Tab" fam="keyboard" size="38" hint-size="56px,38px"></dc-import></span>
+<span style="display: flex; flex-direction: column; gap: 4px"><span style="font-size: 18px; font-weight: 600">Tab opens Settings.</span><span style="font-size: 15px; line-height: 1.5; color: rgba(242,245,250,0.68)">Everything can be changed from there.</span></span>
+</div>
+</sc-if>
+</div>
+</div>
+</div>
+</section>
+
+<!-- ============ GET STARTED: a settings sheet ============ -->
+<section id="install" aria-labelledby="lp-install-h" style="position: relative; padding: 120px clamp(20px, 5vw, 72px) 60px">
+<div style="max-width: 1296px; margin: 0 auto; display: flex; flex-wrap: wrap; gap: 48px 64px; align-items: flex-start">
+<div style="flex: 1 1 340px; min-width: 0; max-width: 460px">
+<div style="font-family: 'IBM Plex Mono', Consolas, monospace; font-size: 13px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--accent, #F0A253)">Get started</div>
+<h2 id="lp-install-h" style="margin: 16px 0 0; font-size: clamp(34px, 4.2vw, 60px); line-height: 1.02; font-weight: 700; letter-spacing: -0.03em; text-wrap: balance">On the couch in a minute.</h2>
+<p style="margin: 22px 0 0; font-size: 17px; line-height: 1.6; color: rgba(242,245,250,0.72)">There's nothing else to install. Download it, open it, and answer a few quick questions with your controller while it finds your games.</p>
+<div style="margin-top: 28px; display: flex; flex-wrap: wrap; gap: 10px">
+<span style="padding: 9px 15px; border-radius: 999px; border: 1px solid rgba(242,245,250,0.16); font-size: 14px; font-weight: 500; color: rgba(242,245,250,0.82)">Windows 11</span>
+<span style="padding: 9px 15px; border-radius: 999px; border: 1px solid rgba(242,245,250,0.16); font-size: 14px; font-weight: 500; color: rgba(242,245,250,0.82)">Also runs on Windows 10</span>
+<span style="padding: 9px 15px; border-radius: 999px; border: 1px solid rgba(242,245,250,0.16); font-size: 14px; font-weight: 500; color: rgba(242,245,250,0.82)">Keeps itself up to date</span>
+</div>
+</div>
+
+<div style="flex: 1.6 1 520px; min-width: 0; border-radius: 24px; border: 1px solid rgba(255,255,255,0.08); background: #0B0F16; overflow: hidden">
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 14px 24px; padding: 26px 28px; border-bottom: 1px solid rgba(255,255,255,0.07); background: var(--accent-10, rgba(240,162,83,0.1))">
+<span style="font-family: 'IBM Plex Mono', Consolas, monospace; font-size: 13px; letter-spacing: 0.1em; color: var(--accent, #F0A253); width: 26px">01</span>
+<span style="flex: 1 1 260px; display: flex; flex-direction: column; gap: 5px"><span style="font-size: 19px; font-weight: 600">Download Loungepad</span><span style="font-size: 15px; line-height: 1.5; color: rgba(242,245,250,0.7)">The latest version, free.</span></span>
+<a href="https://github.com/sukumar-v/Loungepad/releases/latest" target="_blank" rel="noopener" data-nav="1" class="lp-f lp-btn-primary" style="display: inline-flex; align-items: center; gap: 10px; height: 48px; padding: 0 20px 0 10px; border-radius: 999px; background: var(--accent, #F0A253); color: #08080A; font-size: 16px; font-weight: 700; text-decoration: none; box-sizing: border-box">
+<dc-import name="Glyph" btn="X" fam="{{fam}}" size="28" hint-size="28px,28px"></dc-import><span>Download</span>
+</a>
+</div>
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 14px 24px; padding: 26px 28px; border-bottom: 1px solid rgba(255,255,255,0.07)">
+<span style="font-family: 'IBM Plex Mono', Consolas, monospace; font-size: 13px; letter-spacing: 0.1em; color: rgba(242,245,250,0.55); width: 26px">02</span>
+<span style="flex: 1 1 260px; display: flex; flex-direction: column; gap: 5px"><span style="font-size: 19px; font-weight: 600">Unzip it and open Loungepad</span><span style="font-size: 15px; line-height: 1.5; color: rgba(242,245,250,0.7)">Put the folder somewhere of your own, like Documents, so it can keep itself up to date.</span></span>
+</div>
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 14px 24px; padding: 26px 28px; border-bottom: 1px solid rgba(255,255,255,0.07)">
+<span style="font-family: 'IBM Plex Mono', Consolas, monospace; font-size: 13px; letter-spacing: 0.1em; color: rgba(242,245,250,0.55); width: 26px">03</span>
+<span style="flex: 1 1 260px; display: flex; flex-direction: column; gap: 5px"><span style="font-size: 19px; font-weight: 600">If Windows shows a warning</span><span style="font-size: 15px; line-height: 1.5; color: rgba(242,245,250,0.7)">Windows can be cautious about new apps the first time they open.</span></span>
+<span style="padding: 8px 14px; border-radius: 10px; background: rgba(242,245,250,0.07); font-size: 14.5px; font-weight: 600; color: #F2F5FA">More info → Run anyway</span>
+</div>
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 14px 24px; padding: 26px 28px; border-bottom: 1px solid rgba(255,255,255,0.07)">
+<span style="font-family: 'IBM Plex Mono', Consolas, monospace; font-size: 13px; letter-spacing: 0.1em; color: rgba(242,245,250,0.55); width: 26px">04</span>
+<span style="flex: 1 1 260px; display: flex; flex-direction: column; gap: 5px"><span style="font-size: 19px; font-weight: 600">Set up from the couch</span><span style="font-size: 15px; line-height: 1.5; color: rgba(242,245,250,0.7)">Pick your TV, your look and your game stores with the controller while it finds your games. Connecting your stores lets Loungepad show every game you own, not just the installed ones.</span></span>
+<span style="padding: 7px 14px; border-radius: 999px; border: 1px solid var(--accent, #F0A253); color: var(--accent, #F0A253); font-size: 13.5px; font-weight: 600">Recommended</span>
+</div>
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 14px 24px; padding: 26px 28px">
+<span style="font-family: 'IBM Plex Mono', Consolas, monospace; font-size: 13px; letter-spacing: 0.1em; color: rgba(242,245,250,0.55); width: 26px">05</span>
+<span style="flex: 1 1 260px; display: flex; flex-direction: column; gap: 5px"><span style="font-size: 19px; font-weight: 600">That's it</span><span style="font-size: 15px; line-height: 1.5; color: rgba(242,245,250,0.7)">Loungepad updates itself from then on. To remove it, just delete the folder.</span></span>
+<span style="display: inline-flex; align-items: center; gap: 10px; font-size: 14.5px; font-weight: 600; color: #F2F5FA">Auto-update<span style="position: relative; width: 44px; height: 26px; border-radius: 999px; background: var(--accent, #F0A253)"><span style="position: absolute; right: 3px; top: 3px; width: 20px; height: 20px; border-radius: 50%; background: #08080A"></span></span></span>
+</div>
+</div>
+</div>
+</section>
+
+<!-- ============ Closing ============ -->
+<section aria-labelledby="lp-end-h" style="position: relative; overflow: hidden; padding: 150px 20px 130px; text-align: center">
+<div aria-hidden="true" style="position: absolute; left: 50%; top: 42%; width: 1000px; height: 1000px; transform: translate(-50%, -50%); border-radius: 50%; background: radial-gradient(circle, var(--accent-20, rgba(240,162,83,0.2)) 0%, transparent 62%); z-index: -1"></div>
+<img src="assets/lp-icon.png" alt="" style="width: 120px; height: 120px; display: block; margin: 0 auto; filter: drop-shadow(0 24px 60px rgba(240,162,83,0.45))">
+<h2 id="lp-end-h" style="margin: 40px auto 0; max-width: 980px; font-size: clamp(40px, 6vw, 92px); line-height: 0.98; font-weight: 700; letter-spacing: -0.04em; text-wrap: balance">Games are the reason you sit down.</h2>
+<p style="margin: 24px auto 0; max-width: 560px; font-size: clamp(17px, 1.5vw, 21px); line-height: 1.55; color: rgba(242,245,250,0.74)">Loungepad makes sure nothing else is a reason to stand up. Free, and one download away.</p>
+<div style="margin-top: 40px; display: flex; flex-wrap: wrap; justify-content: center; gap: 14px">
+<a href="https://github.com/sukumar-v/Loungepad/releases/latest" target="_blank" rel="noopener" data-nav="1" class="lp-f lp-btn-primary" style="display: inline-flex; align-items: center; gap: 12px; height: 60px; padding: 0 28px 0 15px; border-radius: 999px; background: var(--accent, #F0A253); color: #08080A; font-size: 19px; font-weight: 700; text-decoration: none; box-sizing: border-box">
+<dc-import name="Glyph" btn="X" fam="{{fam}}" size="30" hint-size="30px,30px"></dc-import><span>Download for Windows</span>
+</a>
+<a href="https://github.com/sukumar-v/Loungepad" target="_blank" rel="noopener" data-nav="1" class="lp-f lp-ghost" style="display: inline-flex; align-items: center; gap: 12px; height: 60px; padding: 0 24px 0 15px; border-radius: 999px; border: 1.5px solid rgba(242,245,250,0.28); color: #F2F5FA; font-size: 18px; font-weight: 600; text-decoration: none; box-sizing: border-box">
+<dc-import name="Glyph" btn="Y" fam="{{fam}}" size="30" hint-size="30px,30px"></dc-import><span>Star on GitHub</span>
+</a>
+</div>
+</section>
+
+<footer style="padding: 40px clamp(20px, 5vw, 72px) 44px; border-top: 1px solid rgba(255,255,255,0.07)">
+<div style="max-width: 1296px; margin: 0 auto; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 22px 48px">
+<div style="display: flex; align-items: center; gap: 12px">
+<img src="assets/lp-icon.png" alt="" style="width: 28px; height: 28px; display: block">
+<span style="font-size: 18px; font-weight: 600">loungepad</span>
+</div>
+<nav aria-label="More" style="display: flex; flex-wrap: wrap; gap: 8px 32px; font-size: 15px; font-weight: 500">
+<a href="https://github.com/sukumar-v/Loungepad/releases/latest" target="_blank" rel="noopener" data-nav="1" class="lp-link" style="color: rgba(242,245,250,0.78); padding: 8px 0">Download</a>
+<a href="https://github.com/sukumar-v/Loungepad" target="_blank" rel="noopener" data-nav="1" class="lp-link" style="color: rgba(242,245,250,0.78); padding: 8px 0">GitHub</a>
+<a href="https://github.com/sukumar-v/Loungepad/issues" target="_blank" rel="noopener" data-nav="1" class="lp-link" style="color: rgba(242,245,250,0.78); padding: 8px 0">Report a problem</a>
+<a href="https://github.com/sukumar-v/Loungepad/blob/main/LICENSE" target="_blank" rel="noopener" data-nav="1" class="lp-link" style="color: rgba(242,245,250,0.78); padding: 8px 0">License</a>
+</nav>
+</div>
+<p style="max-width: 1296px; margin: 28px auto 0; font-size: 13px; line-height: 1.6; color: rgba(242,245,250,0.58)">Xbox, PlayStation, DualSense, Nintendo Switch, Steam, Epic Games, GOG and the games shown are trademarks of their owners. Loungepad isn't affiliated with or endorsed by any of them.</p>
+</footer>
+
+<!-- ============ The hint bar: the launcher's legend, clickable, on every screen ============ -->
+<div style="position: sticky; bottom: 0; z-index: 30; display: flex; align-items: center; gap: 6px; padding: 10px clamp(12px, 5vw, 72px); background: rgba(5,7,11,0.84); border-top: 1px solid rgba(255,255,255,0.08); backdrop-filter: blur(16px) saturate(1.3); -webkit-backdrop-filter: blur(16px) saturate(1.3)">
+<span class="lp-hide-sm" style="display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 500; color: rgba(242,245,250,0.62)">
+<span style="width: 7px; height: 7px; border-radius: 50%; background: {{padDot}}"></span>{{legendLeft}}
+</span>
+<span style="flex-grow: 1"></span>
+<span class="lp-padhint" style="align-items: center; gap: 10px; height: 44px; padding: 0 12px 0 6px; font-size: 16px; font-weight: 600; color: rgba(242,245,250,0.86)"><dc-import name="Glyph" btn="Dpad" fam="{{fam}}" size="28" hint-size="28px,28px"></dc-import>Move</span>
+<span class="lp-padhint" style="align-items: center; gap: 10px; height: 44px; padding: 0 12px 0 6px; font-size: 16px; font-weight: 600; color: rgba(242,245,250,0.86)"><dc-import name="Glyph" btn="A" fam="{{fam}}" size="28" hint-size="28px,28px"></dc-import>Select</span>
+<a href="https://github.com/sukumar-v/Loungepad/releases/latest" target="_blank" rel="noopener" class="lp-hint" style="display: inline-flex; align-items: center; gap: 10px; height: 44px; padding: 0 14px 0 8px; border-radius: 999px; color: #F2F5FA; font-size: 16px; font-weight: 600; text-decoration: none"><dc-import name="Glyph" btn="X" fam="{{fam}}" size="28" hint-size="28px,28px"></dc-import>Download</a>
+<a href="https://github.com/sukumar-v/Loungepad" target="_blank" rel="noopener" class="lp-hint" style="display: inline-flex; align-items: center; gap: 10px; height: 44px; padding: 0 14px 0 8px; border-radius: 999px; color: #F2F5FA; font-size: 16px; font-weight: 600; text-decoration: none"><dc-import name="Glyph" btn="Y" fam="{{fam}}" size="28" hint-size="28px,28px"></dc-import>Star<span class="lp-hide-xs">&nbsp;on GitHub</span></a>
+<button type="button" class="lp-hint" onClick="{{openWheel}}" aria-haspopup="dialog" style="display: inline-flex; align-items: center; gap: 10px; height: 44px; padding: 0 14px 0 8px; border: 0; border-radius: 999px; background: transparent; color: #F2F5FA; font-family: Manrope, 'Segoe UI', system-ui, sans-serif; font-size: 16px; font-weight: 600; cursor: pointer"><dc-import name="Glyph" btn="Menu" fam="{{fam}}" size="28" hint-size="28px,28px"></dc-import>Menu</button>
+</div>
+
+</div>
+
+<!-- ============ The Power Wheel: this site's navigation ============ -->
+<sc-if value="{{wheelOpen}}" hint-placeholder-val="{{ false }}">
+<div data-scope="wheel" role="dialog" aria-modal="true" aria-label="Power Wheel" style="position: fixed; left: 0; top: 0; right: 0; bottom: 0; z-index: 60; display: flex; align-items: center; justify-content: center; background: rgba(1,2,4,0.74); backdrop-filter: blur(14px) saturate(1.2); -webkit-backdrop-filter: blur(14px) saturate(1.2); animation: lpFade 220ms cubic-bezier(0.2, 0.9, 0.2, 1)">
+<button type="button" tabindex="-1" aria-label="Close the wheel" onClick="{{closeWheel}}" style="position: absolute; left: 0; top: 0; width: 100%; height: 100%; padding: 0; border: 0; background: transparent; cursor: default"></button>
+<div style="position: relative; width: min(580px, 96vw); aspect-ratio: 1 / 1; animation: lpWheelIn 280ms cubic-bezier(0.2, 0.9, 0.2, 1)">
+<div aria-hidden="true" style="position: absolute; left: 13%; top: 13%; width: 74%; height: 74%; border-radius: 50%; border: 1px solid rgba(255,255,255,0.08); background: radial-gradient(circle, rgba(17,21,30,0.95) 0%, rgba(17,21,30,0.6) 58%, rgba(17,21,30,0) 72%)"></div>
+<div style="position: absolute; left: 50%; top: 50%; width: 44%; transform: translate(-50%, -50%); text-align: center; pointer-events: none">
+<div style="font-family: 'IBM Plex Mono', Consolas, monospace; font-size: 11.5px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--accent, #F0A253)">Power Wheel</div>
+<div style="margin-top: 10px; font-size: clamp(19px, 4vw, 26px); font-weight: 700; letter-spacing: -0.01em">{{spokeTitle}}</div>
+<div style="margin-top: 8px; font-size: clamp(12.5px, 2.6vw, 14.5px); line-height: 1.45; color: rgba(242,245,250,0.7)">{{spokeDesc}}</div>
+</div>
+<sc-for list="{{spokes}}" as="sp" hint-placeholder-count="7">
+<a href="{{sp.href}}" target="{{sp.target}}" rel="noopener" data-nav="1" class="lp-wheel-spoke" onClick="{{sp.go}}" onMouseEnter="{{sp.hover}}" onFocus="{{sp.hover}}" style="position: absolute; left: {{sp.x}}%; top: {{sp.y}}%; width: 112px; height: 86px; transform: translate(-50%, -50%) scale({{sp.lift}}); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; border-radius: 16px; background: {{sp.bg}}; box-shadow: {{sp.ring}}; color: #F2F5FA; font-size: 14px; font-weight: 600; text-decoration: none; box-sizing: border-box; transition: transform 180ms cubic-bezier(0.2, 0.9, 0.2, 1), box-shadow 180ms linear, background-color 180ms linear">
+<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="color: {{sp.color}}"><path d="{{sp.icon}}"></path></svg>
+<span>{{sp.label}}</span>
+</a>
+</sc-for>
+</div>
+<div style="position: absolute; left: 0; right: 0; bottom: 24px; display: flex; justify-content: center; gap: 22px; pointer-events: none; font-size: 15px; font-weight: 600; color: rgba(242,245,250,0.86)">
+<span style="display: inline-flex; align-items: center; gap: 9px"><dc-import name="Glyph" btn="A" fam="{{fam}}" size="26" hint-size="26px,26px"></dc-import>Select</span>
+<span style="display: inline-flex; align-items: center; gap: 9px"><dc-import name="Glyph" btn="B" fam="{{fam}}" size="26" hint-size="26px,26px"></dc-import>Close</span>
+</div>
+</div>
+</sc-if>
+
+<!-- ============ The viewer: a screen, whole ============ -->
+<sc-if value="{{viewerOpen}}" hint-placeholder-val="{{ false }}">
+<div data-scope="viewer" role="dialog" aria-modal="true" aria-label="{{cur.title}}" style="position: fixed; left: 0; top: 0; right: 0; bottom: 0; z-index: 70; display: flex; flex-direction: column; background: rgba(1,2,4,0.95); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); animation: lpFade 220ms cubic-bezier(0.2, 0.9, 0.2, 1)">
+<div style="display: flex; align-items: center; gap: 16px; padding: 18px clamp(14px, 4vw, 48px); font-family: 'IBM Plex Mono', Consolas, monospace; font-size: 12.5px; letter-spacing: 0.16em; text-transform: uppercase">
+<span style="color: var(--accent, #F0A253)">{{cur.kicker}}</span>
+<span style="color: rgba(242,245,250,0.6)">{{cur.pos}}</span>
+<span style="flex-grow: 1"></span>
+<button type="button" data-nav="1" class="lp-hint" onClick="{{closeViewer}}" style="display: inline-flex; align-items: center; gap: 10px; height: 44px; padding: 0 16px 0 8px; border: 0; border-radius: 999px; background: rgba(242,245,250,0.06); color: #F2F5FA; font-family: Manrope, 'Segoe UI', system-ui, sans-serif; font-size: 15px; font-weight: 600; letter-spacing: 0; text-transform: none; cursor: pointer"><dc-import name="Glyph" btn="B" fam="{{fam}}" size="26" hint-size="26px,26px"></dc-import>Back</button>
+</div>
+<div style="flex: 1 1 auto; min-height: 0; display: flex; align-items: center; gap: clamp(6px, 1.5vw, 20px); padding: 0 clamp(6px, 2vw, 32px)">
+<button type="button" data-nav="1" class="lp-f" onClick="{{prev}}" aria-label="Previous screen" style="flex-shrink: 0; width: 52px; height: 52px; border-radius: 50%; border: 1px solid rgba(242,245,250,0.18); background: rgba(17,21,30,0.9); color: #F2F5FA; display: flex; align-items: center; justify-content: center; cursor: pointer"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"></path></svg></button>
+<div style="flex: 1 1 auto; min-width: 0; height: 100%; display: flex; align-items: center; justify-content: center">
+<sc-if value="{{cur.hasImg}}" hint-placeholder-val="{{ true }}">
+<img src="{{cur.full}}" alt="{{cur.alt}}" style="display: block; max-width: 100%; max-height: 100%; border-radius: 12px; box-shadow: 0 30px 120px -30px rgba(0,0,0,0.9), 0 0 0 1px rgba(255,255,255,0.08)">
+</sc-if>
+<sc-if value="{{cur.hasIcon}}" hint-placeholder-val="{{ false }}">
+<div style="width: min(100%, 980px); aspect-ratio: 16 / 9; max-height: 100%; border-radius: 12px; display: flex; align-items: center; justify-content: center; background: radial-gradient(circle at 50% 55%, var(--accent-20, rgba(240,162,83,0.2)) 0%, transparent 60%), linear-gradient(160deg, #161C29 0%, #0B0F16 100%); box-shadow: 0 0 0 1px rgba(255,255,255,0.08); color: var(--accent, #F0A253)">
+<svg viewBox="0 0 24 24" width="180" height="180" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{cur.icon}}"></path></svg>
+</div>
+</sc-if>
+</div>
+<button type="button" data-nav="1" class="lp-f" onClick="{{next}}" aria-label="Next screen" style="flex-shrink: 0; width: 52px; height: 52px; border-radius: 50%; border: 1px solid rgba(242,245,250,0.18); background: rgba(17,21,30,0.9); color: #F2F5FA; display: flex; align-items: center; justify-content: center; cursor: pointer"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7"></path></svg></button>
+</div>
+<div style="width: 100%; max-width: 1360px; margin: 0 auto; box-sizing: border-box; padding: 22px clamp(16px, 4vw, 48px) 26px; display: flex; flex-wrap: wrap; gap: 10px 48px; align-items: flex-start">
+<h3 style="margin: 0; flex: 1 1 300px; max-width: 520px; font-size: clamp(22px, 2.4vw, 32px); line-height: 1.15; font-weight: 700; letter-spacing: -0.02em">{{cur.title}}</h3>
+<p style="margin: 0; flex: 2 1 420px; font-size: 16px; line-height: 1.6; color: rgba(242,245,250,0.76)">{{cur.body}}</p>
+</div>
+</div>
+</sc-if>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"accent":{"editor":"color","default":"#F0A253","options":["#F0A253","#E97A6C","#8098F0","#6FCF97"],"section":"Look"},"glyphs":{"editor":"enum","default":"xbox","options":["xbox","playstation","switch","keyboard"],"section":"Look"},"attract":{"editor":"boolean","default":true,"section":"Motion"},"$preview":{"width":1440,"height":7000}}'>
+class Component extends DCLogic {
+  data() {
+    if (this._d) return this._d;
+    const IMG = {
+      library: ['assets/lp-library.jpg', 'assets/lp-library-t.jpg'],
+      trailer: ['assets/lp-library-trailer.jpg', 'assets/lp-library-trailer-t.jpg'],
+      grid: ['assets/lp-library-grid.jpg', 'assets/lp-library-grid-t.jpg'],
+      emulators: ['assets/lp-emulators.jpg', 'assets/lp-emulators-t.jpg'],
+      gamePage: ['assets/lp-game-page.jpg', 'assets/lp-game-page-t.jpg'],
+      gameMenu: ['assets/lp-game-menu.jpg', 'assets/lp-game-menu-t.jpg'],
+      achievements: ['assets/lp-achievements.jpg', 'assets/lp-achievements-t.jpg'],
+      stats: ['assets/lp-stats.jpg', 'assets/lp-stats-t.jpg'],
+      quick: ['assets/lp-quick-menu.jpg', 'assets/lp-quick-menu-t.jpg'],
+      switchWin: ['assets/lp-switch-window.jpg', 'assets/lp-switch-window-t.jpg'],
+      shortcuts: ['assets/lp-shortcuts.jpg', 'assets/lp-shortcuts-t.jpg'],
+      keyboard: ['assets/lp-keyboard.jpg', 'assets/lp-keyboard-t.jpg'],
+    };
+    const ICON = {
+      pointer: 'M5.5 3.5 18.5 11l-5.6 1.7 3.2 6-2.7 1.4-3.2-6-4.7 3.9z',
+      moon: 'M20.5 14.2A8.5 8.5 0 0 1 9.8 3.5a8.5 8.5 0 1 0 10.7 10.7z',
+      heart: 'M12 20s-7.5-4.6-7.5-10.2A4.3 4.3 0 0 1 12 7.2a4.3 4.3 0 0 1 7.5 2.6C19.5 15.4 12 20 12 20z',
+    };
+    const F = [
+      { g: 0, img: IMG.grid, title: 'All your games, in one place.', sub: 'Steam, Epic, GOG, Xbox and Game Pass, side by side.',
+        body: 'Loungepad finds the games on your PC by itself — from Steam, Epic, GOG and the Xbox app — with real cover art, and it checks again every time it starts, so a game you installed yesterday is simply there. It can show the games you own but haven’t installed too, and one press takes you to install one.' },
+      { g: 0, img: IMG.library, title: 'Big art, recent games up front.', sub: 'The game you’re on fills the screen.',
+        body: 'The game you’re on fills the TV, with your recent games in a row underneath. Scroll down and your whole collection slides into view.' },
+      { g: 0, img: IMG.trailer, title: 'Rest on a game, and its trailer plays.', sub: 'Wait three seconds and the trailer starts behind it.',
+        body: 'Leave the highlight on a game for three seconds and its trailer plays behind it, with sound. Open the game’s page and the trailer keeps playing there.' },
+      { g: 0, img: IMG.gamePage, title: 'Every game gets its own page.', sub: 'Art, ratings and screenshots, filled in for you.',
+        body: 'Every game gets a page with its logo, description, review score and age rating, a row of trailers and screenshots, and how long you’ve played — all filled in for you, with nothing to set up.' },
+      { g: 0, img: IMG.achievements, title: 'Achievements, all in one place.', sub: 'From Steam, Xbox, Epic and GOG — and your retro games.',
+        body: 'See every achievement for a game, which ones you’ve unlocked and how rare they are. When you unlock something new, Loungepad tells you once you’ve finished playing.' },
+      { g: 0, img: IMG.stats, title: 'Your playtime, tracked.', sub: 'Every session, and how your PC handled it.',
+        body: 'Loungepad keeps a record of every time you play: when, for how long, and how your PC was doing. See your week at a glance, or look back over the last month.' },
+      { g: 1, icon: 'pointer', title: 'The left stick is the mouse.', sub: 'Point and click anywhere in Windows.',
+        body: 'Move the pointer with the left stick and click with the face buttons, anywhere in Windows. It’s slow and precise near the centre and quick when you push all the way, and you can set the speed to suit you. The right stick scrolls.' },
+      { g: 1, img: IMG.quick, title: 'One button for everything else.', sub: 'The Power Wheel, from anywhere, even mid-game.',
+        body: 'Press the Xbox or PS button from anywhere — even in the middle of a game — to switch windows, bring up the keyboard, close something that’s stuck, or put the PC to sleep. Hold it to come back to Loungepad.' },
+      { g: 1, img: IMG.switchWin, title: 'Any window, onto the TV.', sub: 'Pick it, and it follows you.',
+        body: 'See everything that’s open and pick one: it comes to the TV with you. No more getting up because something opened on the other screen.' },
+      { g: 1, img: IMG.shortcuts, title: 'Shortcuts for your apps.', sub: 'Browsers, Spotify, VLC, Discord and more.',
+        body: 'Loungepad knows the shortcuts for the app in front of you — new tab and back in a browser, play and pause in VLC — and puts them on a wheel. You can give any of them a button of its own, too.' },
+      { g: 1, img: IMG.keyboard, title: 'A keyboard that comes to you.', sub: 'Type anywhere, with word suggestions.',
+        body: 'Press one button and a keyboard appears on screen, ready for a search, a password or a message. It suggests words as you type and never pulls you out of your game.' },
+      { g: 1, icon: 'moon', title: 'It rests like a console.', sub: 'Put the controller down and the TV goes dark.',
+        body: 'Leave the controller alone for a while and the TV goes dark and your game pauses right where it is. Press any button and both come back exactly as you left them. It can put the PC to sleep, too.' },
+      { g: 2, img: IMG.emulators, title: 'Retro games, in the same library.', sub: 'Your classic games, found for you, with box art.',
+        body: 'Loungepad finds your emulators and retro games on its own, names them properly, adds box art and labels them by console, right next to everything else.' },
+      { g: 2, img: IMG.gameMenu, title: 'Mods, collections and favorites.', sub: 'Turn mods on and off from the couch.',
+        body: 'Every game has a menu one button away: add it to your favorites or a collection, check your achievements, or turn mods on and off without leaving the couch. Anything that isn’t a game can be hidden with one press.' },
+      { g: 2, icon: 'heart', title: 'Free. Really.', sub: 'No subscription, and no account to make.',
+        body: 'Loungepad is free and open source. There’s no subscription and no Loungepad account to make: download it and play.' },
+    ];
+    const GROUPS = [
+      { no: '01', kicker: 'Like a console', title: 'Everything a console does.' },
+      { no: '02', kicker: 'Still a PC', title: 'And it’s still your PC.' },
+      { no: '03', kicker: 'What a console can’t do', title: 'And a few things no console will.' },
+    ];
+    const SHOTS = [
+      { f: 1, title: 'Your library', sub: 'The game you’re on fills the screen, with your recent games below.' },
+      { f: 2, title: 'Trailers', sub: 'Rest on a game and its trailer plays behind it.' },
+      { f: 0, title: 'Every game you own', sub: 'Steam, Epic, GOG, Xbox and your retro games, in one place.' },
+      { f: 7, title: 'The Power Wheel', sub: 'One button for everything else Windows needs, even mid-game.' },
+      { f: 12, title: 'Retro games too', sub: 'Your classic games, with box art, next to everything else.' },
+      { f: 3, title: 'A page for every game', sub: 'Art, ratings and trailers, filled in for you.' },
+    ];
+    const DL = 'https://github.com/sukumar-v/Loungepad/releases/latest';
+    const GH = 'https://github.com/sukumar-v/Loungepad';
+    const SPOKES = [
+      { label: 'Download', title: 'Download', desc: 'Get the latest version for Windows.', href: DL, ext: true, icon: 'M12 4v11M7 10l5 5 5-5M5 20h14' },
+      { label: 'GitHub', title: 'Star on GitHub', desc: 'Follow the project and leave a star.', href: GH, ext: true, icon: 'M12 3.5l2.6 5.3 5.9.9-4.25 4.1 1 5.8L12 16.85l-5.25 2.75 1-5.8L3.5 9.7l5.9-.9z' },
+      { label: 'Features', title: 'Features', desc: 'Everything it does, screen by screen.', href: '#library', icon: 'M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z' },
+      { label: 'Controllers', title: 'Controllers', desc: 'Any controller, with every button drawn as yours.', href: '#controllers', icon: 'M8.6 8h6.8a5.4 5.4 0 0 1 5.2 4l1.1 4.4a2.4 2.4 0 0 1-4.4 1.8L15.6 16H8.4l-1.7 2.2a2.4 2.4 0 0 1-4.4-1.8L3.4 12A5.4 5.4 0 0 1 8.6 8zM6.6 11.4v2.2M5.5 12.5h2.2M15.4 11.6h.01M17.6 13.4h.01' },
+      { label: 'Get started', title: 'Get started', desc: 'Download, open, and set up from the couch.', href: '#install', icon: 'M5 12.5l4.5 4.5L19 7.5' },
+      { label: 'Home', title: 'Back to the top', desc: 'Where it all starts.', href: '#top', icon: 'M4 11.5 12 4l8 7.5V20a1 1 0 0 1-1 1h-5v-6h-4v6H5a1 1 0 0 1-1-1z' },
+      { label: 'Close', title: 'Close', desc: 'Back to where you were.', href: '#', close: true, icon: 'M6 6l12 12M18 6 6 18' },
+    ];
+    const ACCENTS = [
+      { name: 'Ember', hex: '#F0A253' }, { name: 'Coral', hex: '#E97A6C' }, { name: 'Rose', hex: '#F07AA8' }, { name: 'Orchid', hex: '#C78BE8' },
+      { name: 'Indigo', hex: '#8098F0' }, { name: 'Aqua', hex: '#5FC9D6' }, { name: 'Mint', hex: '#6FCF97' }, { name: 'Lime', hex: '#B8D96B' },
+    ];
+    this._d = { IMG, ICON, F, GROUPS, SHOTS, SPOKES, ACCENTS, DL, GH };
+    return this._d;
+  }
+
+  componentDidMount() {
+    this._alive = true;
+    this._prev = {};
+    this._rep = {};
+    const reduce = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    if (reduce) this.setState({ reduce });
+    this.startCycle();
+    if (navigator.getGamepads) {
+      const loop = () => { if (!this._alive) return; try { this.pollPads(); } catch (e) {} this._raf = requestAnimationFrame(loop); };
+      this._raf = requestAnimationFrame(loop);
+    }
+    this.applyAccent();
+  }
+  componentDidUpdate() { this.applyAccent(); }
+  componentWillUnmount() {
+    this._alive = false;
+    clearInterval(this._cycle);
+    if (this._raf) cancelAnimationFrame(this._raf);
+  }
+
+  // Attract mode: the TV walks through the screens on its own until someone takes over.
+  // Restarted on every manual change so the progress pill is honest.
+  startCycle() {
+    clearInterval(this._cycle);
+    this._cycle = setInterval(() => {
+      const s = this.state || {};
+      if ((this.props.attract ?? true) === false || s.reduce || s.hold || s.viewer != null || s.wheel) return;
+      if (document.hidden) return;
+      this.setState({ shot: ((s.shot ?? 0) + 1) % this.data().SHOTS.length });
+    }, 7000);
+  }
+  stepShot(d) {
+    const n = this.data().SHOTS.length;
+    const c = (this.state || {}).shot ?? 0;
+    this.setState({ shot: (c + d + n) % n, hold: true });
+    this.startCycle();
+  }
+
+  // The accent goes on the document as custom properties, the way the launcher's applyTheme does it.
+  applyAccent() {
+    const s = this.state || {};
+    const a = s.accent ?? this.props.accent ?? '#F0A253';
+    if (a === this._lastAccent) return;
+    this._lastAccent = a;
+    const h = String(a).replace('#', '');
+    const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h.slice(0, 6);
+    const n = parseInt(full, 16);
+    if (isNaN(n)) return;
+    const rgb = [(n >> 16) & 255, (n >> 8) & 255, n & 255].join(',');
+    const st = document.documentElement.style;
+    st.setProperty('--accent', '#' + full);
+    [10, 15, 20, 30, 40, 50].forEach((p) => st.setProperty('--accent-' + p, 'rgba(' + rgb + ',' + (p / 100) + ')'));
+  }
+
+  // ---- input ----
+  famFromId(id) {
+    const s = String(id || '').toLowerCase();
+    if (/054c|dualsense|dualshock|playstation/.test(s)) return 'playstation';
+    if (/057e|pro controller|nintendo|joy-con/.test(s)) return 'switch';
+    return 'xbox';
+  }
+  padName(id) {
+    const s = String(id || '').toLowerCase();
+    if (/0ce6|0df2|dualsense/.test(s)) return 'DualSense';
+    if (/05c4|09cc|dualshock/.test(s)) return 'DualShock 4';
+    if (/054c/.test(s)) return 'PlayStation controller';
+    if (/2009|pro controller/.test(s)) return 'Switch Pro Controller';
+    if (/057e/.test(s)) return 'Switch controller';
+    if (/045e|xbox|xinput/.test(s)) return 'Xbox controller';
+    return 'Controller';
+  }
+  pollPads() {
+    const list = navigator.getGamepads ? navigator.getGamepads() : [];
+    let pad = null;
+    for (let i = 0; i < list.length; i++) { if (list[i] && list[i].connected) { pad = list[i]; break; } }
+    const s = this.state || {};
+    const name = pad ? this.padName(pad.id) : null;
+    if (name !== (s.padName ?? null)) this.setState({ padName: name });
+    if (!pad) return;
+    const now = performance.now();
+    const down = (i) => !!(pad.buttons[i] && pad.buttons[i].pressed);
+    const ids = [0, 1, 2, 3, 8, 9, 16];
+    const edges = {};
+    ids.forEach((i) => { const v = down(i); edges[i] = v && !this._prev[i]; this._prev[i] = v; });
+    const ax = pad.axes[0] || 0, ay = pad.axes[1] || 0;
+    const dirs = { left: down(14) || ax < -0.6, right: down(15) || ax > 0.6, up: down(12) || ay < -0.6, down: down(13) || ay > 0.6 };
+    let moved = false;
+    Object.keys(dirs).forEach((d) => {
+      if (!dirs[d]) { this._rep[d] = null; return; }
+      const t = this._rep[d];
+      if (t == null) { this._rep[d] = now + 380; this.nav(d); moved = true; }
+      else if (now >= t) { this._rep[d] = now + 120; this.nav(d); moved = true; }
+    });
+    const any = moved || ids.some((i) => edges[i]);
+    if (any) {
+      const fam = this.famFromId(pad.id);
+      const cur = this.state || {};
+      if (cur.input !== 'pad' || cur.padFam !== fam || (!cur.famLocked && cur.fam !== fam)) this.setState({ input: 'pad', padFam: fam, fam: cur.famLocked ? cur.fam : fam });
+    }
+    if (edges[0]) this.activate();
+    if (edges[1]) this.back();
+    if (edges[2]) this.open(this.data().DL);
+    if (edges[3]) this.open(this.data().GH);
+    if (edges[9] || edges[16]) this.toggleWheel();
+  }
+  onKey(e) {
+    const t = e.target;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    const k = e.key;
+    let handled = true;
+    if (k === 'ArrowLeft') this.nav('left');
+    else if (k === 'ArrowRight') this.nav('right');
+    else if (k === 'ArrowUp') this.nav('up');
+    else if (k === 'ArrowDown') this.nav('down');
+    else if (k === 'Escape') this.back();
+    else if (k === 'x' || k === 'X') this.open(this.data().DL);
+    else if (k === 'y' || k === 'Y') this.open(this.data().GH);
+    else if (k === 'm' || k === 'M') this.toggleWheel();
+    else handled = false;
+    if (!handled) return;
+    e.preventDefault();
+    const s = this.state || {};
+    if (s.input !== 'key' || (!s.famLocked && s.fam !== 'keyboard')) this.setState({ input: 'key', fam: s.famLocked ? s.fam : 'keyboard' });
+  }
+  onMove(e) {
+    if (e && e.movementX === 0 && e.movementY === 0) return;
+    const s = this.state || {};
+    if (s.input && s.input !== 'mouse') this.setState({ input: 'mouse' });
+  }
+  // Spatial navigation, the way nav.js moves the highlight: nearest neighbour in the direction pressed.
+  nav(dir) {
+    const s = this.state || {};
+    if (s.viewer != null && (dir === 'left' || dir === 'right')) { this.step(dir === 'left' ? -1 : 1); return; }
+    // On the TV, left and right change the screen, like the D-pad drawn under it.
+    const ae = document.activeElement;
+    if (!s.wheel && s.viewer == null && ae && ae.getAttribute && ae.getAttribute('data-tv') && (dir === 'left' || dir === 'right')) {
+      this.stepShot(dir === 'left' ? -1 : 1);
+      return;
+    }
+    const scopeName = s.wheel ? 'wheel' : s.viewer != null ? 'viewer' : 'page';
+    const scope = document.querySelector('[data-scope="' + scopeName + '"]');
+    if (!scope) return;
+    const els = Array.prototype.slice.call(scope.querySelectorAll('[data-nav]')).filter((el) => {
+      const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0;
+    });
+    if (!els.length) return;
+    const cur = document.activeElement;
+    if (els.indexOf(cur) < 0) {
+      const vh = window.innerHeight;
+      const first = els.find((el) => { const r = el.getBoundingClientRect(); return r.top >= 60 && r.bottom <= vh - 70; }) || els[0];
+      this.focusEl(first);
+      return;
+    }
+    const r = cur.getBoundingClientRect();
+    const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    let best = null, bestScore = Infinity;
+    els.forEach((el) => {
+      if (el === cur) return;
+      const q = el.getBoundingClientRect();
+      const x = q.left + q.width / 2, y = q.top + q.height / 2;
+      const dx = x - cx, dy = y - cy;
+      let main, cross;
+      if (dir === 'left') { if (dx > -8) return; main = -dx; cross = Math.abs(dy); }
+      else if (dir === 'right') { if (dx < 8) return; main = dx; cross = Math.abs(dy); }
+      else if (dir === 'up') { if (dy > -8) return; main = -dy; cross = Math.abs(dx); }
+      else { if (dy < 8) return; main = dy; cross = Math.abs(dx); }
+      const score = main + cross * 2.2;
+      if (score < bestScore) { bestScore = score; best = el; }
+    });
+    if (best) this.focusEl(best);
+    else if (dir === 'up' || dir === 'down') window.scrollBy({ top: (dir === 'down' ? 1 : -1) * window.innerHeight * 0.6, behavior: 'smooth' });
+  }
+  focusEl(el) {
+    el.focus({ preventScroll: true });
+    if (el.scrollIntoView) el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: this.state && this.state.reduce ? 'auto' : 'smooth' });
+  }
+  activate() {
+    const el = document.activeElement;
+    if (!el || !el.closest || !el.closest('[data-lp-root]')) return;
+    // A link that opens a new tab goes through open(), which falls back to this tab when the
+    // browser won't open one for a controller press.
+    if (el.tagName === 'A' && el.getAttribute('target') === '_blank' && el.href) { this.open(el.href); return; }
+    if (el.click) el.click();
+  }
+  back() {
+    const s = this.state || {};
+    if (s.wheel) this.closeWheel();
+    else if (s.viewer != null) this.closeViewer();
+  }
+  open(url) {
+    // Browsers only open new tabs for a click or a keypress; a controller press may be refused.
+    // When it is, go there in this tab instead, so the button always does something.
+    let w = null;
+    try { w = window.open(url, '_blank'); } catch (e) { w = null; }
+    if (w) { try { w.opener = null; } catch (e) {} return; }
+    try { window.location.assign(url); } catch (e) {}
+  }
+
+  // ---- overlays ----
+  remember() {
+    const a = document.activeElement;
+    this._opener = a && a.closest && a.closest('[data-scope="page"]') ? a : null;
+  }
+  restore() {
+    const o = this._opener;
+    this._opener = null;
+    if (o && document.contains(o)) setTimeout(() => o.focus({ preventScroll: true }), 40);
+  }
+  focusFirst(scope) {
+    setTimeout(() => {
+      const el = document.querySelector('[data-scope="' + scope + '"] [data-nav]');
+      if (el) el.focus({ preventScroll: true });
+    }, 40);
+  }
+  openViewer(i) { if (!(this.state && this.state.wheel)) this.remember(); this.setState({ viewer: i, wheel: false, hold: true }); this.focusFirst('viewer'); }
+  closeViewer() { this.setState({ viewer: null, hold: false }); this.restore(); }
+  step(d) {
+    const n = this.data().F.length;
+    const v = (this.state && this.state.viewer != null) ? this.state.viewer : 0;
+    this.setState({ viewer: (v + d + n) % n });
+  }
+  openWheel() { this.remember(); this.setState({ wheel: true, spoke: 0, viewer: null }); this.focusFirst('wheel'); }
+  closeWheel() { this.setState({ wheel: false }); this.restore(); }
+  toggleWheel() { if (this.state && this.state.wheel) this.closeWheel(); else this.openWheel(); }
+
+  renderVals() {
+    const D = this.data();
+    const s = this.state || {};
+    const fam = s.fam ?? this.props.glyphs ?? 'xbox';
+    const accent = s.accent ?? this.props.accent ?? '#F0A253';
+    const shot = s.shot ?? 0;
+    const cycling = (this.props.attract ?? true) !== false && !s.hold && !s.reduce;
+    const viewer = s.viewer ?? null;
+    const wheel = !!s.wheel;
+    const spoke = s.spoke ?? 0;
+    const RING = '0 0 0 3px var(--accent, #F0A253), 0 0 40px 6px var(--accent-30, rgba(240,162,83,0.3))';
+
+    if (!this._h) {
+      this._h = {
+        onKey: (e) => this.onKey(e),
+        onMove: (e) => this.onMove(e),
+        hold: () => { if (!(this.state || {}).hold) this.setState({ hold: true }); },
+        release: () => this.setState({ hold: false }),
+        openShot: () => this.openViewer(this.data().SHOTS[(this.state || {}).shot ?? 0].f),
+        openWheel: () => this.openWheel(),
+        closeWheel: () => this.closeWheel(),
+        closeViewer: () => this.closeViewer(),
+        prev: () => this.step(-1),
+        next: () => this.step(1),
+      };
+    }
+    const H = this._h;
+
+    const shots = D.SHOTS.map((x, i) => {
+      const f = D.F[x.f];
+      const on = i === shot;
+      return {
+        full: f.img[0], thumb: f.img[1], aria: 'Show ' + x.title.toLowerCase() + ' on the TV', pressed: on ? 'true' : 'false',
+        op: on ? 1 : 0, glow: on ? 0.55 : 0,
+        dotW: on ? 30 : 7, dotBg: on ? 'rgba(242,245,250,0.18)' : 'rgba(242,245,250,0.3)',
+        prog: on && cycling, still: on && !cycling,
+        pick: () => { this.setState({ shot: i, hold: true }); this.startCycle(); },
+      };
+    });
+    const cs = D.SHOTS[shot] || D.SHOTS[0];
+
+    const groups = D.GROUPS.map((g, gi) => ({
+      no: g.no, kicker: g.kicker, title: g.title,
+      items: D.F.map((f, i) => ({ f, i })).filter((o) => o.f.g === gi).map((o) => ({
+        title: o.f.title, sub: o.f.sub, fam,
+        thumb: o.f.img ? o.f.img[1] : '', hasImg: !!o.f.img, hasIcon: !o.f.img,
+        icon: o.f.icon ? D.ICON[o.f.icon] : '',
+        aria: o.f.title + ' — see more',
+        open: () => this.openViewer(o.i),
+      })),
+    }));
+
+    const vi = viewer != null ? viewer : 0;
+    const cf = D.F[vi];
+    const cur = {
+      title: cf.title, body: cf.body, kicker: D.GROUPS[cf.g].kicker,
+      pos: String(vi + 1).padStart(2, '0') + ' / ' + String(D.F.length).padStart(2, '0'),
+      full: cf.img ? cf.img[0] : '', hasImg: !!cf.img, hasIcon: !cf.img,
+      icon: cf.icon ? D.ICON[cf.icon] : '', alt: 'Loungepad: ' + cf.title,
+    };
+
+    const n = D.SPOKES.length;
+    const spokes = D.SPOKES.map((sp, i) => {
+      const a = (-90 + (i * 360) / n) * Math.PI / 180;
+      const on = i === spoke;
+      return {
+        label: sp.label, icon: sp.icon, href: sp.href, target: sp.ext ? '_blank' : '_self',
+        x: (50 + 38 * Math.cos(a)).toFixed(2), y: (50 + 38 * Math.sin(a)).toFixed(2),
+        bg: on ? 'rgba(27,34,49,0.98)' : 'rgba(17,21,30,0.94)',
+        ring: on ? RING : '0 0 0 1px rgba(255,255,255,0.09)',
+        lift: on ? 1.08 : 1,
+        color: on ? 'var(--accent, #F0A253)' : '#F2F5FA',
+        hover: () => { if ((this.state || {}).spoke !== i) this.setState({ spoke: i }); },
+        go: (e) => {
+          if (sp.close && e && e.preventDefault) e.preventDefault();
+          if (sp.close) { this.closeWheel(); return; }
+          this._opener = null;
+          this.setState({ wheel: false });
+        },
+      };
+    });
+    const sp = D.SPOKES[spoke] || D.SPOKES[0];
+
+    const FAMS = [['xbox', 'Xbox'], ['playstation', 'PlayStation'], ['switch', 'Switch'], ['keyboard', 'Keyboard']];
+    const fams = FAMS.map(([id, name]) => {
+      const on = id === fam;
+      return {
+        name, pressed: on ? 'true' : 'false',
+        bg: on ? 'var(--accent, #F0A253)' : 'transparent', ink: on ? '#08080A' : '#F2F5FA',
+        pick: () => this.setState({ fam: id, famLocked: true }),
+      };
+    });
+    const famName = { xbox: 'Xbox', playstation: 'PlayStation', switch: 'Switch Pro', keyboard: 'Keyboard' }[fam] || 'Xbox';
+    const famCaption = s.padName && !s.famLocked ? 'Drawn for the ' + s.padName + ' in your hands' : fam === 'keyboard' ? 'Shown as keys on your keyboard' : 'The buttons, as they look on this controller';
+    const NAMES = {
+      xbox: { guide: 'Xbox button', view: 'View', y: 'Y' },
+      playstation: { guide: 'PS button', view: 'Create', y: 'Triangle' },
+      switch: { guide: 'Home', view: 'Minus', y: 'X' },
+      keyboard: { guide: 'Guide', view: 'View', y: 'Y' },
+    };
+
+    const swatches = D.ACCENTS.map((a) => {
+      const on = a.hex.toUpperCase() === String(accent).toUpperCase();
+      return {
+        name: a.name, hex: a.hex, aria: 'Colour: ' + a.name, pressed: on ? 'true' : 'false',
+        ring: on ? '0 0 0 3px #0B0F16, 0 0 0 5px ' + a.hex + ', 0 0 24px 4px ' + a.hex + '66' : '0 0 0 1px rgba(255,255,255,0.14)',
+        lift: on ? 1.1 : 1,
+        pick: () => this.setState({ accent: a.hex }),
+      };
+    });
+    const acc = D.ACCENTS.find((a) => a.hex.toUpperCase() === String(accent).toUpperCase());
+
+    const padName = s.padName || null;
+    const selectName = fam === 'playstation' ? 'Cross' : fam === 'switch' ? 'B' : 'A';
+
+    return {
+      fam, input: s.input || 'mouse',
+      onKey: H.onKey, onMove: H.onMove, hold: H.hold, release: H.release, openShot: H.openShot,      openWheel: H.openWheel, closeWheel: H.closeWheel, closeViewer: H.closeViewer, prev: H.prev, next: H.next,
+      shots, shotTitle: cs.title, shotSub: cs.sub, tvLabel: cs.title + ' — see it larger',
+      groups,
+      viewerOpen: viewer != null, cur,
+      wheelOpen: wheel, spokes, spokeTitle: sp.title, spokeDesc: sp.desc,
+      fams, famName, famCaption, names: NAMES[fam] || NAMES.xbox,
+      isPad: fam !== 'keyboard', isKeyboard: fam === 'keyboard', isPS: fam === 'playstation',
+      swatches, accentName: acc ? acc.name : 'Custom',
+      padDot: padName ? 'var(--accent, #F0A253)' : 'rgba(242,245,250,0.35)',
+      detectLine: padName
+        ? 'Your ' + padName + ' is connected. Try it on this page: the D-pad moves, ' + selectName + ' selects, and Menu opens the wheel.'
+        : 'Plug in a controller and press any button: this page will show its buttons, and you can browse it from the couch.',
+      legendLeft: padName ? padName + ' connected' : 'Loungepad for Windows',
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,452 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loungepad — turn a Windows 11 PC into a console</title>
+<meta name="description" content="Loungepad turns a Windows 11 PC into a console: your games, your apps and your whole PC from the couch, with nothing in your hands but a controller. Free and open source.">
+<link rel="canonical" href="https://loungepad.app/">
+<meta name="theme-color" content="#05070B">
+<meta name="color-scheme" content="dark">
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="img/icon-32.png">
+<link rel="icon" type="image/png" sizes="256x256" href="img/lp-icon.png">
+<link rel="apple-touch-icon" sizes="180x180" href="img/icon-180.png">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://loungepad.app/">
+<meta property="og:site_name" content="Loungepad">
+<meta property="og:title" content="Loungepad — turn a Windows 11 PC into a console">
+<meta property="og:description" content="Your games, your apps, your whole PC — all from the couch, with nothing in your hands but a controller. Free, for Windows 11.">
+<meta property="og:image" content="https://loungepad.app/img/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Loungepad: turn a Windows 11 PC into a console.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Loungepad — turn a Windows 11 PC into a console">
+<meta name="twitter:description" content="Your games, your apps, your whole PC — all from the couch, with nothing in your hands but a controller. Free, for Windows 11.">
+<meta name="twitter:image" content="https://loungepad.app/img/og.jpg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="preload" as="image" type="image/avif" imagesrcset="img/lp-library-480.avif 480w, img/lp-library-720.avif 720w, img/lp-library-1080.avif 1080w, img/lp-library-1440.avif 1440w, img/lp-library-1920.avif 1920w" imagesizes="(min-width: 1200px) 1056px, (min-width: 761px) calc(90vw - 24px), (min-width: 400px) calc(90vw - 12px), calc(100vw - 52px)" fetchpriority="high">
+<link rel="stylesheet" href="site.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Loungepad",
+  "url": "https://loungepad.app/",
+  "operatingSystem": "Windows 11",
+  "applicationCategory": "UtilitiesApplication",
+  "description": "Loungepad turns a Windows 11 PC into a console: your games, your apps and your whole PC from the couch, with nothing in your hands but a controller.",
+  "downloadUrl": "https://github.com/sukumar-v/Loungepad/releases/latest",
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+  "image": "https://loungepad.app/img/og.jpg"
+}
+</script>
+</head>
+<body>
+<div id="lp" class="lp-root" data-input="mouse">
+
+<div data-scope="page" id="page">
+
+<!-- ============ HERO: the message, then the TV ============ -->
+<section id="top" class="lp-hero">
+
+<!-- One soft glow, the colour of the logo, behind the heading. Nothing else behind the text. -->
+<div class="lp-hero-glow" aria-hidden="true"></div>
+
+<header class="lp-header">
+<a href="#top" data-nav class="lp-logo lp-link" aria-label="Loungepad, back to the top">
+<img src="img/icon-96.png" alt="" width="34" height="34">
+<span>loungepad</span>
+</a>
+<div class="lp-grow"></div>
+<nav class="lp-nav" aria-label="Sections">
+<a href="#library" data-nav class="lp-link">Features</a>
+<a href="#controllers" data-nav class="lp-link">Controllers</a>
+<a href="#install" data-nav class="lp-link">Get started</a>
+</nav>
+<a href="https://github.com/sukumar-v/Loungepad/releases/latest" target="_blank" rel="noopener" data-nav class="lp-btn lp-btn-fill lp-btn-sm lp-f lp-btn-primary">Download</a>
+</header>
+
+<div class="lp-hero-copy">
+<h1 class="lp-h1">Turn a Windows&nbsp;11&nbsp;PC into a console.</h1>
+<p class="lp-lede">Your games, your apps, your whole PC — all from the couch, with nothing in your hands but a controller.</p>
+<div class="lp-ctas">
+<a href="https://github.com/sukumar-v/Loungepad/releases/latest" target="_blank" rel="noopener" data-nav class="lp-btn lp-btn-fill lp-btn-lg lp-f lp-btn-primary"><span data-glyph data-btn="X" data-size="30" data-drawn="xbox|X|30|" style="height:30px" aria-hidden="true"><span class="gd" style="width:30px;height:30px;background:#3C7CD3;box-shadow:none;color:#FFFFFF;font-size:16px">X</span></span><span>Download for Windows</span></a>
+<a href="https://github.com/sukumar-v/Loungepad" target="_blank" rel="noopener" data-nav class="lp-btn lp-btn-ghost lp-f lp-ghost"><span data-glyph data-btn="Y" data-size="30" data-drawn="xbox|Y|30|" style="height:30px" aria-hidden="true"><span class="gd" style="width:30px;height:30px;background:#E2B128;box-shadow:none;color:#101012;font-size:16px">Y</span></span><span>Star on GitHub</span></a>
+</div>
+<p class="lp-free">Free, for Windows 11</p>
+</div>
+
+<!-- The TV: the app itself, with its own glow spilling out behind it. -->
+<div class="lp-tv-wrap">
+<div class="lp-tv-inner">
+<div class="lp-tv-glow" aria-hidden="true">
+<picture><source type="image/avif" srcset="img/lp-library-480.avif"><source type="image/webp" srcset="img/lp-library-480.webp"><img src="img/lp-library-480.jpg" alt="" width="480" height="270" decoding="async" class="on"></picture>
+<picture><source type="image/avif" srcset="img/lp-library-trailer-480.avif"><source type="image/webp" srcset="img/lp-library-trailer-480.webp"><img src="img/lp-library-trailer-480.jpg" alt="" width="480" height="270" decoding="async" loading="lazy"></picture>
+<picture><source type="image/avif" srcset="img/lp-library-grid-480.avif"><source type="image/webp" srcset="img/lp-library-grid-480.webp"><img src="img/lp-library-grid-480.jpg" alt="" width="480" height="270" decoding="async" loading="lazy"></picture>
+<picture><source type="image/avif" srcset="img/lp-quick-menu-480.avif"><source type="image/webp" srcset="img/lp-quick-menu-480.webp"><img src="img/lp-quick-menu-480.jpg" alt="" width="480" height="270" decoding="async" loading="lazy"></picture>
+<picture><source type="image/avif" srcset="img/lp-emulators-480.avif"><source type="image/webp" srcset="img/lp-emulators-480.webp"><img src="img/lp-emulators-480.jpg" alt="" width="480" height="270" decoding="async" loading="lazy"></picture>
+<picture><source type="image/avif" srcset="img/lp-game-page-480.avif"><source type="image/webp" srcset="img/lp-game-page-480.webp"><img src="img/lp-game-page-480.jpg" alt="" width="480" height="270" decoding="async" loading="lazy"></picture>
+</div>
+<div class="lp-tv-frame">
+<button type="button" id="tv" data-nav data-tv class="lp-tv" aria-label="Your library — see it larger">
+<picture class="lp-shot on" data-shot="0" data-feature="1"><source type="image/avif" srcset="img/lp-library-480.avif 480w, img/lp-library-720.avif 720w, img/lp-library-1080.avif 1080w, img/lp-library-1440.avif 1440w, img/lp-library-1920.avif 1920w" sizes="(min-width: 1200px) 1056px, (min-width: 761px) calc(90vw - 24px), (min-width: 400px) calc(90vw - 12px), calc(100vw - 52px)"><source type="image/webp" srcset="img/lp-library-480.webp 480w, img/lp-library-720.webp 720w, img/lp-library-1080.webp 1080w, img/lp-library-1440.webp 1440w, img/lp-library-1920.webp 1920w" sizes="(min-width: 1200px) 1056px, (min-width: 761px) calc(90vw - 24px), (min-width: 400px) calc(90vw - 12px), calc(100vw - 52px)"><img src="img/lp-library-1080.jpg" srcset="img/lp-library-480.jpg 480w, img/lp-library-720.jpg 720w, img/lp-library-1080.jpg 1080w, img/lp-library-1440.jpg 1440w, img/lp-library-1920.jpg 1920w" sizes="(min-width: 1200px) 1056px, (min-width: 761px) calc(90vw - 24px), (min-width: 400px) calc(90vw - 12px), calc(100vw - 52px)" alt="" width="1920" height="1080" decoding="async" fetchpriority="high"></picture>
+<picture class="lp-shot" data-shot="1" data-feature="2"><source type="image/avif" srcset="img/lp-library-trailer-480.avif 480w, img/lp-library-trailer-720.avif 720w, img/lp-library-trailer-1080.avif 1080w, img/lp-library-trailer-1440.avif 1440w, img/lp-library-trailer-1920.avif 1920w" sizes="(min-width: 1200px) 1056px, (min-width: 761px) calc(90vw - 24px), (min-width: 400px) calc(90vw - 12px), calc(100vw - 52px)"><source type="image/webp" srcset="img/lp-library-trailer-480.webp 480w, img/lp-library-trailer-720.webp 720w, img/lp-library-trailer-1080.webp 1080w, img/lp-library-trailer-1440.webp 1440w, img/lp-library-trailer-1920.webp 1920w" sizes="(min-width: 1200px) 1056px, (min-width: 761px) calc(90vw - 24px), (min-width: 400px) calc(90vw - 12px), calc(100vw - 52px)"><img src="img/lp-library-trailer-1080.jpg" srcset="img/lp-library-trailer-480.jpg 480w, img/lp-library-trailer-720.jpg 720w, img/lp-library-trailer-1080.jpg 1080w, img/lp-library-trailer-1440.jpg 1440w, img/lp-library-trailer-1920.jpg 1920w" sizes="(min-width: 1200px) 1056px, (min-width: 761px) calc(90vw - 24px), (min-width: 400px) calc(90vw - 12px), calc(100vw - 52px)" alt="" width="1920" height="1080" decoding="async" loading="lazy" fetchpriority="low"></picture>
+<picture class="lp-shot" data-shot="2" data-feature="0"><source type="image/avif" srcset="img/lp-library-grid-480.avif 480w, img/lp-library-grid-720.avif 720w, img/lp-library-grid-1080.avif 1080w, img/lp-library-grid-1440.avif 1440w, img/lp-library-grid-1920.avif 1920w" sizes="(min-width: 1200px) 1056px, (min-width: 761px) calc(90vw - 24px), (min-width: 400px) calc(90vw - 12px), calc(100vw - 52px)"><source type="image/webp" srcset="img/lp-library-grid-480.webp 480w, img/lp-library-grid-720.webp 720w, img/lp-library-grid-1080.webp 1080w, img/lp-library-grid-1440.webp 1440w, img/lp-library-grid-1920.webp 1920w" sizes="(min-width: 1200px) 1056px, (min-width: 761px) calc(90vw - 24px), (min-width: 400px) calc(90vw - 12px), calc(100vw - 52px)"><img src="img/lp-library-grid-1080.jpg" srcset="img/lp-library-grid-480.jpg 480w, img/lp-library-grid-720.jpg 720w, img/lp-library-grid-1080.jpg 1080w, img/lp-library-grid-1440.jpg 1440w, img/lp-library-grid-1920.jpg 1920w" sizes="(min-width: 1200px) 1056px, (min-width: 761px) calc(90vw - 24px), (min-width: 400px) calc(90vw - 12px), calc(100vw - 52px)" alt="" width="1920" height="1080" decoding="async" loading="lazy" fetchpriority="low"></picture>
+<picture class="lp-shot" data-shot="3" data-feature="7"><source type="image/avif" srcset="img/lp-quick-menu-480.avif 480w, img/lp-quick-menu-720.avif 720w, img/lp-quick-menu-1080.avif 1080w, img/lp-quick-menu-1440.avif 1440w, img/lp-quick-menu-1920.avif 1920w" sizes="(min-width: 1200px) 1056px, (min-width: 761px) calc(90vw - 24px), (min-width: 400px) calc(90vw - 12px), calc(100vw - 52px)"><source type="image/webp" srcset="img/lp-quick-menu-480.webp 480w, img/lp-quick-menu-720.webp 720w, img/lp-quick-menu-1080.webp 1080w, img/lp-quick-menu-1440.webp 1440w, img/lp-quick-menu-1920.webp 1920w" sizes="(min-width: 1200px) 1056px, (min-width: 761px) calc(90vw - 24px), (min-width: 400px) calc(90vw - 12px), calc(100vw - 52px)"><img src="img/lp-quick-menu-1080.jpg" srcset="img/lp-quick-menu-480.jpg 480w, img/lp-quick-menu-720.jpg 720w, img/lp-quick-menu-1080.jpg 1080w, img/lp-quick-menu-1440.jpg 1440w, img/lp-quick-menu-1920.jpg 1920w" sizes="(min-width: 1200px) 1056px, (min-width: 761px) calc(90vw - 24px), (min-width: 400px) calc(90vw - 12px), calc(100vw - 52px)" alt="" width="1920" height="1080" decoding="async" loading="lazy" fetchpriority="low"></picture>
+<picture class="lp-shot" data-shot="4" data-feature="12"><source type="image/avif" srcset="img/lp-emulators-480.avif 480w, img/lp-emulators-720.avif 720w, img/lp-emulators-1080.avif 1080w, img/lp-emulators-1440.avif 1440w, img/lp-emulators-1920.avif 1920w" sizes="(min-width: 1200px) 1056px, (min-width: 761px) calc(90vw - 24px), (min-width: 400px) calc(90vw - 12px), calc(100vw - 52px)"><source type="image/webp" srcset="img/lp-emulators-480.webp 480w, img/lp-emulators-720.webp 720w, img/lp-emulators-1080.webp 1080w, img/lp-emulators-1440.webp 1440w, img/lp-emulators-1920.webp 1920w" sizes="(min-width: 1200px) 1056px, (min-width: 761px) calc(90vw - 24px), (min-width: 400px) calc(90vw - 12px), calc(100vw - 52px)"><img src="img/lp-emulators-1080.jpg" srcset="img/lp-emulators-480.jpg 480w, img/lp-emulators-720.jpg 720w, img/lp-emulators-1080.jpg 1080w, img/lp-emulators-1440.jpg 1440w, img/lp-emulators-1920.jpg 1920w" sizes="(min-width: 1200px) 1056px, (min-width: 761px) calc(90vw - 24px), (min-width: 400px) calc(90vw - 12px), calc(100vw - 52px)" alt="" width="1920" height="1080" decoding="async" loading="lazy" fetchpriority="low"></picture>
+<picture class="lp-shot" data-shot="5" data-feature="3"><source type="image/avif" srcset="img/lp-game-page-480.avif 480w, img/lp-game-page-720.avif 720w, img/lp-game-page-1080.avif 1080w, img/lp-game-page-1440.avif 1440w, img/lp-game-page-1920.avif 1920w" sizes="(min-width: 1200px) 1056px, (min-width: 761px) calc(90vw - 24px), (min-width: 400px) calc(90vw - 12px), calc(100vw - 52px)"><source type="image/webp" srcset="img/lp-game-page-480.webp 480w, img/lp-game-page-720.webp 720w, img/lp-game-page-1080.webp 1080w, img/lp-game-page-1440.webp 1440w, img/lp-game-page-1920.webp 1920w" sizes="(min-width: 1200px) 1056px, (min-width: 761px) calc(90vw - 24px), (min-width: 400px) calc(90vw - 12px), calc(100vw - 52px)"><img src="img/lp-game-page-1080.jpg" srcset="img/lp-game-page-480.jpg 480w, img/lp-game-page-720.jpg 720w, img/lp-game-page-1080.jpg 1080w, img/lp-game-page-1440.jpg 1440w, img/lp-game-page-1920.jpg 1920w" sizes="(min-width: 1200px) 1056px, (min-width: 761px) calc(90vw - 24px), (min-width: 400px) calc(90vw - 12px), calc(100vw - 52px)" alt="" width="1920" height="1080" decoding="async" loading="lazy" fetchpriority="low"></picture>
+<span class="lp-open" aria-hidden="true"><span data-glyph data-btn="A" data-size="26" data-drawn="xbox|A|26|" style="height:26px" aria-hidden="true"><span class="gd" style="width:26px;height:26px;background:#3AA03C;box-shadow:none;color:#FFFFFF;font-size:14px">A</span></span><span>See it larger</span></span>
+</button>
+<span class="lp-tv-led" aria-hidden="true"></span>
+</div>
+</div>
+
+<!-- The stand: a pedestal, and the low cabinet the TV sits on. -->
+<div class="lp-stand" aria-hidden="true">
+<span class="lp-stand-neck"></span>
+<span class="lp-stand-base"></span>
+</div>
+<div class="lp-console" aria-hidden="true">
+<div class="lp-console-glow">
+<picture><source type="image/avif" srcset="img/lp-library-480.avif"><source type="image/webp" srcset="img/lp-library-480.webp"><img src="img/lp-library-480.jpg" alt="" width="480" height="270" decoding="async" class="on"></picture>
+<picture><source type="image/avif" srcset="img/lp-library-trailer-480.avif"><source type="image/webp" srcset="img/lp-library-trailer-480.webp"><img src="img/lp-library-trailer-480.jpg" alt="" width="480" height="270" decoding="async" loading="lazy"></picture>
+<picture><source type="image/avif" srcset="img/lp-library-grid-480.avif"><source type="image/webp" srcset="img/lp-library-grid-480.webp"><img src="img/lp-library-grid-480.jpg" alt="" width="480" height="270" decoding="async" loading="lazy"></picture>
+<picture><source type="image/avif" srcset="img/lp-quick-menu-480.avif"><source type="image/webp" srcset="img/lp-quick-menu-480.webp"><img src="img/lp-quick-menu-480.jpg" alt="" width="480" height="270" decoding="async" loading="lazy"></picture>
+<picture><source type="image/avif" srcset="img/lp-emulators-480.avif"><source type="image/webp" srcset="img/lp-emulators-480.webp"><img src="img/lp-emulators-480.jpg" alt="" width="480" height="270" decoding="async" loading="lazy"></picture>
+<picture><source type="image/avif" srcset="img/lp-game-page-480.avif"><source type="image/webp" srcset="img/lp-game-page-480.webp"><img src="img/lp-game-page-480.jpg" alt="" width="480" height="270" decoding="async" loading="lazy"></picture>
+</div>
+<div class="lp-console-doors"><span class="lp-door"></span><span class="lp-door"></span><span class="lp-door"></span></div>
+<span class="lp-console-foot l"></span>
+<span class="lp-console-foot r"></span>
+</div>
+<div class="lp-floor" aria-hidden="true"></div>
+
+<div class="lp-tv-caption">
+<div class="lp-shot-text" id="shotText" aria-live="polite">
+<div data-shot="0"><div class="lp-shot-title">Your library</div><div class="lp-shot-sub">The game you’re on fills the screen, with your recent games below.</div></div>
+<div data-shot="1" hidden><div class="lp-shot-title">Trailers</div><div class="lp-shot-sub">Rest on a game and its trailer plays behind it.</div></div>
+<div data-shot="2" hidden><div class="lp-shot-title">Every game you own</div><div class="lp-shot-sub">Steam, Epic, GOG, Xbox and your retro games, in one place.</div></div>
+<div data-shot="3" hidden><div class="lp-shot-title">The Power Wheel</div><div class="lp-shot-sub">One button for everything else Windows needs, even mid-game.</div></div>
+<div data-shot="4" hidden><div class="lp-shot-title">Retro games too</div><div class="lp-shot-sub">Your classic games, with box art, next to everything else.</div></div>
+<div data-shot="5" hidden><div class="lp-shot-title">A page for every game</div><div class="lp-shot-sub">Art, ratings and trailers, filled in for you.</div></div>
+</div>
+<div class="lp-dots" role="group" aria-label="Choose a screen">
+<button type="button" class="lp-dot" data-shot="0" aria-label="Show your library on the TV" aria-pressed="true"><span class="lp-dot-bar"><span class="lp-dot-still"></span></span></button>
+<button type="button" class="lp-dot" data-shot="1" aria-label="Show trailers on the TV" aria-pressed="false"><span class="lp-dot-bar"></span></button>
+<button type="button" class="lp-dot" data-shot="2" aria-label="Show every game you own on the TV" aria-pressed="false"><span class="lp-dot-bar"></span></button>
+<button type="button" class="lp-dot" data-shot="3" aria-label="Show the power wheel on the TV" aria-pressed="false"><span class="lp-dot-bar"></span></button>
+<button type="button" class="lp-dot" data-shot="4" aria-label="Show retro games too on the TV" aria-pressed="false"><span class="lp-dot-bar"></span></button>
+<button type="button" class="lp-dot" data-shot="5" aria-label="Show a page for every game on the TV" aria-pressed="false"><span class="lp-dot-bar"></span></button>
+</div>
+</div>
+</div>
+</section>
+
+<!-- ============ THE GRID, on the way down ============ -->
+<section id="library" class="lp-section" aria-labelledby="lp-library-h">
+<div class="lp-wrap">
+<div class="lp-sec-head">
+<div>
+<div class="lp-kicker">What it does</div>
+<h2 id="lp-library-h" class="lp-h2 w780">Built so you never walk over to the desk.</h2>
+</div>
+<p class="lp-sec-lede">Most couch apps stop once your game starts. Loungepad keeps going: your controller runs the whole PC, not just the menu. Pick any screen to see it up close.</p>
+</div>
+
+<div class="lp-group" data-kicker="Like a console">
+<div class="lp-group-head">
+<span class="lp-group-no">01</span>
+<h3 class="lp-h3">Everything a console does.</h3>
+<span class="lp-grow"></span>
+<span class="lp-group-kicker">Like a console</span>
+</div>
+<div class="lp-grid">
+<button type="button" data-nav class="lp-tile" data-feature="0" data-img="lp-library-grid"><span class="lp-art"><picture><source type="image/avif" srcset="img/lp-library-grid-480.avif 480w, img/lp-library-grid-720.avif 720w, img/lp-library-grid-1080.avif 1080w, img/lp-library-grid-1440.avif 1440w, img/lp-library-grid-1920.avif 1920w" sizes="(min-width: 1440px) 413px, (min-width: 1167px) calc(30vw - 19px), (min-width: 765px) calc(45vw - 14px), (min-width: 400px) 90vw, calc(100vw - 40px)"><source type="image/webp" srcset="img/lp-library-grid-480.webp 480w, img/lp-library-grid-720.webp 720w, img/lp-library-grid-1080.webp 1080w, img/lp-library-grid-1440.webp 1440w, img/lp-library-grid-1920.webp 1920w" sizes="(min-width: 1440px) 413px, (min-width: 1167px) calc(30vw - 19px), (min-width: 765px) calc(45vw - 14px), (min-width: 400px) 90vw, calc(100vw - 40px)"><img src="img/lp-library-grid-1080.jpg" srcset="img/lp-library-grid-480.jpg 480w, img/lp-library-grid-720.jpg 720w, img/lp-library-grid-1080.jpg 1080w, img/lp-library-grid-1440.jpg 1440w, img/lp-library-grid-1920.jpg 1920w" sizes="(min-width: 1440px) 413px, (min-width: 1167px) calc(30vw - 19px), (min-width: 765px) calc(45vw - 14px), (min-width: 400px) 90vw, calc(100vw - 40px)" alt="" width="1920" height="1080" decoding="async" loading="lazy"></picture><span class="lp-open" aria-hidden="true"><span data-glyph data-btn="A" data-size="22" data-drawn="xbox|A|22|" style="height:22px" aria-hidden="true"><span class="gd" style="width:22px;height:22px;background:#3AA03C;box-shadow:none;color:#FFFFFF;font-size:12px">A</span></span><span>View</span></span></span><span class="lp-tile-text"><span class="lp-tile-title">All your games, in one place.</span><span class="lp-tile-sub">Steam, Epic, GOG, Xbox and Game Pass, side by side.</span><span class="lp-tile-body" hidden>Loungepad finds the games on your PC by itself — from Steam, Epic, GOG and the Xbox app — with real cover art, and it checks again every time it starts, so a game you installed yesterday is simply there. It can show the games you own but haven’t installed too, and one press takes you to install one.</span></span></button>
+<button type="button" data-nav class="lp-tile" data-feature="1" data-img="lp-library"><span class="lp-art"><picture><source type="image/avif" srcset="img/lp-library-480.avif 480w, img/lp-library-720.avif 720w, img/lp-library-1080.avif 1080w, img/lp-library-1440.avif 1440w, img/lp-library-1920.avif 1920w" sizes="(min-width: 1440px) 413px, (min-width: 1167px) calc(30vw - 19px), (min-width: 765px) calc(45vw - 14px), (min-width: 400px) 90vw, calc(100vw - 40px)"><source type="image/webp" srcset="img/lp-library-480.webp 480w, img/lp-library-720.webp 720w, img/lp-library-1080.webp 1080w, img/lp-library-1440.webp 1440w, img/lp-library-1920.webp 1920w" sizes="(min-width: 1440px) 413px, (min-width: 1167px) calc(30vw - 19px), (min-width: 765px) calc(45vw - 14px), (min-width: 400px) 90vw, calc(100vw - 40px)"><img src="img/lp-library-1080.jpg" srcset="img/lp-library-480.jpg 480w, img/lp-library-720.jpg 720w, img/lp-library-1080.jpg 1080w, img/lp-library-1440.jpg 1440w, img/lp-library-1920.jpg 1920w" sizes="(min-width: 1440px) 413px, (min-width: 1167px) calc(30vw - 19px), (min-width: 765px) calc(45vw - 14px), (min-width: 400px) 90vw, calc(100vw - 40px)" alt="" width="1920" height="1080" decoding="async" loading="lazy"></picture><span class="lp-open" aria-hidden="true"><span data-glyph data-btn="A" data-size="22" data-drawn="xbox|A|22|" style="height:22px" aria-hidden="true"><span class="gd" style="width:22px;height:22px;background:#3AA03C;box-shadow:none;color:#FFFFFF;font-size:12px">A</span></span><span>View</span></span></span><span class="lp-tile-text"><span class="lp-tile-title">Big art, recent games up front.</span><span class="lp-tile-sub">The game you’re on fills the screen.</span><span class="lp-tile-body" hidden>The game you’re on fills the TV, with your recent games in a row underneath. Scroll down and your whole collection slides into view.</span></span></button>
+<button type="button" data-nav class="lp-tile" data-feature="2" data-img="lp-library-trailer"><span class="lp-art"><picture><source type="image/avif" srcset="img/lp-library-trailer-480.avif 480w, img/lp-library-trailer-720.avif 720w, img/lp-library-trailer-1080.avif 1080w, img/lp-library-trailer-1440.avif 1440w, img/lp-library-trailer-1920.avif 1920w" sizes="(min-width: 1440px) 413px, (min-width: 1167px) calc(30vw - 19px), (min-width: 765px) calc(45vw - 14px), (min-width: 400px) 90vw, calc(100vw - 40px)"><source type="image/webp" srcset="img/lp-library-trailer-480.webp 480w, img/lp-library-trailer-720.webp 720w, img/lp-library-trailer-1080.webp 1080w, img/lp-library-trailer-1440.webp 1440w, img/lp-library-trailer-1920.webp 1920w" sizes="(min-width: 1440px) 413px, (min-width: 1167px) calc(30vw - 19px), (min-width: 765px) calc(45vw - 14px), (min-width: 400px) 90vw, calc(100vw - 40px)"><img src="img/lp-library-trailer-1080.jpg" srcset="img/lp-library-trailer-480.jpg 480w, img/lp-library-trailer-720.jpg 720w, img/lp-library-trailer-1080.jpg 1080w, img/lp-library-trailer-1440.jpg 1440w, img/lp-library-trailer-1920.jpg 1920w" sizes="(min-width: 1440px) 413px, (min-width: 1167px) calc(30vw - 19px), (min-width: 765px) calc(45vw - 14px), (min-width: 400px) 90vw, calc(100vw - 40px)" alt="" width="1920" height="1080" decoding="async" loading="lazy"></picture><span class="lp-open" aria-hidden="true"><span data-glyph data-btn="A" data-size="22" data-drawn="xbox|A|22|" style="height:22px" aria-hidden="true"><span class="gd" style="width:22px;height:22px;background:#3AA03C;box-shadow:none;color:#FFFFFF;font-size:12px">A</span></span><span>View</span></span></span><span class="lp-tile-text"><span class="lp-tile-title">Rest on a game, and its trailer plays.</span><span class="lp-tile-sub">Wait three seconds and the trailer starts behind it.</span><span class="lp-tile-body" hidden>Leave the highlight on a game for three seconds and its trailer plays behind it, with sound. Open the game’s page and the trailer keeps playing there.</span></span></button>
+<button type="button" data-nav class="lp-tile" data-feature="3" data-img="lp-game-page"><span class="lp-art"><picture><source type="image/avif" srcset="img/lp-game-page-480.avif 480w, img/lp-game-page-720.avif 720w, img/lp-game-page-1080.avif 1080w, img/lp-game-page-1440.avif 1440w, img/lp-game-page-1920.avif 1920w" sizes="(min-width: 1440px) 413px, (min-width: 1167px) calc(30vw - 19px), (min-width: 765px) calc(45vw - 14px), (min-width: 400px) 90vw, calc(100vw - 40px)"><source type="image/webp" srcset="img/lp-game-page-480.webp 480w, img/lp-game-page-720.webp 720w, img/lp-game-page-1080.webp 1080w, img/lp-game-page-1440.webp 1440w, img/lp-game-page-1920.webp 1920w" sizes="(min-width: 1440px) 413px, (min-width: 1167px) calc(30vw - 19px), (min-width: 765px) calc(45vw - 14px), (min-width: 400px) 90vw, calc(100vw - 40px)"><img src="img/lp-game-page-1080.jpg" srcset="img/lp-game-page-480.jpg 480w, img/lp-game-page-720.jpg 720w, img/lp-game-page-1080.jpg 1080w, img/lp-game-page-1440.jpg 1440w, img/lp-game-page-1920.jpg 1920w" sizes="(min-width: 1440px) 413px, (min-width: 1167px) calc(30vw - 19px), (min-width: 765px) calc(45vw - 14px), (min-width: 400px) 90vw, calc(100vw - 40px)" alt="" width="1920" height="1080" decoding="async" loading="lazy"></picture><span class="lp-open" aria-hidden="true"><span data-glyph data-btn="A" data-size="22" data-drawn="xbox|A|22|" style="height:22px" aria-hidden="true"><span class="gd" style="width:22px;height:22px;background:#3AA03C;box-shadow:none;color:#FFFFFF;font-size:12px">A</span></span><span>View</span></span></span><span class="lp-tile-text"><span class="lp-tile-title">Every game gets its own page.</span><span class="lp-tile-sub">Art, ratings and screenshots, filled in for you.</span><span class="lp-tile-body" hidden>Every game gets a page with its logo, description, review score and age rating, a row of trailers and screenshots, and how long you’ve played — all filled in for you, with nothing to set up.</span></span></button>
+<button type="button" data-nav class="lp-tile" data-feature="4" data-img="lp-achievements"><span class="lp-art"><picture><source type="image/avif" srcset="img/lp-achievements-480.avif 480w, img/lp-achievements-720.avif 720w, img/lp-achievements-1080.avif 1080w, img/lp-achievements-1440.avif 1440w, img/lp-achievements-1920.avif 1920w" sizes="(min-width: 1440px) 413px, (min-width: 1167px) calc(30vw - 19px), (min-width: 765px) calc(45vw - 14px), (min-width: 400px) 90vw, calc(100vw - 40px)"><source type="image/webp" srcset="img/lp-achievements-480.webp 480w, img/lp-achievements-720.webp 720w, img/lp-achievements-1080.webp 1080w, img/lp-achievements-1440.webp 1440w, img/lp-achievements-1920.webp 1920w" sizes="(min-width: 1440px) 413px, (min-width: 1167px) calc(30vw - 19px), (min-width: 765px) calc(45vw - 14px), (min-width: 400px) 90vw, calc(100vw - 40px)"><img src="img/lp-achievements-1080.jpg" srcset="img/lp-achievements-480.jpg 480w, img/lp-achievements-720.jpg 720w, img/lp-achievements-1080.jpg 1080w, img/lp-achievements-1440.jpg 1440w, img/lp-achievements-1920.jpg 1920w" sizes="(min-width: 1440px) 413px, (min-width: 1167px) calc(30vw - 19px), (min-width: 765px) calc(45vw - 14px), (min-width: 400px) 90vw, calc(100vw - 40px)" alt="" width="1920" height="1080" decoding="async" loading="lazy"></picture><span class="lp-open" aria-hidden="true"><span data-glyph data-btn="A" data-size="22" data-drawn="xbox|A|22|" style="height:22px" aria-hidden="true"><span class="gd" style="width:22px;height:22px;background:#3AA03C;box-shadow:none;color:#FFFFFF;font-size:12px">A</span></span><span>View</span></span></span><span class="lp-tile-text"><span class="lp-tile-title">Achievements, all in one place.</span><span class="lp-tile-sub">From Steam, Xbox, Epic and GOG — and your retro games.</span><span class="lp-tile-body" hidden>See every achievement for a game, which ones you’ve unlocked and how rare they are. When you unlock something new, Loungepad tells you once you’ve finished playing.</span></span></button>
+<button type="button" data-nav class="lp-tile" data-feature="5" data-img="lp-stats"><span class="lp-art"><picture><source type="image/avif" srcset="img/lp-stats-480.avif 480w, img/lp-stats-720.avif 720w, img/lp-stats-1080.avif 1080w, img/lp-stats-1440.avif 1440w, img/lp-stats-1920.avif 1920w" sizes="(min-width: 1440px) 413px, (min-width: 1167px) calc(30vw - 19px), (min-width: 765px) calc(45vw - 14px), (min-width: 400px) 90vw, calc(100vw - 40px)"><source type="image/webp" srcset="img/lp-stats-480.webp 480w, img/lp-stats-720.webp 720w, img/lp-stats-1080.webp 1080w, img/lp-stats-1440.webp 1440w, img/lp-stats-1920.webp 1920w" sizes="(min-width: 1440px) 413px, (min-width: 1167px) calc(30vw - 19px), (min-width: 765px) calc(45vw - 14px), (min-width: 400px) 90vw, calc(100vw - 40px)"><img src="img/lp-stats-1080.jpg" srcset="img/lp-stats-480.jpg 480w, img/lp-stats-720.jpg 720w, img/lp-stats-1080.jpg 1080w, img/lp-stats-1440.jpg 1440w, img/lp-stats-1920.jpg 1920w" sizes="(min-width: 1440px) 413px, (min-width: 1167px) calc(30vw - 19px), (min-width: 765px) calc(45vw - 14px), (min-width: 400px) 90vw, calc(100vw - 40px)" alt="" width="1920" height="1080" decoding="async" loading="lazy"></picture><span class="lp-open" aria-hidden="true"><span data-glyph data-btn="A" data-size="22" data-drawn="xbox|A|22|" style="height:22px" aria-hidden="true"><span class="gd" style="width:22px;height:22px;background:#3AA03C;box-shadow:none;color:#FFFFFF;font-size:12px">A</span></span><span>View</span></span></span><span class="lp-tile-text"><span class="lp-tile-title">Your playtime, tracked.</span><span class="lp-tile-sub">Every session, and how your PC handled it.</span><span class="lp-tile-body" hidden>Loungepad keeps a record of every time you play: when, for how long, and how your PC was doing. See your week at a glance, or look back over the last month.</span></span></button>
+</div>
+</div>
+
+<div class="lp-group" data-kicker="Still a PC">
+<div class="lp-group-head">
+<span class="lp-group-no">02</span>
+<h3 class="lp-h3">And it’s still your PC.</h3>
+<span class="lp-grow"></span>
+<span class="lp-group-kicker">Still a PC</span>
+</div>
+<div class="lp-grid">
+<button type="button" data-nav class="lp-tile" data-feature="6" data-icon="pointer"><span class="lp-art"><span class="lp-art-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5.5 3.5 18.5 11l-5.6 1.7 3.2 6-2.7 1.4-3.2-6-4.7 3.9z"></path></svg></span><span class="lp-open" aria-hidden="true"><span data-glyph data-btn="A" data-size="22" data-drawn="xbox|A|22|" style="height:22px" aria-hidden="true"><span class="gd" style="width:22px;height:22px;background:#3AA03C;box-shadow:none;color:#FFFFFF;font-size:12px">A</span></span><span>View</span></span></span><span class="lp-tile-text"><span class="lp-tile-title">The left stick is the mouse.</span><span class="lp-tile-sub">Point and click anywhere in Windows.</span><span class="lp-tile-body" hidden>Move the pointer with the left stick and click with the face buttons, anywhere in Windows. It’s slow and precise near the centre and quick when you push all the way, and you can set the speed to suit you. The right stick scrolls.</span></span></button>
+<button type="button" data-nav class="lp-tile" data-feature="7" data-img="lp-quick-menu"><span class="lp-art"><picture><source type="image/avif" srcset="img/lp-quick-menu-480.avif 480w, img/lp-quick-menu-720.avif 720w, img/lp-quick-menu-1080.avif 1080w, img/lp-quick-menu-1440.avif 1440w, img/lp-quick-menu-1920.avif 1920w" sizes="(min-width: 1440px) 413px, (min-width: 1167px) calc(30vw - 19px), (min-width: 765px) calc(45vw - 14px), (min-width: 400px) 90vw, calc(100vw - 40px)"><source type="image/webp" srcset="img/lp-quick-menu-480.webp 480w, img/lp-quick-menu-720.webp 720w, img/lp-quick-menu-1080.webp 1080w, img/lp-quick-menu-1440.webp 1440w, img/lp-quick-menu-1920.webp 1920w" sizes="(min-width: 1440px) 413px, (min-width: 1167px) calc(30vw - 19px), (min-width: 765px) calc(45vw - 14px), (min-width: 400px) 90vw, calc(100vw - 40px)"><img src="img/lp-quick-menu-1080.jpg" srcset="img/lp-quick-menu-480.jpg 480w, img/lp-quick-menu-720.jpg 720w, img/lp-quick-menu-1080.jpg 1080w, img/lp-quick-menu-1440.jpg 1440w, img/lp-quick-menu-1920.jpg 1920w" sizes="(min-width: 1440px) 413px, (min-width: 1167px) calc(30vw - 19px), (min-width: 765px) calc(45vw - 14px), (min-width: 400px) 90vw, calc(100vw - 40px)" alt="" width="1920" height="1080" decoding="async" loading="lazy"></picture><span class="lp-open" aria-hidden="true"><span data-glyph data-btn="A" data-size="22" data-drawn="xbox|A|22|" style="height:22px" aria-hidden="true"><span class="gd" style="width:22px;height:22px;background:#3AA03C;box-shadow:none;color:#FFFFFF;font-size:12px">A</span></span><span>View</span></span></span><span class="lp-tile-text"><span class="lp-tile-title">One button for everything else.</span><span class="lp-tile-sub">The Power Wheel, from anywhere, even mid-game.</span><span class="lp-tile-body" hidden>Press the Xbox or PS button from anywhere — even in the middle of a game — to switch windows, bring up the keyboard, close something that’s stuck, or put the PC to sleep. Hold it to come back to Loungepad.</span></span></button>
+<button type="button" data-nav class="lp-tile" data-feature="8" data-img="lp-switch-window"><span class="lp-art"><picture><source type="image/avif" srcset="img/lp-switch-window-480.avif 480w, img/lp-switch-window-720.avif 720w, img/lp-switch-window-1080.avif 1080w, img/lp-switch-window-1440.avif 1440w, img/lp-switch-window-1920.avif 1920w" sizes="(min-width: 1440px) 413px, (min-width: 1167px) calc(30vw - 19px), (min-width: 765px) calc(45vw - 14px), (min-width: 400px) 90vw, calc(100vw - 40px)"><source type="image/webp" srcset="img/lp-switch-window-480.webp 480w, img/lp-switch-window-720.webp 720w, img/lp-switch-window-1080.webp 1080w, img/lp-switch-window-1440.webp 1440w, img/lp-switch-window-1920.webp 1920w" sizes="(min-width: 1440px) 413px, (min-width: 1167px) calc(30vw - 19px), (min-width: 765px) calc(45vw - 14px), (min-width: 400px) 90vw, calc(100vw - 40px)"><img src="img/lp-switch-window-1080.jpg" srcset="img/lp-switch-window-480.jpg 480w, img/lp-switch-window-720.jpg 720w, img/lp-switch-window-1080.jpg 1080w, img/lp-switch-window-1440.jpg 1440w, img/lp-switch-window-1920.jpg 1920w" sizes="(min-width: 1440px) 413px, (min-width: 1167px) calc(30vw - 19px), (min-width: 765px) calc(45vw - 14px), (min-width: 400px) 90vw, calc(100vw - 40px)" alt="" width="1920" height="1080" decoding="async" loading="lazy"></picture><span class="lp-open" aria-hidden="true"><span data-glyph data-btn="A" data-size="22" data-drawn="xbox|A|22|" style="height:22px" aria-hidden="true"><span class="gd" style="width:22px;height:22px;background:#3AA03C;box-shadow:none;color:#FFFFFF;font-size:12px">A</span></span><span>View</span></span></span><span class="lp-tile-text"><span class="lp-tile-title">Any window, onto the TV.</span><span class="lp-tile-sub">Pick it, and it follows you.</span><span class="lp-tile-body" hidden>See everything that’s open and pick one: it comes to the TV with you. No more getting up because something opened on the other screen.</span></span></button>
+<button type="button" data-nav class="lp-tile" data-feature="9" data-img="lp-shortcuts"><span class="lp-art"><picture><source type="image/avif" srcset="img/lp-shortcuts-480.avif 480w, img/lp-shortcuts-720.avif 720w, img/lp-shortcuts-1080.avif 1080w, img/lp-shortcuts-1440.avif 1440w, img/lp-shortcuts-1920.avif 1920w" sizes="(min-width: 1440px) 413px, (min-width: 1167px) calc(30vw - 19px), (min-width: 765px) calc(45vw - 14px), (min-width: 400px) 90vw, calc(100vw - 40px)"><source type="image/webp" srcset="img/lp-shortcuts-480.webp 480w, img/lp-shortcuts-720.webp 720w, img/lp-shortcuts-1080.webp 1080w, img/lp-shortcuts-1440.webp 1440w, img/lp-shortcuts-1920.webp 1920w" sizes="(min-width: 1440px) 413px, (min-width: 1167px) calc(30vw - 19px), (min-width: 765px) calc(45vw - 14px), (min-width: 400px) 90vw, calc(100vw - 40px)"><img src="img/lp-shortcuts-1080.jpg" srcset="img/lp-shortcuts-480.jpg 480w, img/lp-shortcuts-720.jpg 720w, img/lp-shortcuts-1080.jpg 1080w, img/lp-shortcuts-1440.jpg 1440w, img/lp-shortcuts-1920.jpg 1920w" sizes="(min-width: 1440px) 413px, (min-width: 1167px) calc(30vw - 19px), (min-width: 765px) calc(45vw - 14px), (min-width: 400px) 90vw, calc(100vw - 40px)" alt="" width="1920" height="1080" decoding="async" loading="lazy"></picture><span class="lp-open" aria-hidden="true"><span data-glyph data-btn="A" data-size="22" data-drawn="xbox|A|22|" style="height:22px" aria-hidden="true"><span class="gd" style="width:22px;height:22px;background:#3AA03C;box-shadow:none;color:#FFFFFF;font-size:12px">A</span></span><span>View</span></span></span><span class="lp-tile-text"><span class="lp-tile-title">Shortcuts for your apps.</span><span class="lp-tile-sub">Browsers, Spotify, VLC, Discord and more.</span><span class="lp-tile-body" hidden>Loungepad knows the shortcuts for the app in front of you — new tab and back in a browser, play and pause in VLC — and puts them on a wheel. You can give any of them a button of its own, too.</span></span></button>
+<button type="button" data-nav class="lp-tile" data-feature="10" data-img="lp-keyboard"><span class="lp-art"><picture><source type="image/avif" srcset="img/lp-keyboard-480.avif 480w, img/lp-keyboard-720.avif 720w, img/lp-keyboard-1080.avif 1080w, img/lp-keyboard-1440.avif 1440w, img/lp-keyboard-1920.avif 1920w" sizes="(min-width: 1440px) 413px, (min-width: 1167px) calc(30vw - 19px), (min-width: 765px) calc(45vw - 14px), (min-width: 400px) 90vw, calc(100vw - 40px)"><source type="image/webp" srcset="img/lp-keyboard-480.webp 480w, img/lp-keyboard-720.webp 720w, img/lp-keyboard-1080.webp 1080w, img/lp-keyboard-1440.webp 1440w, img/lp-keyboard-1920.webp 1920w" sizes="(min-width: 1440px) 413px, (min-width: 1167px) calc(30vw - 19px), (min-width: 765px) calc(45vw - 14px), (min-width: 400px) 90vw, calc(100vw - 40px)"><img src="img/lp-keyboard-1080.jpg" srcset="img/lp-keyboard-480.jpg 480w, img/lp-keyboard-720.jpg 720w, img/lp-keyboard-1080.jpg 1080w, img/lp-keyboard-1440.jpg 1440w, img/lp-keyboard-1920.jpg 1920w" sizes="(min-width: 1440px) 413px, (min-width: 1167px) calc(30vw - 19px), (min-width: 765px) calc(45vw - 14px), (min-width: 400px) 90vw, calc(100vw - 40px)" alt="" width="1920" height="1080" decoding="async" loading="lazy"></picture><span class="lp-open" aria-hidden="true"><span data-glyph data-btn="A" data-size="22" data-drawn="xbox|A|22|" style="height:22px" aria-hidden="true"><span class="gd" style="width:22px;height:22px;background:#3AA03C;box-shadow:none;color:#FFFFFF;font-size:12px">A</span></span><span>View</span></span></span><span class="lp-tile-text"><span class="lp-tile-title">A keyboard that comes to you.</span><span class="lp-tile-sub">Type anywhere, with word suggestions.</span><span class="lp-tile-body" hidden>Press one button and a keyboard appears on screen, ready for a search, a password or a message. It suggests words as you type and never pulls you out of your game.</span></span></button>
+<button type="button" data-nav class="lp-tile" data-feature="11" data-icon="moon"><span class="lp-art"><span class="lp-art-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.5 14.2A8.5 8.5 0 0 1 9.8 3.5a8.5 8.5 0 1 0 10.7 10.7z"></path></svg></span><span class="lp-open" aria-hidden="true"><span data-glyph data-btn="A" data-size="22" data-drawn="xbox|A|22|" style="height:22px" aria-hidden="true"><span class="gd" style="width:22px;height:22px;background:#3AA03C;box-shadow:none;color:#FFFFFF;font-size:12px">A</span></span><span>View</span></span></span><span class="lp-tile-text"><span class="lp-tile-title">It rests like a console.</span><span class="lp-tile-sub">Put the controller down and the TV goes dark.</span><span class="lp-tile-body" hidden>Leave the controller alone for a while and the TV goes dark and your game pauses right where it is. Press any button and both come back exactly as you left them. It can put the PC to sleep, too.</span></span></button>
+</div>
+</div>
+
+<div class="lp-group" data-kicker="What a console can’t do">
+<div class="lp-group-head">
+<span class="lp-group-no">03</span>
+<h3 class="lp-h3">And a few things no console will.</h3>
+<span class="lp-grow"></span>
+<span class="lp-group-kicker">What a console can’t do</span>
+</div>
+<div class="lp-grid">
+<button type="button" data-nav class="lp-tile" data-feature="12" data-img="lp-emulators"><span class="lp-art"><picture><source type="image/avif" srcset="img/lp-emulators-480.avif 480w, img/lp-emulators-720.avif 720w, img/lp-emulators-1080.avif 1080w, img/lp-emulators-1440.avif 1440w, img/lp-emulators-1920.avif 1920w" sizes="(min-width: 1440px) 413px, (min-width: 1167px) calc(30vw - 19px), (min-width: 765px) calc(45vw - 14px), (min-width: 400px) 90vw, calc(100vw - 40px)"><source type="image/webp" srcset="img/lp-emulators-480.webp 480w, img/lp-emulators-720.webp 720w, img/lp-emulators-1080.webp 1080w, img/lp-emulators-1440.webp 1440w, img/lp-emulators-1920.webp 1920w" sizes="(min-width: 1440px) 413px, (min-width: 1167px) calc(30vw - 19px), (min-width: 765px) calc(45vw - 14px), (min-width: 400px) 90vw, calc(100vw - 40px)"><img src="img/lp-emulators-1080.jpg" srcset="img/lp-emulators-480.jpg 480w, img/lp-emulators-720.jpg 720w, img/lp-emulators-1080.jpg 1080w, img/lp-emulators-1440.jpg 1440w, img/lp-emulators-1920.jpg 1920w" sizes="(min-width: 1440px) 413px, (min-width: 1167px) calc(30vw - 19px), (min-width: 765px) calc(45vw - 14px), (min-width: 400px) 90vw, calc(100vw - 40px)" alt="" width="1920" height="1080" decoding="async" loading="lazy"></picture><span class="lp-open" aria-hidden="true"><span data-glyph data-btn="A" data-size="22" data-drawn="xbox|A|22|" style="height:22px" aria-hidden="true"><span class="gd" style="width:22px;height:22px;background:#3AA03C;box-shadow:none;color:#FFFFFF;font-size:12px">A</span></span><span>View</span></span></span><span class="lp-tile-text"><span class="lp-tile-title">Retro games, in the same library.</span><span class="lp-tile-sub">Your classic games, found for you, with box art.</span><span class="lp-tile-body" hidden>Loungepad finds your emulators and retro games on its own, names them properly, adds box art and labels them by console, right next to everything else.</span></span></button>
+<button type="button" data-nav class="lp-tile" data-feature="13" data-img="lp-game-menu"><span class="lp-art"><picture><source type="image/avif" srcset="img/lp-game-menu-480.avif 480w, img/lp-game-menu-720.avif 720w, img/lp-game-menu-1080.avif 1080w, img/lp-game-menu-1440.avif 1440w, img/lp-game-menu-1920.avif 1920w" sizes="(min-width: 1440px) 413px, (min-width: 1167px) calc(30vw - 19px), (min-width: 765px) calc(45vw - 14px), (min-width: 400px) 90vw, calc(100vw - 40px)"><source type="image/webp" srcset="img/lp-game-menu-480.webp 480w, img/lp-game-menu-720.webp 720w, img/lp-game-menu-1080.webp 1080w, img/lp-game-menu-1440.webp 1440w, img/lp-game-menu-1920.webp 1920w" sizes="(min-width: 1440px) 413px, (min-width: 1167px) calc(30vw - 19px), (min-width: 765px) calc(45vw - 14px), (min-width: 400px) 90vw, calc(100vw - 40px)"><img src="img/lp-game-menu-1080.jpg" srcset="img/lp-game-menu-480.jpg 480w, img/lp-game-menu-720.jpg 720w, img/lp-game-menu-1080.jpg 1080w, img/lp-game-menu-1440.jpg 1440w, img/lp-game-menu-1920.jpg 1920w" sizes="(min-width: 1440px) 413px, (min-width: 1167px) calc(30vw - 19px), (min-width: 765px) calc(45vw - 14px), (min-width: 400px) 90vw, calc(100vw - 40px)" alt="" width="1920" height="1080" decoding="async" loading="lazy"></picture><span class="lp-open" aria-hidden="true"><span data-glyph data-btn="A" data-size="22" data-drawn="xbox|A|22|" style="height:22px" aria-hidden="true"><span class="gd" style="width:22px;height:22px;background:#3AA03C;box-shadow:none;color:#FFFFFF;font-size:12px">A</span></span><span>View</span></span></span><span class="lp-tile-text"><span class="lp-tile-title">Mods, collections and favorites.</span><span class="lp-tile-sub">Turn mods on and off from the couch.</span><span class="lp-tile-body" hidden>Every game has a menu one button away: add it to your favorites or a collection, check your achievements, or turn mods on and off without leaving the couch. Anything that isn’t a game can be hidden with one press.</span></span></button>
+<button type="button" data-nav class="lp-tile" data-feature="14" data-icon="heart"><span class="lp-art"><span class="lp-art-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20s-7.5-4.6-7.5-10.2A4.3 4.3 0 0 1 12 7.2a4.3 4.3 0 0 1 7.5 2.6C19.5 15.4 12 20 12 20z"></path></svg></span><span class="lp-open" aria-hidden="true"><span data-glyph data-btn="A" data-size="22" data-drawn="xbox|A|22|" style="height:22px" aria-hidden="true"><span class="gd" style="width:22px;height:22px;background:#3AA03C;box-shadow:none;color:#FFFFFF;font-size:12px">A</span></span><span>View</span></span></span><span class="lp-tile-text"><span class="lp-tile-title">Free. Really.</span><span class="lp-tile-sub">No subscription, and no account to make.</span><span class="lp-tile-body" hidden>Loungepad is free and open source. There’s no subscription and no Loungepad account to make: download it and play.</span></span></button>
+</div>
+</div>
+</div>
+</section>
+
+<!-- ============ CONTROLLERS: Settings → Appearance, live ============ -->
+<section id="controllers" class="lp-section lp-section-pads" aria-labelledby="lp-pads-h">
+<div class="lp-wrap">
+<div class="lp-sec-head">
+<div>
+<div class="lp-kicker">Controllers</div>
+<h2 id="lp-pads-h" class="lp-h2 w760">Any controller. Every button drawn as yours.</h2>
+</div>
+<p class="lp-sec-lede w450">Xbox, PlayStation and Switch Pro controllers all work, and so do a keyboard and mouse. The buttons on screen always match the controller in your hands — pick up a PlayStation controller and the green A becomes a cross.</p>
+</div>
+
+<div class="lp-pads">
+
+<!-- The pad stage -->
+<div class="lp-stage">
+<div class="lp-diamond" aria-hidden="true">
+<span class="lp-diamond-ring"></span>
+<span class="lp-dia y"><span data-glyph data-btn="Y" data-size="72" data-drawn="xbox|Y|72|" style="height:72px" aria-hidden="true"><span class="gd" style="width:72px;height:72px;background:#E2B128;box-shadow:none;color:#101012;font-size:39px">Y</span></span></span>
+<span class="lp-dia x"><span data-glyph data-btn="X" data-size="72" data-drawn="xbox|X|72|" style="height:72px" aria-hidden="true"><span class="gd" style="width:72px;height:72px;background:#3C7CD3;box-shadow:none;color:#FFFFFF;font-size:39px">X</span></span></span>
+<span class="lp-dia b"><span data-glyph data-btn="B" data-size="72" data-drawn="xbox|B|72|" style="height:72px" aria-hidden="true"><span class="gd" style="width:72px;height:72px;background:#D3433C;box-shadow:none;color:#FFFFFF;font-size:39px">B</span></span></span>
+<span class="lp-dia a"><span data-glyph data-btn="A" data-size="72" data-drawn="xbox|A|72|" style="height:72px" aria-hidden="true"><span class="gd" style="width:72px;height:72px;background:#3AA03C;box-shadow:none;color:#FFFFFF;font-size:39px">A</span></span></span>
+</div>
+<div class="lp-fam">
+<div class="lp-fam-name" id="famName">Xbox</div>
+<div class="lp-fam-cap" id="famCap">The buttons, as they look on this controller</div>
+</div>
+<div class="lp-chips" role="group" aria-label="Show the buttons for">
+<button type="button" data-nav class="lp-chip lp-f" data-fam="xbox" aria-pressed="true">Xbox</button>
+<button type="button" data-nav class="lp-chip lp-f" data-fam="playstation" aria-pressed="false">PlayStation</button>
+<button type="button" data-nav class="lp-chip lp-f" data-fam="switch" aria-pressed="false">Switch</button>
+<button type="button" data-nav class="lp-chip lp-f" data-fam="keyboard" aria-pressed="false">Keyboard</button>
+</div>
+<div class="lp-detect">
+<span class="lp-detect-dot"></span>
+<span id="detectLine">Plug in a controller and press any button: this page will show its buttons, and you can browse it from the couch.</span>
+</div>
+<div class="lp-colour">
+<div class="lp-colour-label">Colour · <span id="accentName">Ember</span></div>
+<div class="lp-swatches" role="group" aria-label="Colour">
+<button type="button" data-nav class="lp-swatch" data-hex="#F0A253" style="--sw:#F0A253;--sw-a:#F0A25366" aria-label="Colour: Ember" aria-pressed="true" title="Ember"></button>
+<button type="button" data-nav class="lp-swatch" data-hex="#E97A6C" style="--sw:#E97A6C;--sw-a:#E97A6C66" aria-label="Colour: Coral" aria-pressed="false" title="Coral"></button>
+<button type="button" data-nav class="lp-swatch" data-hex="#F07AA8" style="--sw:#F07AA8;--sw-a:#F07AA866" aria-label="Colour: Rose" aria-pressed="false" title="Rose"></button>
+<button type="button" data-nav class="lp-swatch" data-hex="#C78BE8" style="--sw:#C78BE8;--sw-a:#C78BE866" aria-label="Colour: Orchid" aria-pressed="false" title="Orchid"></button>
+<button type="button" data-nav class="lp-swatch" data-hex="#8098F0" style="--sw:#8098F0;--sw-a:#8098F066" aria-label="Colour: Indigo" aria-pressed="false" title="Indigo"></button>
+<button type="button" data-nav class="lp-swatch" data-hex="#5FC9D6" style="--sw:#5FC9D6;--sw-a:#5FC9D666" aria-label="Colour: Aqua" aria-pressed="false" title="Aqua"></button>
+<button type="button" data-nav class="lp-swatch" data-hex="#6FCF97" style="--sw:#6FCF97;--sw-a:#6FCF9766" aria-label="Colour: Mint" aria-pressed="false" title="Mint"></button>
+<button type="button" data-nav class="lp-swatch" data-hex="#B8D96B" style="--sw:#B8D96B;--sw-a:#B8D96B66" aria-label="Colour: Lime" aria-pressed="false" title="Lime"></button>
+</div>
+<div class="lp-colour-hint">Pick a colour for the app. Go on, try one here.</div>
+</div>
+</div>
+
+<!-- The button map -->
+<div class="lp-map">
+<div id="mapPad">
+<div class="lp-row lp-row-b">
+<span class="lp-row-glyphs"><span data-glyph data-btn="LS" data-size="38" data-drawn="xbox|LS|38|" style="height:38px" aria-hidden="true"><span class="gp" style="min-width:42px;height:27px;padding:0 11px;font-size:14px">LS</span></span></span>
+<span class="lp-row-text"><span class="lp-row-title">The left stick is the mouse.</span><span class="lp-row-sub">Slow and precise near the centre, fast when you push all the way. Set the speed to suit you.</span></span>
+</div>
+<div class="lp-row lp-row-b">
+<span class="lp-row-glyphs"><span data-glyph data-btn="A" data-size="38" data-drawn="xbox|A|38|" style="height:38px" aria-hidden="true"><span class="gd" style="width:38px;height:38px;background:#3AA03C;box-shadow:none;color:#FFFFFF;font-size:21px">A</span></span><span data-glyph data-btn="B" data-size="38" data-drawn="xbox|B|38|" style="height:38px" aria-hidden="true"><span class="gd" style="width:38px;height:38px;background:#D3433C;box-shadow:none;color:#FFFFFF;font-size:21px">B</span></span></span>
+<span class="lp-row-text"><span class="lp-row-title">Left and right click.</span><span class="lp-row-sub">Click anything in Windows. The right stick scrolls.</span></span>
+</div>
+<div class="lp-row lp-row-b">
+<span class="lp-row-glyphs"><span data-glyph data-btn="Guide" data-size="38" data-drawn="xbox|Guide|38|" style="height:38px" aria-hidden="true"><span class="gp" style="min-width:42px;height:27px;padding:0 11px;font-size:11px">XBOX</span></span></span>
+<span class="lp-row-text"><span class="lp-row-title"><span data-name="guide">Xbox button</span>: the Power Wheel.</span><span class="lp-row-sub">Tap it from anywhere, even mid-game, to switch windows, close what's stuck or go to sleep. Hold it to come back to Loungepad.</span></span>
+</div>
+<div class="lp-row lp-row-b">
+<span class="lp-row-glyphs"><span data-glyph data-btn="View" data-size="38" data-drawn="xbox|View|38|" style="height:38px" aria-hidden="true"><span class="gp" style="min-width:42px;height:27px;padding:0 11px;font-size:11px">VIEW</span></span></span>
+<span class="lp-row-text"><span class="lp-row-title"><span data-name="view">View</span>: the on-screen keyboard.</span><span class="lp-row-sub">Type a search, a password or a message. Text boxes bring it up on their own.</span></span>
+</div>
+<div class="lp-row lp-row-b">
+<span class="lp-row-glyphs"><span data-glyph data-btn="Dpad" data-size="38" data-drawn="xbox|Dpad|38|" style="height:38px" aria-hidden="true"><svg viewBox="0 0 40 40" width="38" height="38" class="gdp" aria-hidden="true"><rect x="15" y="2" width="10" height="12" rx="2" fill="currentColor" fill-opacity="0.95"></rect><rect x="15" y="26" width="10" height="12" rx="2" fill="currentColor" fill-opacity="0.95"></rect><rect x="2" y="15" width="12" height="10" rx="2" fill="currentColor" fill-opacity="0.95"></rect><rect x="26" y="15" width="12" height="10" rx="2" fill="currentColor" fill-opacity="0.95"></rect><rect x="14" y="14" width="12" height="12" fill="currentColor" fill-opacity="0.26"></rect></svg></span></span>
+<span class="lp-row-text"><span class="lp-row-title">The pointer gets out of the way.</span><span class="lp-row-sub">Use the D-pad and the pointer hides. Move the stick and it's back.</span></span>
+</div>
+<div class="lp-row">
+<span class="lp-row-glyphs"><span data-glyph data-btn="Y" data-size="38" data-drawn="xbox|Y|38|" style="height:38px" aria-hidden="true"><span class="gd" style="width:38px;height:38px;background:#E2B128;box-shadow:none;color:#101012;font-size:21px">Y</span></span></span>
+<span class="lp-row-text"><span class="lp-row-title">Any button, any shortcut.</span><span class="lp-row-sub">Give an app's shortcut a button of its own — <span data-name="y">Y</span> for a new browser tab, say.</span></span>
+</div>
+<div class="lp-row lp-row-t" id="rowTouch" hidden>
+<span class="lp-row-glyphs"><span data-glyph data-size="38" data-label="PAD" data-drawn="xbox||38|PAD" style="height:38px" aria-hidden="true"><span class="gp" style="min-width:42px;height:27px;padding:0 11px;font-size:14px">PAD</span></span></span>
+<span class="lp-row-text"><span class="lp-row-title">The touchpad works like a laptop's.</span><span class="lp-row-sub">Tap to click, two fingers to scroll, pinch to zoom.</span></span>
+</div>
+</div>
+<div id="mapKeys" hidden>
+<div class="lp-row lp-row-b">
+<span class="lp-row-glyphs"><span data-glyph data-btn="Dpad" data-size="38" data-fam="keyboard" data-drawn="keyboard|Dpad|38|" style="height:38px" aria-hidden="true"><span class="gk" style="min-width:38px;height:33px;padding:0 9px;font-size:14px">↑↓←→</span></span></span>
+<span class="lp-row-text"><span class="lp-row-title">Arrow keys move.</span><span class="lp-row-sub">A keyboard and mouse work too, and the mouse can click anything.</span></span>
+</div>
+<div class="lp-row lp-row-b">
+<span class="lp-row-glyphs"><span data-glyph data-btn="A" data-size="38" data-fam="keyboard" data-drawn="keyboard|A|38|" style="height:38px" aria-hidden="true"><span class="gk" style="min-width:38px;height:33px;padding:0 9px;font-size:14px">Enter</span></span></span>
+<span class="lp-row-text"><span class="lp-row-title">Enter selects, Esc goes back.</span><span class="lp-row-sub">Right-click a game to open its menu.</span></span>
+</div>
+<div class="lp-row lp-row-b">
+<span class="lp-row-glyphs"><span data-glyph data-btn="X" data-size="38" data-fam="keyboard" data-drawn="keyboard|X|38|" style="height:38px" aria-hidden="true"><span class="gk" style="min-width:38px;height:33px;padding:0 9px;font-size:17px">X</span></span><span data-glyph data-btn="Y" data-size="38" data-fam="keyboard" data-drawn="keyboard|Y|38|" style="height:38px" aria-hidden="true"><span class="gk" style="min-width:38px;height:33px;padding:0 9px;font-size:17px">Y</span></span></span>
+<span class="lp-row-text"><span class="lp-row-title">X and Y are just X and Y.</span><span class="lp-row-sub">The buttons on screen turn into keys the moment you start typing.</span></span>
+</div>
+<div class="lp-row lp-row-b">
+<span class="lp-row-glyphs"><span data-glyph data-size="38" data-fam="keyboard" data-label="/" data-drawn="keyboard||38|/" style="height:38px" aria-hidden="true"><span class="gk" style="min-width:38px;height:33px;padding:0 9px;font-size:17px">/</span></span></span>
+<span class="lp-row-text"><span class="lp-row-title">Slash searches.</span><span class="lp-row-sub">Start typing a game's name and jump straight to it.</span></span>
+</div>
+<div class="lp-row">
+<span class="lp-row-glyphs"><span data-glyph data-size="38" data-fam="keyboard" data-label="Tab" data-drawn="keyboard||38|Tab" style="height:38px" aria-hidden="true"><span class="gk" style="min-width:38px;height:33px;padding:0 9px;font-size:14px">Tab</span></span></span>
+<span class="lp-row-text"><span class="lp-row-title">Tab opens Settings.</span><span class="lp-row-sub">Everything can be changed from there.</span></span>
+</div>
+</div>
+</div>
+</div>
+</div>
+</section>
+
+<!-- ============ GET STARTED: a settings sheet ============ -->
+<section id="install" class="lp-section lp-section-install" aria-labelledby="lp-install-h">
+<div class="lp-install-wrap">
+<div class="lp-install-copy">
+<div class="lp-kicker">Get started</div>
+<h2 id="lp-install-h" class="lp-h2">On the couch in a minute.</h2>
+<p>There's nothing else to install. Download it, open it, and answer a few quick questions with your controller while it finds your games.</p>
+<div class="lp-pills">
+<span class="lp-pill">Windows 11</span>
+<span class="lp-pill">Also runs on Windows 10</span>
+<span class="lp-pill">Keeps itself up to date</span>
+</div>
+</div>
+
+<div class="lp-steps">
+<div class="lp-step lp-step-first">
+<span class="lp-step-no">01</span>
+<span class="lp-step-text"><span class="lp-step-title">Download Loungepad</span><span class="lp-step-sub">The latest version, free.</span></span>
+<a href="https://github.com/sukumar-v/Loungepad/releases/latest" target="_blank" rel="noopener" data-nav class="lp-btn lp-btn-fill lp-btn-md lp-f lp-btn-primary"><span data-glyph data-btn="X" data-size="28" data-drawn="xbox|X|28|" style="height:28px" aria-hidden="true"><span class="gd" style="width:28px;height:28px;background:#3C7CD3;box-shadow:none;color:#FFFFFF;font-size:15px">X</span></span><span>Download</span></a>
+</div>
+<div class="lp-step">
+<span class="lp-step-no">02</span>
+<span class="lp-step-text"><span class="lp-step-title">Unzip it and open Loungepad</span><span class="lp-step-sub">Put the folder somewhere of your own, like Documents, so it can keep itself up to date.</span></span>
+</div>
+<div class="lp-step">
+<span class="lp-step-no">03</span>
+<span class="lp-step-text"><span class="lp-step-title">If Windows shows a warning</span><span class="lp-step-sub">Windows can be cautious about new apps the first time they open.</span></span>
+<span class="lp-kbd-path">More info → Run anyway</span>
+</div>
+<div class="lp-step">
+<span class="lp-step-no">04</span>
+<span class="lp-step-text"><span class="lp-step-title">Set up from the couch</span><span class="lp-step-sub">Pick your TV, your look and your game stores with the controller while it finds your games. Connecting your stores lets Loungepad show every game you own, not just the installed ones.</span></span>
+<span class="lp-badge-rec">Recommended</span>
+</div>
+<div class="lp-step">
+<span class="lp-step-no">05</span>
+<span class="lp-step-text"><span class="lp-step-title">That's it</span><span class="lp-step-sub">Loungepad updates itself from then on. To remove it, just delete the folder.</span></span>
+<span class="lp-toggle">Auto-update<span class="lp-toggle-track" aria-hidden="true"><span class="lp-toggle-knob"></span></span></span>
+</div>
+</div>
+</div>
+</section>
+
+<!-- ============ Closing ============ -->
+<section class="lp-end" aria-labelledby="lp-end-h">
+<div class="lp-end-glow" aria-hidden="true"></div>
+<picture><source type="image/webp" srcset="img/lp-icon.webp"><img class="lp-end-icon" src="img/lp-icon.png" alt="" width="120" height="120" loading="lazy"></picture>
+<h2 id="lp-end-h" class="lp-end-h">Games are the reason you sit down.</h2>
+<p>Loungepad makes sure nothing else is a reason to stand up. Free, and one download away.</p>
+<div class="lp-end-ctas">
+<a href="https://github.com/sukumar-v/Loungepad/releases/latest" target="_blank" rel="noopener" data-nav class="lp-btn lp-btn-fill lp-btn-lg lp-f lp-btn-primary"><span data-glyph data-btn="X" data-size="30" data-drawn="xbox|X|30|" style="height:30px" aria-hidden="true"><span class="gd" style="width:30px;height:30px;background:#3C7CD3;box-shadow:none;color:#FFFFFF;font-size:16px">X</span></span><span>Download for Windows</span></a>
+<a href="https://github.com/sukumar-v/Loungepad" target="_blank" rel="noopener" data-nav class="lp-btn lp-btn-ghost lp-end-ghost lp-f lp-ghost"><span data-glyph data-btn="Y" data-size="30" data-drawn="xbox|Y|30|" style="height:30px" aria-hidden="true"><span class="gd" style="width:30px;height:30px;background:#E2B128;box-shadow:none;color:#101012;font-size:16px">Y</span></span><span>Star on GitHub</span></a>
+</div>
+</section>
+
+<footer class="lp-footer">
+<div class="lp-footer-row">
+<div class="lp-footer-brand">
+<img src="img/icon-96.png" alt="" width="28" height="28" loading="lazy">
+<span>loungepad</span>
+</div>
+<nav class="lp-footer-nav" aria-label="More">
+<a href="https://github.com/sukumar-v/Loungepad/releases/latest" target="_blank" rel="noopener" data-nav class="lp-link">Download</a>
+<a href="https://github.com/sukumar-v/Loungepad" target="_blank" rel="noopener" data-nav class="lp-link">GitHub</a>
+<a href="https://github.com/sukumar-v/Loungepad/issues" target="_blank" rel="noopener" data-nav class="lp-link">Report a problem</a>
+<a href="https://github.com/sukumar-v/Loungepad/blob/main/LICENSE" target="_blank" rel="noopener" data-nav class="lp-link">License</a>
+</nav>
+</div>
+<p class="lp-legal">Xbox, PlayStation, DualSense, Nintendo Switch, Steam, Epic Games, GOG and the games shown are trademarks of their owners. Loungepad isn't affiliated with or endorsed by any of them.</p>
+</footer>
+
+<!-- ============ The hint bar: the launcher's legend, clickable, on every screen ============ -->
+<div class="lp-hintbar">
+<span class="lp-legend lp-hide-sm"><span class="lp-legend-dot"></span><span id="legendLeft">Loungepad for Windows</span></span>
+<span class="lp-grow"></span>
+<span class="lp-padhint"><span data-glyph data-btn="Dpad" data-size="28" data-drawn="xbox|Dpad|28|" style="height:28px" aria-hidden="true"><svg viewBox="0 0 40 40" width="28" height="28" class="gdp" aria-hidden="true"><rect x="15" y="2" width="10" height="12" rx="2" fill="currentColor" fill-opacity="0.95"></rect><rect x="15" y="26" width="10" height="12" rx="2" fill="currentColor" fill-opacity="0.95"></rect><rect x="2" y="15" width="12" height="10" rx="2" fill="currentColor" fill-opacity="0.95"></rect><rect x="26" y="15" width="12" height="10" rx="2" fill="currentColor" fill-opacity="0.95"></rect><rect x="14" y="14" width="12" height="12" fill="currentColor" fill-opacity="0.26"></rect></svg></span>Move</span>
+<span class="lp-padhint"><span data-glyph data-btn="A" data-size="28" data-drawn="xbox|A|28|" style="height:28px" aria-hidden="true"><span class="gd" style="width:28px;height:28px;background:#3AA03C;box-shadow:none;color:#FFFFFF;font-size:15px">A</span></span>Select</span>
+<a href="https://github.com/sukumar-v/Loungepad/releases/latest" target="_blank" rel="noopener" class="lp-hint"><span data-glyph data-btn="X" data-size="28" data-drawn="xbox|X|28|" style="height:28px" aria-hidden="true"><span class="gd" style="width:28px;height:28px;background:#3C7CD3;box-shadow:none;color:#FFFFFF;font-size:15px">X</span></span>Download</a>
+<a href="https://github.com/sukumar-v/Loungepad" target="_blank" rel="noopener" class="lp-hint"><span data-glyph data-btn="Y" data-size="28" data-drawn="xbox|Y|28|" style="height:28px" aria-hidden="true"><span class="gd" style="width:28px;height:28px;background:#E2B128;box-shadow:none;color:#101012;font-size:15px">Y</span></span><span>Star<span class="lp-hide-xs">&nbsp;on GitHub</span></span></a>
+<button type="button" id="menuBtn" class="lp-hint" aria-haspopup="dialog"><span data-glyph data-btn="Menu" data-size="28" data-drawn="xbox|Menu|28|" style="height:28px" aria-hidden="true"><span class="gs" style="width:28px;height:28px;background:#26262C"><svg viewBox="0 0 40 40" width="28" height="28" style="color:#FFFFFF" aria-hidden="true"><path d="M12.5 14h15M12.5 20h15M12.5 26h15" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></span>Menu</button>
+</div>
+
+</div>
+
+<!-- ============ The Power Wheel: this site's navigation ============ -->
+<div id="wheel" data-scope="wheel" class="lp-wheel" role="dialog" aria-modal="true" aria-label="Power Wheel" hidden>
+<button type="button" id="wheelBg" class="lp-wheel-bg" tabindex="-1" aria-label="Close the wheel"></button>
+<div class="lp-wheel-disc">
+<div class="lp-wheel-ring" aria-hidden="true"></div>
+<div class="lp-wheel-centre">
+<div class="lp-wheel-kicker">Power Wheel</div>
+<div class="lp-wheel-title" id="spokeTitle">Download</div>
+<div class="lp-wheel-desc" id="spokeDesc">Get the latest version for Windows.</div>
+</div>
+<a href="https://github.com/sukumar-v/Loungepad/releases/latest" target="_blank" rel="noopener" data-nav class="lp-wheel-spoke on" data-spoke="0" data-title="Download" data-desc="Get the latest version for Windows." style="left:50.00%;top:12.00%"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"></path></svg><span>Download</span></a>
+<a href="https://github.com/sukumar-v/Loungepad" target="_blank" rel="noopener" data-nav class="lp-wheel-spoke" data-spoke="1" data-title="Star on GitHub" data-desc="Follow the project and leave a star." style="left:79.71%;top:26.31%"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5l2.6 5.3 5.9.9-4.25 4.1 1 5.8L12 16.85l-5.25 2.75 1-5.8L3.5 9.7l5.9-.9z"></path></svg><span>GitHub</span></a>
+<a href="#library" data-nav class="lp-wheel-spoke" data-spoke="2" data-title="Features" data-desc="Everything it does, screen by screen." style="left:87.05%;top:58.46%"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"></path></svg><span>Features</span></a>
+<a href="#controllers" data-nav class="lp-wheel-spoke" data-spoke="3" data-title="Controllers" data-desc="Any controller, with every button drawn as yours." style="left:66.49%;top:84.24%"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.6 8h6.8a5.4 5.4 0 0 1 5.2 4l1.1 4.4a2.4 2.4 0 0 1-4.4 1.8L15.6 16H8.4l-1.7 2.2a2.4 2.4 0 0 1-4.4-1.8L3.4 12A5.4 5.4 0 0 1 8.6 8zM6.6 11.4v2.2M5.5 12.5h2.2M15.4 11.6h.01M17.6 13.4h.01"></path></svg><span>Controllers</span></a>
+<a href="#install" data-nav class="lp-wheel-spoke" data-spoke="4" data-title="Get started" data-desc="Download, open, and set up from the couch." style="left:33.51%;top:84.24%"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg><span>Get started</span></a>
+<a href="#top" data-nav class="lp-wheel-spoke" data-spoke="5" data-title="Back to the top" data-desc="Where it all starts." style="left:12.95%;top:58.46%"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 11.5 12 4l8 7.5V20a1 1 0 0 1-1 1h-5v-6h-4v6H5a1 1 0 0 1-1-1z"></path></svg><span>Home</span></a>
+<a href="#" data-nav class="lp-wheel-spoke" data-spoke="6" data-title="Close" data-desc="Back to where you were." data-close style="left:20.29%;top:26.31%"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"></path></svg><span>Close</span></a>
+</div>
+<div class="lp-wheel-legend">
+<span><span data-glyph data-btn="A" data-size="26" data-drawn="xbox|A|26|" style="height:26px" aria-hidden="true"><span class="gd" style="width:26px;height:26px;background:#3AA03C;box-shadow:none;color:#FFFFFF;font-size:14px">A</span></span>Select</span>
+<span><span data-glyph data-btn="B" data-size="26" data-drawn="xbox|B|26|" style="height:26px" aria-hidden="true"><span class="gd" style="width:26px;height:26px;background:#D3433C;box-shadow:none;color:#FFFFFF;font-size:14px">B</span></span>Close</span>
+</div>
+</div>
+
+<!-- ============ The viewer: a screen, whole ============ -->
+<div id="viewer" data-scope="viewer" class="lp-viewer" role="dialog" aria-modal="true" aria-label="Screen" hidden>
+<div class="lp-viewer-top">
+<span class="lp-viewer-kicker" id="viewerKicker"></span>
+<span class="lp-viewer-pos" id="viewerPos"></span>
+<span class="lp-grow"></span>
+<button type="button" id="viewerBack" data-nav class="lp-hint lp-viewer-back"><span data-glyph data-btn="B" data-size="26" data-drawn="xbox|B|26|" style="height:26px" aria-hidden="true"><span class="gd" style="width:26px;height:26px;background:#D3433C;box-shadow:none;color:#FFFFFF;font-size:14px">B</span></span>Back</button>
+</div>
+<div class="lp-viewer-body">
+<button type="button" id="viewerPrev" data-nav class="lp-viewer-nav lp-f" aria-label="Previous screen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"></path></svg></button>
+<div class="lp-viewer-stage" id="viewerStage"></div>
+<button type="button" id="viewerNext" data-nav class="lp-viewer-nav lp-f" aria-label="Next screen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7"></path></svg></button>
+</div>
+<div class="lp-viewer-caption">
+<h3 id="viewerTitle"></h3>
+<p id="viewerBody"></p>
+</div>
+</div>
+
+</div>
+<script src="glyphs.js"></script>
+<script src="site.js"></script>
+</body>
+</html>
