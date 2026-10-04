@@ -333,6 +333,20 @@ Stop the scrolled grid from clipping through the All games header
   reverse-engineering notes for report 0x3F and is **unverified on hardware**; it maps by position,
   so Nintendo's B is the launcher's A. Right stick is Z/Rz when both exist, else Rx/Ry; triggers
   are Rx/Ry only in the first case.
+- **The pad's own screenshot button takes a screenshot over a focused game** (`ShareButtonScreenshot`,
+  on by default; the user's ask, Oct 2 2026): Create on a DualSense (Share on a DualShock 4), Capture
+  on a Switch Pro. The Xbox Share button never reaches an application -- Windows and Steam answer it
+  themselves -- so nothing is done for an Xbox pad and the combo (`ScreenshotCombo`) is still its
+  way. Capture is `XINPUT_GAMEPAD_SHARE` (0x0800, the one bit XInput leaves unused; `PadButton.Share`,
+  the Switch map's 14th), masked out of combos, bindings and recordings (`BindableButtons`). Create
+  is `Back` because it is also the pad's View button, so `ShareMask` keys on the family: "playstation"
+  → Back, "switch" → Share, nothing else. The press is skipped when the keyboard toggle just spent
+  it (View on Press with "Show while a game is running" on) and when View is part of the menu or
+  screenshot combo; the Settings row warns for both. **Which key is the game's**: `ScreenshotRequested`
+  goes to `MainWindow.TakeScreenshot`, F12 (the Steam overlay's key) for a focused `steam:` game and
+  Win+PrintScreen for everything else, the combo included -- it used to send F12 regardless, which in
+  a browser opens the developer tools. Unverified on hardware: this PC's DualSense was on the cable
+  but no game was run in the session.
 - "Which pad is driving" is decided by movement against an **anchor** (`StickNoise`, 5% of
   travel), not the previous tick: a DualSense streams a report every 4 ms and its sticks rest a
   few percent off centre, so a per-tick delta never crossed the threshold on a slow push and a
@@ -428,6 +442,15 @@ Stop the scrolled grid from clipping through the All games header
 - A collection can be deleted while it is still being filtered on, so stale ids are pruned
   when state arrives. Left alone the filter matches nothing and the library looks empty for
   no visible reason.
+- **The Power Wheel's Close spoke is "Close game" over the running game** (the user's ask, Oct 2 2026).
+  `PushOverlay` carries `targetIsGame` (`_overlayTargetLive && _launcher.OwnsWindow(_overlayTarget)`),
+  the page keeps it in `overlayTargetIsGame` (declared in app.js, like the other overlay variables),
+  and `radialLabel` / `radialDesc` read it. Activating it sends `closeGame`, the in-game menu's own
+  route, not `windowAction close`: `closeGame` thaws a paused game first (a frozen process never
+  reads a WM_CLOSE) and lands on the library, and the overlay is dropped the way the in-game menu
+  drops it, without a `closeOverlay` that would hand the foreground back to a game being asked to
+  quit. Opened from the in-game menu's Power Wheel tile there is no new push, so the flag from the
+  `ingame` push carries over.
 - `renderMenu` paints its highlight onto `listEl.closest("[data-focus-scope]")`. An overlay
   without that attribute gets no highlight at all — which is what was wrong with the power
   wheel's submenus. It also only paints rows that are focusable, and nothing inside a hidden
@@ -639,6 +662,19 @@ Stop the scrolled grid from clipping through the All games header
 - **The viewer's image needs `width: auto; height: auto`**: it carries `width="1920" height="1080"`
   for the aspect-ratio hint, and with both set the two `max-*` limits squash it instead of fitting
   it (a 390px phone showed the screenshot squeezed to portrait).
+- **The site's gamepad support needs nothing installed** -- it is the browser's Gamepad API, and
+  the headers do not restrict it -- but on a PC with Loungepad (or Steam Input's desktop layout)
+  running, every press arrived TWICE: the Gamepad API edge, and the translation Loungepad sends for
+  the desktop (the Everywhere pack's hidden D-pad → arrow-key bindings, A as a real click). The
+  highlight moved two tiles a press and the stage flipped to Keyboard and back, which read as "does
+  not work with a gamepad" (Oct 2 2026; the launcher log showed `Action: Up → Up (Arrow up) in no
+  app` lines while the user was on the site). `site.js` now dedupes per action and source
+  (`fresh(src, action)`, 250 ms, in either order since the key can reach the page before or after
+  the edge), swallows the trusted mousedown/mouseup/click that follow a pad A, leaves Enter/Space to
+  the browser but tracks them, keeps the pad's family for a key arriving within 2 s of pad input,
+  and reads a hat on axis 9 for a pad with no standard mapping. A pad A while the pointer was last
+  in charge only brings the highlight back, as in the launcher. Checked with a scratchpad
+  puppeteer-core harness (20 cases: both orders, held repeats, the swallowed click, the hat).
 - The `website` entry in `.claude/launch.json` serves the folder on 8931. The preview pane freezes
   transitions AND smooth scrolling (use `scrollTo({behavior:"instant"})`), and its screenshots time
   out when batched. What worked (Oct 2 2026): puppeteer-core in the scratchpad driving headless
@@ -969,6 +1005,22 @@ Stop the scrolled grid from clipping through the All games header
   hand over before they exit); a close Loungepad asked for waits for nothing (`_closeRequested`);
   a process that lived under 90 s (a pre-launcher) keeps the 15 s window; anything longer gets 1 s,
   for a game that restarts itself. The poll is every 250 ms, not 1.5 s.
+- **A close that finds nothing of the game ends the session** (`GameLaunchService.Abandon`, Oct 3
+  2026, the user's ask). A store launch that goes nowhere -- 1000xRESIST on Oct 3: no process in
+  its folder ever appeared -- sat in `WaitForProcessFromDir`'s two-minute wait with the card saying
+  RUNNING NOW, "Close game" answering "No game window to close" and a swap refusing with "Could not
+  find the running game to close", for the whole two minutes plus the 20 s "assuming it exited"
+  delay. Every wait the session makes now takes a per-session token; `RequestClose(out foundAny)`
+  counts the processes it matched, and when it matched none it cancels the token, so the finally
+  runs at once and the library is free to launch the same game again or another. `CloseRunningGame`
+  on the bridge returns (closed, found): processes with no window to close are still reported as
+  such and still waited out by a swap; nothing at all reads as "X was not running". The page gets
+  `starting` on the `game` message and `gameStarting` on the state push (`Starting`, true until the
+  first process is tracked; `ProcessTracked` pushes the state), and shows STARTING on the card and
+  the meta, with a sub-line under Close game saying it only clears. Scratch harness over a scratch
+  copy of cmd.exe: 12 checks, the abandoned close ending the session in 62 ms where the grace was
+  15 s. The 120 s URI wait itself is the same cancellable wait and was not exercised (no URI
+  launch without a store client).
 
 ## Emulators and ROMs
 
@@ -1474,6 +1526,37 @@ Stop the scrolled grid from clipping through the All games header
   closing Steam ends a Steam game. The editor only touches depth-1 value lines, adds missing ones
   before the root's close, and leaves every other byte alone (the harness checks this on a copy of
   the real file; the real one is never written by a test).
+- **The same switch empties Steam's desktop layout** (`SteamDesktopLayout`, Oct 3 2026, the user's
+  ask). With Steam running and a pad it has configuration support for, Steam Input applies a
+  "desktop layout" whenever no game is in front, and its default (`controller_base\desktop_*.vdf`)
+  binds the **left stick** and the D-pad to the arrow keys, the right stick to the mouse, A to Enter
+  and the triggers to clicks -- every desktop job Loungepad already gives the pad, done a second
+  time. The way out is a layout grown from `controller_base\empty.vdf`, which Steam autosaves as
+  `steamapps\common\Steam Controller Configs\<account id>\config\413080\controller_<type>.vdf`
+  (413080 is the Desktop pseudo-app; 443510 is the Guide chord layout) and selects through
+  `configset_controller_<type>.vdf` → `"413080" { "autosave" "1" }`. Off writes that layout for
+  six types (xbox360, xboxone, ps4, ps5, switch_pro, generic), keeping the Share/Capture button as
+  a Steam screenshot the way the user's own file did, and leaves whatever was there as
+  `.loungepad-bak` (zero bytes when there was nothing); on moves the backups back or deletes what
+  it created. Done inside `SteamGuide.Set`'s Steam-closed window, since Steam rewrites the
+  configsets on exit. `SteamGuide.Read()` answers "on" while either half still has the pad, so an
+  install with the keys off but Steam's layout in force still shows the row ON. Scratch harness:
+  49 checks on a copy of the real folder, the real one hash-checked unchanged. Observed in
+  `logs\controller_ui.txt`: Steam applied the one Xbox autosave to a DualSense too ("Loaded Config
+  for Local Override Path for App ID 413080 ... empty.vdf" on the pad's connect), so one file may
+  be enough on some installs; the per-type files are what the folder's naming asks for.
+- **The Windows 11 shell reads Xbox pads itself, and nothing turns that off.** On this PC
+  `explorer.exe` has `xinput1_4.dll` and `Windows.Gaming.Input.dll` loaded (`tasklist /m`), and its
+  XAML surfaces -- the taskbar's right-click menu, Explorer's new context menu, Start, Settings --
+  treat the left stick and D-pad as focus movement, A as activate and B as back when they have the
+  focus. That was "the highlighter moves when I move the stick" (Oct 2 2026): not Steam, whose
+  desktop layout was already empty for both pads in its log, and not Loungepad, which sends nothing
+  for the stick but pointer movement. WinRT cannot see a DualSense, so only Xbox-class pads get
+  it. The fixes people cite were checked here: `GameDVR\AppCaptureEnabled` was already 0 and it
+  still happens; Game Bar's button and chord were already off; disabling the GameInput service is
+  what XInput and Steam Input now go through, so it is not offered; HidHide is a third-party filter
+  driver and documents Xbox pads staying visible. Over such a menu, A fires twice: Windows invokes
+  the highlighted item and Loungepad clicks under the pointer.
 - The combo's legend sits below the wheel's 880px wrap (`bottom: -46px`) for both wheels, so the
   action wheel's pager can have the strip under the bottom spoke and the legend does not move
   between the two.
