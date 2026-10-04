@@ -780,6 +780,12 @@ internal static class NativeMethods
     // is the long-standing undocumented XInputGetStateEx, which reports it as bit 0x0400. If the
     // export is missing we fall back to the documented call and the Guide bit simply never sets.
     public const ushort XINPUT_GAMEPAD_GUIDE = 0x0400;
+    /// <summary>
+    /// The pad's own screenshot button, in the one bit XInput leaves unused: Capture on a Switch
+    /// Pro. Set only by HidGamepadReader -- XInput never reports the Xbox Share button, which
+    /// Windows keeps to itself -- and never a binding, a combo or a UI button.
+    /// </summary>
+    public const ushort XINPUT_GAMEPAD_SHARE = 0x0800;
 
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]
     private delegate int XInputGetStateExFn(int dwUserIndex, out XINPUT_STATE pState);

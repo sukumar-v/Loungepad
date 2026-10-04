@@ -91,6 +91,9 @@ public partial class MainWindow : Window
         _gamepad.TouchClick += () => Dispatcher.BeginInvoke(() => _bridge?.PushPadClick());
         _gamepad.UiScroll += v => Dispatcher.BeginInvoke(() => _bridge?.PushStickScroll(v));
         _gamepad.KeyboardToggleRequested += () => Dispatcher.BeginInvoke(() => _keyboard.Toggle());
+        // On the pad's thread, like the combo always was: SendInput needs no window, and the key
+        // should land before the moment has passed.
+        _gamepad.ScreenshotRequested += TakeScreenshot;
         _gamepad.MinimizeToggleRequested += () => Dispatcher.BeginInvoke(OnComboTap);
         _gamepad.RadialRequested += () => Dispatcher.BeginInvoke(() => _ = ShowOverlay("radial"));
         _gamepad.WheelTapRequested += () => Dispatcher.BeginInvoke(OnWheelTap);
@@ -134,6 +137,8 @@ public partial class MainWindow : Window
         });
         _rest.Changed += () => _bridge?.PushRest();
         _launcher.PausedChanged += _ => Dispatcher.BeginInvoke(() => _bridge?.PushGameState());
+        // The first process of the game was found: the page's "starting" becomes "running".
+        _launcher.ProcessTracked += () => Dispatcher.BeginInvoke(() => _bridge?.PushGameState());
         // A press while resting: the loop swallows it and reports it here.
         _gamepad.WakeRequested += () => Dispatcher.BeginInvoke(() => _rest.Wake("the controller"));
         _restTimer = new System.Windows.Threading.DispatcherTimer(TimeSpan.FromMilliseconds(500),
@@ -754,7 +759,8 @@ public partial class MainWindow : Window
         // hidden, so by the time we show it the library is already hidden and only the menu is
         // painted -- otherwise the launcher flashes up before the overlay appears.
         _bridge?.PushOverlay(mode, _windows.TitleOf(_overlayTarget), shot,
-            _overlayTargetLive ? ActionService.ExeOf(_overlayTarget) : "");
+            _overlayTargetLive ? ActionService.ExeOf(_overlayTarget) : "",
+            _overlayTargetLive && _launcher.OwnsWindow(_overlayTarget));
         await Task.Delay(90);
 
         _overlayActive = true;
@@ -942,6 +948,22 @@ public partial class MainWindow : Window
             }
             catch (Exception ex) { Log.Info($"Action {action.Name} failed: {ex.Message}"); }
         });
+    }
+
+    /// <summary>
+    /// The screenshot key for whatever is in front, pressed from the pad's thread. A focused Steam
+    /// game gets F12, the Steam overlay's own key, so the picture lands with the game's Steam
+    /// screenshots; anything else -- an Xbox or GOG game, an emulator, the desktop -- gets
+    /// Win+PrintScreen, which Windows saves to Pictures\Screenshots whatever has the foreground.
+    /// It used to be F12 regardless, which in a browser opens the developer tools.
+    /// </summary>
+    private void TakeScreenshot(string source)
+    {
+        bool steam = _launcher.IsGameForeground()
+            && (_launcher.RunningGameId?.StartsWith("steam:", StringComparison.Ordinal) ?? false);
+        if (steam) NativeMethods.SendKeyTap(NativeMethods.VK_F12, NativeMethods.SCAN_F12);
+        else ShortcutKeys.Send("Win+PrintScreen");
+        Log.Info($"Screenshot: {source} → {(steam ? "F12 (Steam)" : "Win+PrintScreen")}");
     }
 
     public void BeginActionCapture() => _gamepad.BeginCapture();

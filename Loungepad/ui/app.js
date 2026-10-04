@@ -1387,6 +1387,7 @@ let actionWheelOpen = false;
 let captureState = null;                 // { app, action, onDone, timer, note }
 let keyPick = null;                      // { onDone, mods: Set }
 let overlayTargetProcess = "";           // the exe behind the window a menu opened over; "" for none
+let overlayTargetIsGame = false;         // that window is the running game's (the wheel's Close spoke)
 // The sheets and the screen activity.js draws. Declared here rather than there for the same
 // reason as the three above: app.js reads them while it boots.
 let achState = null;                     // { gameId, idx, filter, sort, set, head, reveal, from }
@@ -2703,6 +2704,10 @@ function renderPlaying() {
   art.style.background = "";
   applyArt(g, art, bannerUrl(g));
   $("playingName").textContent = g.title;
+  // Until a process of the game has been seen it is only starting, which is also the state a
+  // launch that went nowhere sits in; the label says so instead of claiming it is running.
+  const label = sec.querySelector(".section-label");
+  if (label) label.textContent = S.gameStarting ? "STARTING" : "RUNNING NOW";
   updatePlayingMeta();
 
   const card = $("playingCard");
@@ -3634,9 +3639,31 @@ function allSettingsRows() {
   }
   rows.push(...menuComboRows(s, set));
 
-  rows.push(buttonRow("Screenshot button", SCREENSHOT_COMBOS, () => s.screenshotCombo, v => set(() => s.screenshotCombo = v),
-    "Taps F12, Steam's screenshot key. Works while a game is focused, which the Xbox Share button cannot manage, " +
-    "because Windows keeps that button to itself and never passes it to applications",
+  // A setting the host defaults to on: a settings file from before it has no key, and undefined
+  // must read as on rather than off. The warning is the keyboard's: Create is View, and a Press
+  // toggle that fires over games takes the press first.
+  const shareShot = s.shareButtonScreenshot !== false;
+  const shareClash = shareShot && !!s.keyboardInGame && (s.keyboardToggleMode || "Press") !== "Hold"
+    && canonBtn(s.keyboardToggleButton || "Back") === "View";
+  // A combo that holds View owns Create outright on a DualSense: the host leaves a button that is
+  // part of the menu or screenshot combo to the combo, so a press of it alone takes no screenshot.
+  const shareInCombo = shareShot && [["menu combo", s.minimizeCombo], ["screenshot combo", s.screenshotCombo]]
+    .find(([, c]) => c && c !== "Off" && c.split("+").map(p => canonBtn(p.trim())).includes("View"));
+  rows.push({
+    ...toggleRow("Share button takes a screenshot",
+      "Create on a DualSense (Share on a DualShock 4) and Capture on a Switch Pro take one while a game is focused: " +
+      "F12, the Steam overlay's key, in a Steam game; Win+PrintScreen in anything else, which Windows saves to " +
+      "Pictures › Screenshots. The Xbox Share button never reaches Loungepad: Windows and Steam answer that one themselves",
+      () => shareShot, v => set(() => s.shareButtonScreenshot = v)),
+    warn: shareClash
+      ? "Create is also the keyboard button, and the keyboard opens over games, so on a DualSense the keyboard takes the press and no screenshot is taken. Switch the keyboard to Hold, or pick another button for it."
+      : shareInCombo
+      ? `[[View]] is part of the ${shareInCombo[0]}, and on a DualSense that is Create, so the combo keeps it and a press of Create alone takes no screenshot there.`
+      : null,
+  });
+  rows.push(buttonRow("Screenshot combo", SCREENSHOT_COMBOS, () => s.screenshotCombo, v => set(() => s.screenshotCombo = v),
+    "The same screenshot on a combo, for an Xbox pad (Windows keeps its Share button to itself and never passes it " +
+    "to applications) or a game that ignores the share button. Works while a game is focused",
     s.screenshotCombo !== "Off" && s.screenshotCombo === s.minimizeCombo
       ? "Same as the menu combo above, so one press does both. Pick a different one."
       : null));
@@ -4024,7 +4051,7 @@ function xboxButtonRows() {
   const stillOn = [
     xb.gameBar === true ? "Xbox Game Bar stops opening on the Xbox button, and stops treating View + Menu as one" : null,
     xb.xboxMode === true ? "Windows' Xbox mode is turned off, so a hold no longer opens Task View" : null,
-    xb.steam === true ? `Steam stops opening on the Xbox button and drops its Guide button shortcuts${xb.steamRunning ? "; Steam closes and reopens for this" : ""}` : null,
+    xb.steam === true ? `Steam stops opening on the Xbox button, drops its Guide button shortcuts, and its desktop layout is emptied for every kind of pad so the stick is only the pointer${xb.steamRunning ? "; Steam closes and reopens for this" : ""}` : null,
   ].filter(Boolean);
   if (stillOn.length) rows.push({
     name: "Give Loungepad the Xbox button",
@@ -4047,11 +4074,16 @@ function xboxButtonRows() {
     "Windows' own full-screen gaming home. While it is on, holding the Xbox button opens Task View, on top of the hold that brings Loungepad back",
     () => xb.xboxMode === true, v => setXboxButton("xboxMode", v)));
   if (hasSteam) {
-    const steamHint = "Steam's “Guide Button Focuses Steam” and its Guide button shortcuts, such as Guide + a button for Big Picture or the keyboard" +
+    // One switch for everything Steam does with a pad outside a game: the Xbox button, and the
+    // desktop layout, whose default turns the left stick and the D-pad into arrow keys, A into
+    // Enter and the right stick into a mouse on top of what Loungepad already does with them.
+    const steamHint = "Steam's “Guide Button Focuses Steam” and its Guide button shortcuts, such as Guide + a button for Big Picture or the keyboard, " +
+      "and Steam's desktop layout, which turns the stick and D-pad into arrow keys while no game is running. Off writes an empty " +
+      "desktop layout for every kind of pad (the Share button still takes a Steam screenshot); on puts back what was there" +
       (xb.steamRunning ? ". Steam closes and reopens to change this" : "");
     rows.push(xb.steamBusy
-      ? { name: "Steam on the Xbox button", hint: steamHint, type: "action", label: "Restarting Steam…", action: () => {} }
-      : toggleRow("Steam on the Xbox button", steamHint, () => xb.steam === true, v => setXboxButton("steam", v)));
+      ? { name: "Steam on the controller", hint: steamHint, type: "action", label: "Restarting Steam…", action: () => {} }
+      : toggleRow("Steam on the controller", steamHint, () => xb.steam === true, v => setXboxButton("steam", v)));
   }
   return rows;
 }
@@ -4993,7 +5025,10 @@ function gameMenuItems() {
       sub: g.hidden ? "Show in the library again" : "Not a game? Keep it out of the library",
       action: () => { send({ cmd: "setHidden", ids: editionsOf(g).map(m => m.id), hidden: !g.hidden }); closeGameMenu(); } },
   );
+  // While nothing of the game has been seen yet, closing is simply ending the session: the host
+  // finds nothing to close and clears it, so the game can be launched again or another started.
   if (running) items.push({ label: "Close game", icon: "x", danger: true,
+    sub: S.gameStarting ? "Nothing of it is running yet; this clears it so you can launch again" : undefined,
     action: () => { closeGameMenu(); send({ cmd: "closeGame" }); } });
   // Deleting the entry for the game you are in the middle of playing is never what you meant,
   // so this one only shows while it is not running.
@@ -6312,6 +6347,7 @@ function handleHostMessage(m) {
       S.startupRegistered = m.startupRegistered;
       S.gameRunning = m.gameRunning;
       S.runningGameId = m.runningGameId;
+      S.gameStarting = !!(m.gameRunning && m.gameStarting);
       S.scanning = m.scanning;
       S.steamAccount = m.steamAccount || null;
       S.stores = m.stores || null;
@@ -6396,6 +6432,7 @@ function handleHostMessage(m) {
     case "overlay":
       overlayTargetTitle = m.targetTitle || "";
       overlayTargetProcess = m.targetProcess || "";
+      overlayTargetIsGame = !!m.targetIsGame;
       setOverlayShot(m.shot);
       setOverlayMode(true);
       hostWindows = m.windows || [];
@@ -6479,6 +6516,8 @@ function handleHostMessage(m) {
       S.runningGameId = m.id;
       S.sessionStart = m.since || null;
       S.gamePaused = !!(m.running && m.paused);
+      // No process of the game seen yet: the card says STARTING, and Close game simply ends it.
+      S.gameStarting = !!(m.running && m.starting);
       // The cards for what the session unlocked wait for the launcher to be back on the TV.
       if (!m.running) { S.telemetry = null; setTimeout(drainUnlocks, 800); }
       renderLibrary();
@@ -6900,7 +6939,7 @@ if (!HOST) window.addEventListener("keydown", (e) => {
     mockHandle._running = hollow;
     const since = new Date(Date.now() - 72 * 60000).toISOString();
     handleHostMessage({ type: "game", running: true, id: hollow, since });
-    handleHostMessage({ type: "overlay", mode: "ingame", targetTitle: "Hollowmark", targetProcess: "hollowmark", shot: null, windows: mockWindows, runningGameId: hollow });
+    handleHostMessage({ type: "overlay", mode: "ingame", targetTitle: "Hollowmark", targetProcess: "hollowmark", targetIsGame: true, shot: null, windows: mockWindows, runningGameId: hollow });
     clearInterval(mockHandle._telemetry);
     let tick = 0;
     const push = () => handleHostMessage({ type: "telemetry", id: hollow, since, sample: { t: 4320 + tick * 2, fps: 118 + Math.round(Math.sin(tick / 2) * 9), cpu: 41 + (tick % 5), gpu: 93 - (tick % 4), ram: 61, gpuTemp: 71, cpuTemp: 64 }, fpsSource: "RivaTuner Statistics Server", sensorSource: "HWiNFO" });
@@ -7034,7 +7073,7 @@ function mockHandle(msg) {
         boostButton: "RT", boostMultiplier: 2.5, hideLegend: false, igdbClientId: "", igdbClientSecret: "", steamGridDbKey: "", metadataEndpoint: "",
         steamShowOwned: true, steamApiKey: "", gamePassCatalog: false, xboxClientId: "", detectEmulators: true, autoUpdate: true,
         leftClickButton: "A", rightClickButton: "B",
-        minimizeCombo: "LS + RS", menuComboMode: "TapHold",
+        minimizeCombo: "LS + RS", menuComboMode: "TapHold", screenshotCombo: "Off", shareButtonScreenshot: true,
         keyboardToggleButton: "Back", keyboardToggleMode: "Press", keyboardToggleHoldMs: 600,
         keyboardApp: "Builtin", keyboardScale: 1.0, keyRepeatDelayMs: 350, keyRepeatIntervalMs: 90,
         keyboardSuggestions: true, keyboardFunctionKeys: false, keyboardNavKeys: false,

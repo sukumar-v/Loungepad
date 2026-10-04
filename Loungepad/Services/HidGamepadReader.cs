@@ -331,7 +331,10 @@ internal sealed class HidGamepadReader
 }
 
 /// <summary>Where a HID button lands in XInput's button word.</summary>
-internal enum PadButton { None, A, B, X, Y, LB, RB, LT, RT, Back, Start, LS, RS, Guide }
+/// <para>Share is the pad's own screenshot button where it has one of its own (Capture on a Switch
+/// Pro); a DualSense's Create is Back, since it is also the pad's View button, and the pad loop
+/// tells the two apart by the pad's family.</para>
+internal enum PadButton { None, A, B, X, Y, LB, RB, LT, RT, Back, Start, LS, RS, Guide, Share }
 
 /// <summary>One HID gamepad: its parsed descriptor, its button map, and its last state.</summary>
 internal sealed class HidPad : IDisposable
@@ -547,7 +550,7 @@ internal sealed class HidPad : IDisposable
     private static readonly PadButton[] SwitchMap =
     {
         PadButton.A, PadButton.B, PadButton.X, PadButton.Y, PadButton.LB, PadButton.RB, PadButton.LT, PadButton.RT,
-        PadButton.Back, PadButton.Start, PadButton.LS, PadButton.RS, PadButton.Guide, PadButton.None,
+        PadButton.Back, PadButton.Start, PadButton.LS, PadButton.RS, PadButton.Guide, PadButton.Share,
     };
 
     private static (string layout, PadButton[] map) LayoutFor(uint vid, uint pid)
@@ -683,6 +686,7 @@ internal sealed class HidPad : IDisposable
                         case PadButton.LS: buttons |= NativeMethods.XINPUT_GAMEPAD_LEFT_THUMB; break;
                         case PadButton.RS: buttons |= NativeMethods.XINPUT_GAMEPAD_RIGHT_THUMB; break;
                         case PadButton.Guide: buttons |= NativeMethods.XINPUT_GAMEPAD_GUIDE; break;
+                        case PadButton.Share: buttons |= NativeMethods.XINPUT_GAMEPAD_SHARE; break;
                         // A digital trigger press is a full pull; the analog axis below can only raise it.
                         case PadButton.LT: lt = 255; break;
                         case PadButton.RT: rt = 255; break;

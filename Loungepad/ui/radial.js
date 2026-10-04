@@ -101,7 +101,16 @@ function radialIcon(it) {
   return mouseInGameOn() ? "controller" : "controllerOff";
 }
 function radialLabel(it) {
-  return it.id === "mouseInGame" ? (mouseInGameOn() ? "Mouse in game: On" : "Mouse in game: Off") : it.label;
+  if (it.id === "mouseInGame") return mouseInGameOn() ? "Mouse in game: On" : "Mouse in game: Off";
+  // Opened over the running game, the window behind the menu IS the game, and the spoke should
+  // say so: "Close window" over a game reads as something milder than it is.
+  if (it.id === "close" && overlayTargetIsGame) return "Close game";
+  return it.label;
+}
+function radialDesc(it) {
+  if (it.id === "mouseInGame") return mouseInGameDesc();
+  if (it.id === "close" && overlayTargetIsGame) return "Ask the game to quit and come back to the library";
+  return it.desc || "";
 }
 function mouseInGameDesc() {
   return mouseInGameOn()
@@ -143,9 +152,9 @@ function renderRadial() {
   });
   const sel = RADIAL_ITEMS[radialIdx];
   $("radialSelName").textContent = radialLabel(sel);
-  $("radialDesc").textContent = sel.id === "mouseInGame" ? mouseInGameDesc() : (sel.desc || "");
-  // "Close window" is the only spoke that acts on the window behind the menu, so that is the
-  // only one that needs to name it.
+  $("radialDesc").textContent = radialDesc(sel);
+  // Close is the only spoke that acts on the window behind the menu, so that is the only one
+  // that needs to name it.
   $("radialTarget").textContent =
     sel.id === "close" ? (overlayTargetTitle ? overlayTargetTitle.toUpperCase() : "NO WINDOW") : "";
   $("radialFoot").innerHTML = foot(["A", "Select"], ["B", "Close"]);
@@ -154,7 +163,23 @@ function renderRadial() {
 function radialActivate() {
   const it = RADIAL_ITEMS[radialIdx];
   switch (it.id) {
-    case "close":     send({ cmd: "windowAction", action: "close" });    closeRadial(false); break;
+    case "close":
+      // Over the running game this is the in-game menu's Close game: the host thaws a paused game
+      // first (a frozen process never reads a WM_CLOSE) and lands on the library itself, so the
+      // overlay is dropped here the way the in-game menu drops it, without a closeOverlay that
+      // would hand the foreground back to a game that is being asked to quit.
+      if (overlayTargetIsGame) {
+        radialOpen = false; radialSub = null;
+        hideOverlay("overlay-radial");
+        hideOverlay("overlay-radialsub");
+        setOverlayMode(false);
+        switchView("library");
+        send({ cmd: "closeGame" });
+      } else {
+        send({ cmd: "windowAction", action: "close" });
+        closeRadial(false);
+      }
+      break;
     case "keyboard":  send({ cmd: "toggleKeyboard" });                   closeRadial(true);  break;
     // Blanks the TV and parks the pad; any button brings it back, so it needs no confirm step.
     case "rest":      send({ cmd: "rest" });                             closeRadial(false); break;

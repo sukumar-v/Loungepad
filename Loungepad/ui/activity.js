@@ -237,7 +237,10 @@ function updatePlayingMeta() {
   if (!el || !g) return;
   const since = S.sessionStart ? new Date(S.sessionStart) : null;
   const dur = since && !isNaN(since) ? ` · ${fmtDuration((Date.now() - since) / 1000)}` : "";
-  el.textContent = (g.platform + (S.gamePaused ? " · PAUSED" : " · RUNNING") + dur).toUpperCase();
+  // No process seen yet (a store client still launching it, or a launch that went nowhere):
+  // "starting", and Close game ends the session at once instead of finding nothing to close.
+  const state = S.gamePaused ? " · PAUSED" : S.gameStarting ? " · STARTING" : " · RUNNING";
+  el.textContent = (g.platform + state + dur).toUpperCase();
 }
 
 function renderIngameStats() {

@@ -241,9 +241,13 @@ Loungepad/
       standing in for the Xbox button in apps. Win + G still opens Game Bar.
     - **Windows Xbox mode**: while it is on, holding the Xbox button opens Task View. Win + Tab
       still does.
-    - **Steam on the Xbox button**: "Guide Button Focuses Steam" and Steam's Guide button
-      shortcuts. Steam rewrites its settings when it closes, so changing this closes Steam,
-      edits them, and starts it again in the tray; it is refused while a game is running.
+    - **Steam on the controller**: "Guide Button Focuses Steam", Steam's Guide button
+      shortcuts, and Steam's desktop layout. That layout's default turns the left stick and
+      the D-pad into arrow keys, A into Enter and the right stick into a mouse whenever no game
+      is running, on top of what Loungepad does with the same pad; off writes an empty layout
+      for every kind of pad (keeping the Share button as a Steam screenshot) and on puts back
+      whatever was there. Steam rewrites its settings when it closes, so changing this closes
+      Steam, edits them, and starts it again in the tray; it is refused while a game is running.
     The two Windows ones are per-user registry values and may need a sign-out to reach a
     running Game Bar. Turning one back on restores Windows' own default.
   - Deadzone, sensitivity and the acceleration exponent (slow near center, fast at full

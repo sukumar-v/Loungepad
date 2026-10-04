@@ -42,6 +42,13 @@ internal class GamepadService : IDisposable
     public event Action<string, string>? PadUsed;
     /// <summary>Raised when the keyboard-toggle chord is held.</summary>
     public event Action? KeyboardToggleRequested;
+    /// <summary>
+    /// Take a screenshot of whatever is in front: the screenshot combo, or the pad's own
+    /// screenshot button pressed over a focused game (Create on a DualSense, Capture on a Switch
+    /// Pro). Which key that is depends on the game, so the window decides. The string names the
+    /// source, for the log. Raised on the pad thread.
+    /// </summary>
+    public event Action<string>? ScreenshotRequested;
     /// <summary>Show or hide Loungepad, or the in-game menu while a game runs: the combo held
     /// (tap and hold) or tapped once (double tap).</summary>
     public event Action? MinimizeToggleRequested;
@@ -411,7 +418,8 @@ internal class GamepadService : IDisposable
                 }
                 _captureIgnore &= held;
                 _captureIgnoreLT &= lt; _captureIgnoreRT &= rt;
-                _captureMask |= (ushort)(held & ~_captureIgnore);
+                // Minus the share bit: a Switch Pro's Capture is a screenshot and never a binding.
+                _captureMask |= (ushort)(held & ~_captureIgnore & BindableButtons);
                 _captureLT |= lt && !_captureIgnoreLT;
                 _captureRT |= rt && !_captureIgnoreRT;
                 bool gotSomething = _captureMask != 0 || _captureLT || _captureRT;
@@ -468,17 +476,17 @@ internal class GamepadService : IDisposable
                     break;
             }
 
-            // ---- screenshot key ----
+            // ---- screenshot combo ----
             // Also evaluated before the serviceActive gate: a screenshot is only ever wanted while
             // a game is focused, which is exactly when the rest of the pad is silent. The Xbox
             // Share button would be the natural home for this, but Windows keeps it to itself --
-            // it reaches neither XInput nor WinRT's RawGameController -- so it has to be a combo.
+            // it reaches neither XInput nor WinRT's RawGameController -- so for an Xbox pad it has
+            // to be a combo. The pads whose share button we CAN see get it below.
             bool shotNow = s.ScreenshotCombo != "Off" && ComboPressed(state.Gamepad, s.ScreenshotCombo);
             if (shotNow && !shotLatched)
             {
                 shotLatched = true;
-                NativeMethods.SendKeyTap(NativeMethods.VK_F12, NativeMethods.SCAN_F12);
-                Log.Info("Screenshot key sent (F12)");
+                ScreenshotRequested?.Invoke("the screenshot combo");
             }
             else if (!shotNow)
             {
@@ -572,6 +580,23 @@ internal class GamepadService : IDisposable
             bool toggleReleasedAsTap = (released & toggleMask) != 0 && !toggleFired && toggleDownAt >= 0;
             if ((released & toggleMask) != 0) toggleDownAt = -1;
 
+            // ---- the pad's own screenshot button ----
+            // Create on a DualSense (Share on a DualShock 4), Capture on a Switch Pro: a screenshot
+            // while a game is focused, which is what the button does on the pad's own console. Only
+            // those pads. The Xbox Share button never reaches an application -- Windows and Steam
+            // answer it themselves -- and a generic pad has no button that means this. Create is
+            // also View, so a press the keyboard toggle just spent is not a screenshot as well, and
+            // a button that is part of the menu or screenshot combo is left to the combo.
+            ushort shareMask = activeIsHid ? ShareMask(hid.Layout) : (ushort)0;
+            bool sharePressed = shareMask != 0 && (pressed & shareMask) != 0;
+            if (sharePressed && s.ShareButtonScreenshot && gameFocused && !KeyboardOwnsPad
+                && !(toggleFired && (pressed & toggleMask) != 0)
+                && !ReservedCombos(s).Any(m => (m & shareMask) != 0))
+            {
+                ScreenshotRequested?.Invoke(hid.Layout == "switch" ? "Capture" : "Create");
+            }
+            else sharePressed = false;
+
             if (!serviceActive)
             {
                 prevButtons = buttons;
@@ -644,7 +669,8 @@ internal class GamepadService : IDisposable
                 ushort actionTaken = 0;
                 if (Actions is { } acts && !keyboardDriving)
                 {
-                    ushort spent = (ushort)(modalTaken | (toggleFired && (pressed & toggleMask) != 0 ? toggleMask : 0));
+                    ushort spent = (ushort)(modalTaken | (toggleFired && (pressed & toggleMask) != 0 ? toggleMask : 0)
+                                            | (sharePressed ? shareMask : 0));
                     actionTaken = acts.Evaluate(in state.Gamepad, spent, ReservedCombos(s));
                 }
                 else Actions?.ResetBindings();
@@ -927,6 +953,23 @@ internal class GamepadService : IDisposable
             mask |= ButtonMask(part);
         return mask;
     }
+
+    /// <summary>Every button a combo, a binding or a recording may hold: all of them but the
+    /// share bit, which is a screenshot and nothing else.</summary>
+    private const ushort BindableButtons = unchecked((ushort)~NativeMethods.XINPUT_GAMEPAD_SHARE);
+
+    /// <summary>
+    /// The pad's own screenshot button, by family. A Sony pad's is Create (Share on a DualShock
+    /// 4), which HidGamepadReader maps to Back because it is also the pad's View button; a Switch
+    /// Pro's Capture has a bit of its own. Nothing for an Xbox pad, whose Share button Windows
+    /// never passes on, and nothing for a generic pad, which has no button that means this.
+    /// </summary>
+    private static ushort ShareMask(string layout) => layout switch
+    {
+        "playstation" => NativeMethods.XINPUT_GAMEPAD_BACK,
+        "switch" => NativeMethods.XINPUT_GAMEPAD_SHARE,
+        _ => 0,
+    };
 
     public static ushort ButtonMask(string name) => name switch
     {

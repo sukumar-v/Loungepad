@@ -659,8 +659,13 @@ public class UiBridge
                 // shows the user nothing at all, which reads as "it froze".
                 _window.GoHome();
 
-                int n = CloseRunningGame();
-                Push(new { type = "toast", message = n > 0 ? "Closing game…" : "No game window to close" });
+                var title = _launcher.RunningGameId is { } rid ? _library.Find(rid)?.Title : null;
+                var (closed, found) = CloseRunningGame();
+                // Nothing found means the session has been ended (GameLaunchService.Abandon): the
+                // game never came up, so it reads as closed rather than as an error about windows.
+                Push(new { type = "toast", message = closed > 0 ? "Closing game…"
+                    : found ? "The game has no window to close yet"
+                    : $"{title ?? "The game"} was not running" });
                 break;
             }
 
@@ -1681,7 +1686,8 @@ public class UiBridge
         _steamGuideBusy = false;
         PushState();
         Push(new { type = "toast", message = error
-            ?? (on ? "Steam opens on the Xbox button again" : "Steam no longer takes the Xbox button") });
+            ?? (on ? "Steam opens on the Xbox button again, and its desktop layout is back"
+                   : "Steam no longer takes the Xbox button, and its desktop layout is empty") });
     }
 
     // ---- Actions: a program chosen from disk ----
@@ -1893,6 +1899,7 @@ public class UiBridge
         t.MinimizeCombo = s.MinimizeCombo;
         t.MenuComboMode = s.MenuComboMode == "DoubleTap" ? "DoubleTap" : "TapHold";
         t.ScreenshotCombo = s.ScreenshotCombo;
+        t.ShareButtonScreenshot = s.ShareButtonScreenshot;
         t.KeyRepeatDelayMs = Math.Clamp(s.KeyRepeatDelayMs, 120, 900);
         t.KeyRepeatIntervalMs = Math.Clamp(s.KeyRepeatIntervalMs, 20, 300);
         t.KeyboardToggleButton = s.KeyboardToggleButton;
@@ -2474,6 +2481,7 @@ public class UiBridge
             themes = _themes.List(),
             gameRunning = _launcher.GameRunning,
             runningGameId = _launcher.RunningGameId,
+            gameStarting = _launcher.Starting,
             // When the running game was started, for the "playing for" readout.
             sessionStart = _activity.Current?.Start,
             // Per game: unlocked, total, score, the last unlock. Enough for a tile and a stats
@@ -2525,7 +2533,10 @@ public class UiBridge
     /// directly — a fullscreen game may own no window we can enumerate. Returns how many things
     /// were asked, so the caller can tell "closing…" from "there was nothing to close".
     /// </summary>
-    private int CloseRunningGame()
+    /// <summary>Close the running game's windows and ask its processes to quit. <c>Found</c> is
+    /// false when nothing of the game was running at all, in which case the launcher has already
+    /// ended the session (GameLaunchService.Abandon) and the library is free.</summary>
+    private (int Closed, bool Found) CloseRunningGame()
     {
         int n = 0;
         foreach (var w in _windows.ListWindows())
@@ -2535,7 +2546,8 @@ public class UiBridge
             _windows.Close(h);
             n++;
         }
-        return n + _launcher.RequestClose();
+        n += _launcher.RequestClose(out bool found);
+        return (n, found || n > 0);
     }
 
     /// <summary>
@@ -2548,9 +2560,13 @@ public class UiBridge
         var outgoing = _launcher.RunningGameId is { } id ? _library.Find(id)?.Title : null;
         Log.Info($"Swapping {outgoing ?? "running game"} -> {next.Title}");
 
-        if (CloseRunningGame() == 0)
+        var (closed, found) = CloseRunningGame();
+        // Nothing of the old game running: the launcher has ended that session itself, so the
+        // wait below returns at once and the new game starts. Processes with no window to close
+        // are the one case that still has to be waited out.
+        if (closed == 0 && found)
         {
-            Push(new { type = "toast", message = "Could not find the running game to close" });
+            Push(new { type = "toast", message = $"{outgoing ?? "The game"} has no window to close yet" });
             return;
         }
 
@@ -2572,7 +2588,7 @@ public class UiBridge
         _ => "Done"
     };
 
-    public void PushOverlay(string mode, string targetTitle, string? shot, string targetProcess) =>
+    public void PushOverlay(string mode, string targetTitle, string? shot, string targetProcess, bool targetIsGame) =>
         Push(new
         {
             type = "overlay",
@@ -2581,6 +2597,9 @@ public class UiBridge
             // The exe name behind the window the menu opened over ("firefox"), which is what the
             // action wheel matches its apps on; empty when the launcher itself was in front.
             targetProcess,
+            // That window is the running game's: the Power Wheel's Close spoke then says "Close
+            // game" and goes through closeGame, which thaws a paused game before asking it.
+            targetIsGame,
             shot,
             windows = _windows.ListWindows(),
             displays = _displays.GetDisplays(),
@@ -2642,7 +2661,9 @@ public class UiBridge
     public void PushToast(string message) => Push(new { type = "toast", message });
 
     public void PushGameState() =>
-        Push(new { type = "game", running = _launcher.GameRunning, id = _launcher.RunningGameId, since = _activity.Current?.Start, paused = _launcher.Paused });
+        Push(new { type = "game", running = _launcher.GameRunning, id = _launcher.RunningGameId, since = _activity.Current?.Start, paused = _launcher.Paused,
+            // No process of the game seen yet: the page says "starting" rather than "running".
+            starting = _launcher.Starting });
 
     // ---- rest mode ----
 

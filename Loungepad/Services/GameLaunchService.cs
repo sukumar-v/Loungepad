@@ -27,8 +27,21 @@ public class GameLaunchService
     /// <summary>Set when the close came from Loungepad itself (the in-game menu, the game menu, a
     /// swap). Nothing is going to take over from the game then, so nothing is waited for.</summary>
     private volatile bool _closeRequested;
+    /// <summary>Cancelled by Abandon: every wait the session makes for a process that has not
+    /// appeared ends at once, and the session with it.</summary>
+    private volatile CancellationTokenSource? _sessionCts;
     private readonly Dictionary<uint, bool> _pidCache = new();
     private readonly object _pidGate = new();
+
+    /// <summary>
+    /// The session has started but no process of the game has been seen yet: a store client is
+    /// still launching it, or it never will (an update, a crash on start, a game whose exe lives
+    /// outside its folder). The page shows it as starting rather than playing, and a close ends
+    /// the session straight away rather than finding nothing to close.
+    /// </summary>
+    public bool Starting { get; private set; }
+    /// <summary>The first process of the game was found: Starting went false. Off the UI thread.</summary>
+    public event Action? ProcessTracked;
 
     public event Action<Game>? GameStarted;
     public event Action<Game>? GameExited;
@@ -71,6 +84,9 @@ public class GameLaunchService
         var sessionDir = SessionDir(game);
         _runningInstallDir = sessionDir;
         _closeRequested = false;
+        var cts = new CancellationTokenSource();
+        _sessionCts = cts;
+        Starting = true;
         lock (_pidGate) _pidCache.Clear();
 
         try
@@ -106,9 +122,11 @@ public class GameLaunchService
                 _ = Task.Run(() => MonitorGameWindows(s.TvDeviceName, monitorCts.Token));
 
 
-            // URI launches (Steam/Epic) return the store client, not the game — find the real process.
+            // URI launches (Steam/Epic) return the store client, not the game — find the real
+            // process. Two minutes, for a store client that updates the game first; Abandon ends
+            // it early when the user gives up on it from the library.
             if (tracked is null && sessionDir is not null)
-                tracked = await WaitForProcessFromDir(sessionDir, TimeSpan.FromSeconds(120));
+                tracked = await WaitForProcessFromDir(sessionDir, TimeSpan.FromSeconds(120), cts.Token);
 
             if (tracked is not null)
             {
@@ -118,6 +136,11 @@ public class GameLaunchService
                 while (tracked is not null)
                 {
                     Log.Info($"Tracking game process {tracked.ProcessName} (pid {tracked.Id}) for {game.Title}");
+                    if (Starting)
+                    {
+                        Starting = false;
+                        ProcessTracked?.Invoke();
+                    }
                     var trackedSince = DateTime.UtcNow;
 
                     await tracked.WaitForExitAsync();
@@ -139,14 +162,19 @@ public class GameLaunchService
                     var grace = DateTime.UtcNow - trackedSince < TimeSpan.FromSeconds(90)
                         ? TimeSpan.FromSeconds(15)
                         : TimeSpan.FromSeconds(1);
-                    tracked = await WaitForProcessFromDir(sessionDir, grace);
+                    tracked = await WaitForProcessFromDir(sessionDir, grace, cts.Token);
                 }
                 Log.Info($"{game.Title} has exited");
+            }
+            else if (cts.IsCancellationRequested)
+            {
+                Log.Info($"{game.Title} never showed a process; the session was ended from the library");
             }
             else
             {
                 Log.Info($"Could not find a process for {game.Title}; assuming it exited after grace period");
-                await Task.Delay(TimeSpan.FromSeconds(20));
+                try { await Task.Delay(TimeSpan.FromSeconds(20), cts.Token); }
+                catch (OperationCanceledException) { /* abandoned meanwhile: end now */ }
             }
         }
         catch (Exception ex)
@@ -157,6 +185,9 @@ public class GameLaunchService
         {
             monitorCts.Cancel();
             monitorCts.Dispose();
+            _sessionCts = null;
+            cts.Dispose();
+            Starting = false;
             // A game killed while frozen leaves handles behind and a Paused that would carry
             // into the next session.
             Resume();
@@ -248,14 +279,15 @@ public class GameLaunchService
     /// quarter second rather than every one and a half: this runs while the user is waiting for
     /// the launcher to come back, and a scan of the process list costs a few milliseconds.
     /// </summary>
-    private static async Task<Process?> WaitForProcessFromDir(string installDir, TimeSpan timeout)
+    private static async Task<Process?> WaitForProcessFromDir(string installDir, TimeSpan timeout, CancellationToken ct = default)
     {
         var deadline = DateTime.UtcNow + timeout;
         while (true)
         {
             if (FindProcessFromDir(installDir) is { } found) return found;
-            if (DateTime.UtcNow >= deadline) return null;
-            await Task.Delay(250);
+            if (DateTime.UtcNow >= deadline || ct.IsCancellationRequested) return null;
+            try { await Task.Delay(250, ct); }
+            catch (OperationCanceledException) { return null; }
         }
     }
 
@@ -336,24 +368,51 @@ public class GameLaunchService
     /// closing "every window the game owns" closes nothing and the menu looks like it did nothing.
     /// Returns how many processes were asked.
     /// </summary>
-    public int RequestClose()
+    public int RequestClose() => RequestClose(out _);
+
+    /// <summary><paramref name="foundAny"/> says whether any process of the game was running at
+    /// all; false means the session was ended here (see Abandon).</summary>
+    public int RequestClose(out bool foundAny)
     {
+        foundAny = false;
         if (!GameRunning) return 0;
         _closeRequested = true;
         // A frozen process never reads the WM_CLOSE it is about to be posted.
         Resume();
-        int n = 0;
+        int n = 0, found = 0;
         foreach (var p in Process.GetProcesses())
         {
             try
             {
-                if (PidBelongsToGame((uint)p.Id) && p.CloseMainWindow()) n++;
+                if (!PidBelongsToGame((uint)p.Id)) continue;
+                found++;
+                if (p.CloseMainWindow()) n++;
             }
             catch { /* protected, or exited between the enumeration and the call */ }
             finally { p.Dispose(); }
         }
         Log.Info($"Close game: asked {n} process(es) to quit");
+        foundAny = found > 0;
+        // Nothing of the game is running at all -- it never started, crashed on the way up, or
+        // runs from a folder the session cannot see. There is nothing to close, so the close IS
+        // the end of the session: the library goes back to free, and the game can be launched
+        // again or another one started, instead of "no window to close" for two minutes.
+        if (found == 0) Abandon();
         return n;
+    }
+
+    /// <summary>
+    /// End the session now, whatever the game is doing: every wait for a process that has not
+    /// appeared is cancelled and the session's finally runs. Called by RequestClose when it finds
+    /// nothing of the game, which is the user giving up on a launch that went nowhere.
+    /// </summary>
+    public void Abandon()
+    {
+        if (!GameRunning) return;
+        _closeRequested = true;
+        Log.Info($"Close game: nothing of the game is running; ending the session");
+        try { _sessionCts?.Cancel(); }
+        catch (ObjectDisposedException) { /* the session ended on its own meanwhile */ }
     }
 
     /// <summary>

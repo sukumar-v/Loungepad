@@ -207,6 +207,14 @@ public class AppSettings
     /// <summary>Gamepad button or combo that taps the screenshot key. "Off" disables it.
     /// Evaluated even inside a focused game, which is the only place it is any use.</summary>
     public string ScreenshotCombo { get; set; } = "Off";
+    /// <summary>
+    /// The pad's own screenshot button takes one while a game is focused: Create on a DualSense
+    /// (Share on a DualShock 4), Capture on a Switch Pro. F12 in a Steam game, the Steam overlay's
+    /// key, so the picture lands with the game's Steam screenshots; Win+PrintScreen in anything
+    /// else, which Windows saves to Pictures\Screenshots. The Xbox Share button never reaches an
+    /// application, so Windows and Steam keep answering that one themselves.
+    /// </summary>
+    public bool ShareButtonScreenshot { get; set; } = true;
 
     // On-screen keyboard
     /// <summary>How long a D-pad direction must be held on the on-screen keyboard before the

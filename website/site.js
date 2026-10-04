@@ -49,6 +49,28 @@
   var cycleTimer = null;
   var opener = null;
 
+  // ---- one press, two reports ----
+  // A controller on a Windows desktop is often translated as well as read: Loungepad's own
+  // desktop bindings send the D-pad as arrow keys and A as a real mouse click, and Steam Input's
+  // desktop layout does much the same. The Gamepad API then shows the same press a few
+  // milliseconds before or after its translation, and handling both moved the highlight two
+  // tiles at a time. So each action remembers when each source last did it, and the other
+  // source's copy inside DUP_MS is the same press and is dropped -- in either order.
+  var DUP_MS = 250;
+  var last = { pad: {}, key: {} };
+  var lastPadAt = -1e9;
+  var swallowPointer = false;
+  function fresh(src, action) {
+    var now = performance.now();
+    var t = last[src === 'pad' ? 'key' : 'pad'][action];
+    if (t != null && now - t < DUP_MS) return false;
+    last[src][action] = now;
+    return true;
+  }
+  // A translated key arriving just after its press must not flip the stage to the keyboard,
+  // so a pad that was used moments ago keeps the family: the key is the pad's, not a keyboard's.
+  function padRecent() { return S.padName != null && performance.now() - lastPadAt < 2000; }
+
   // ---- the TV ----
   function cycling() { return attract && !S.hold && !S.reduce; }
   function renderDots() {
@@ -299,25 +321,46 @@
     else if (dir === 'up' || dir === 'down') window.scrollBy({ top: (dir === 'down' ? 1 : -1) * window.innerHeight * 0.6, behavior: S.reduce ? 'auto' : 'smooth' });
   }
 
+  var KEY_ACTION = {
+    ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down', Escape: 'back',
+    x: 'dl', X: 'dl', y: 'gh', Y: 'gh', m: 'wheel', M: 'wheel', Enter: 'activate', ' ': 'activate'
+  };
   function onKey(e) {
     var t = e.target;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
     if (e.ctrlKey || e.metaKey || e.altKey) return;
-    var k = e.key;
-    var handled = true;
-    if (k === 'ArrowLeft') nav('left');
-    else if (k === 'ArrowRight') nav('right');
-    else if (k === 'ArrowUp') nav('up');
-    else if (k === 'ArrowDown') nav('down');
-    else if (k === 'Escape') back();
-    else if (k === 'x' || k === 'X') open(DL);
-    else if (k === 'y' || k === 'Y') open(GH);
-    else if (k === 'm' || k === 'M') toggleWheel();
-    else handled = false;
-    if (!handled) return;
+    var action = KEY_ACTION[e.key];
+    if (!action) return;
+    // The same press, already seen through the Gamepad API: drop it (see "one press, two reports").
+    if (!fresh('key', action)) { e.preventDefault(); return; }
+    // Enter and Space are the browser's own activation of the focused control and are left to it;
+    // they are only tracked so that a pad A arriving just after is not a second activation.
+    if (action === 'activate') return;
+    if (action === 'left' || action === 'right' || action === 'up' || action === 'down') nav(action);
+    else if (action === 'back') back();
+    else if (action === 'dl') open(DL);
+    else if (action === 'gh') open(GH);
+    else toggleWheel();
     e.preventDefault();
+    if (padRecent()) return;
     setInput('key');
     if (!S.famLocked && S.fam !== 'keyboard') setFam('keyboard');
+  }
+  // Loungepad sends A as a real click wherever its pointer is. Right after a pad A the page has
+  // already activated the highlighted control, so that click is the same press: it is stopped
+  // before it can move the focus (mousedown) or activate whatever sits under the pointer (click).
+  function onPointerDown(e) {
+    if (!e.isTrusted) return;
+    if (fresh('key', 'activate')) { swallowPointer = false; return; }
+    swallowPointer = true;
+    e.preventDefault();
+    e.stopPropagation();
+  }
+  function onPointerRest(e) {
+    if (!swallowPointer || !e.isTrusted) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.type === 'click') swallowPointer = false;
   }
   function onMove(e) {
     if (e && e.movementX === 0 && e.movementY === 0) return;
@@ -354,26 +397,43 @@
     var edges = {};
     BTN.forEach(function (b) { var v = down(b); edges[b] = v && !prev[b]; prev[b] = v; });
     var ax = pad.axes[0] || 0, ay = pad.axes[1] || 0;
-    var dirs = { left: down(14) || ax < -0.6, right: down(15) || ax > 0.6, up: down(12) || ay < -0.6, down: down(13) || ay > 0.6 };
+    // A pad the browser has no standard mapping for reports its D-pad as a hat switch on axis 9:
+    // -1 is up, then clockwise in sevenths, and anything past 1 is released.
+    var hat = -1;
+    if (pad.mapping !== 'standard' && pad.axes.length > 9 && pad.axes[9] >= -1 && pad.axes[9] <= 1)
+      hat = Math.round((pad.axes[9] + 1) * 3.5) % 8;
+    var dirs = {
+      left: down(14) || ax < -0.6 || hat === 5 || hat === 6 || hat === 7,
+      right: down(15) || ax > 0.6 || hat === 1 || hat === 2 || hat === 3,
+      up: down(12) || ay < -0.6 || hat === 7 || hat === 0 || hat === 1,
+      down: down(13) || ay > 0.6 || hat === 3 || hat === 4 || hat === 5
+    };
     var moved = false;
     Object.keys(dirs).forEach(function (d) {
       if (!dirs[d]) { rep[d] = null; return; }
       var t = rep[d];
-      if (t == null) { rep[d] = now + 380; nav(d); moved = true; }
-      else if (now >= t) { rep[d] = now + 120; nav(d); moved = true; }
+      if (t == null) { rep[d] = now + 380; moved = true; }
+      else if (now >= t) { rep[d] = now + 120; moved = true; }
+      else return;
+      if (fresh('pad', d)) nav(d);
     });
     var any = moved || BTN.some(function (b) { return edges[b]; });
+    // The pointer was in charge: a first press only brings the highlight back, as it does in the
+    // launcher, rather than activating a control nobody could see was focused. A click that this
+    // same press may also arrive as (Loungepad's pointer) then does the pointing for it.
+    var wasMouse = S.input === 'mouse';
     if (any) {
       var fam = famFromId(pad.id);
+      lastPadAt = now;
       setInput('pad');
       S.padFam = fam;
       if (!S.famLocked && S.fam !== fam) setFam(fam);
     }
-    if (edges[0]) activate();
-    if (edges[1]) back();
-    if (edges[2]) open(DL);
-    if (edges[3]) open(GH);
-    if (edges[9] || edges[16]) toggleWheel();
+    if (edges[0] && !wasMouse && fresh('pad', 'activate')) activate();
+    if (edges[1] && fresh('pad', 'back')) back();
+    if (edges[2] && fresh('pad', 'dl')) open(DL);
+    if (edges[3] && fresh('pad', 'gh')) open(GH);
+    if ((edges[9] || edges[16]) && fresh('pad', 'wheel')) toggleWheel();
   }
 
   // ---- wiring ----
@@ -401,6 +461,10 @@
   $('viewerNext').addEventListener('click', function () { step(1); });
   document.addEventListener('keydown', onKey);
   document.addEventListener('mousemove', onMove);
+  // Capture phase, so a click that is really the pad's A is stopped before any control sees it.
+  document.addEventListener('mousedown', onPointerDown, true);
+  document.addEventListener('mouseup', onPointerRest, true);
+  document.addEventListener('click', onPointerRest, true);
 
   // ---- start ----
   var mq = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)');

@@ -15,7 +15,9 @@ namespace Loungepad.Services;
 ///  • SteamController_Enable_Chord ↔ controller_enable_chord: Steam's Guide button chords
 ///    (Guide + a button for the keyboard, a screenshot, Big Picture and so on).
 ///
-/// Both are on when absent. One switch here drives both, since either one takes the button.
+/// Both are on when absent. One switch here drives both, since either one takes the button --
+/// and, since Oct 2026, Steam's desktop layout as well (SteamDesktopLayout): off empties it for
+/// every kind of pad, on puts it back, and Read() reports "on" while either half still has the pad.
 ///
 /// Steam rewrites localconfig.vdf when it exits, so an edit made while it runs is lost. Changing
 /// it therefore closes Steam (steam.exe -shutdown, which is a clean exit), edits the file, and
@@ -26,7 +28,7 @@ internal static class SteamGuide
 {
     public const string FocusKey = "Controller_CheckGuideButton";
     public const string ChordKey = "SteamController_Enable_Chord";
-    private const long SteamId64Base = 76561197960265728;
+    internal const long SteamId64Base = 76561197960265728;
 
     private static (string Path, DateTime Stamp, bool On)? _cache;
 
@@ -40,8 +42,12 @@ internal static class SteamGuide
         return File.Exists(path) ? path : null;
     }
 
-    /// <summary>Whether Steam takes the Xbox button; null when there is no Steam config to read.
-    /// Cached on the file's write time: this is asked on every state push.</summary>
+    /// <summary>
+    /// Whether Steam takes the pad: the Xbox button (the two keys), or the desktop, through a
+    /// desktop layout that is not empty for every kind of pad (SteamDesktopLayout). Null when
+    /// there is no Steam config to read. The keys are cached on the file's write time, since this
+    /// is asked on every state push; the layouts are a dozen small files and are read as they are.
+    /// </summary>
     public static bool? Read()
     {
         try
@@ -49,11 +55,15 @@ internal static class SteamGuide
             var path = ConfigPath();
             if (path is null) return null;
             var stamp = File.GetLastWriteTimeUtc(path);
-            if (_cache is { } c && c.Path == path && c.Stamp == stamp) return c.On;
-            var values = ReadTopLevel(File.ReadAllText(path), FocusKey, ChordKey);
-            bool on = IsOn(values, FocusKey) || IsOn(values, ChordKey);
-            _cache = (path, stamp, on);
-            return on;
+            bool on;
+            if (_cache is { } c && c.Path == path && c.Stamp == stamp) on = c.On;
+            else
+            {
+                var values = ReadTopLevel(File.ReadAllText(path), FocusKey, ChordKey);
+                on = IsOn(values, FocusKey) || IsOn(values, ChordKey);
+                _cache = (path, stamp, on);
+            }
+            return on || SteamDesktopLayout.AllEmpty() == false;
         }
         catch (Exception ex)
         {
@@ -119,6 +129,16 @@ internal static class SteamGuide
         {
             error = $"Could not change Steam's settings: {ex.Message}";
             Log.Info($"Steam: {error}");
+        }
+
+        // The same switch covers the desktop: off empties Steam's desktop layout for every kind of
+        // pad, on puts back whatever was there. Done here because Steam is closed here, and Steam
+        // rewrites the layout's selection file when it exits.
+        try { Log.Info(SteamDesktopLayout.Set(steamKeepsDesktop: on)); }
+        catch (Exception ex)
+        {
+            error ??= $"Could not change Steam's desktop layout: {ex.Message}";
+            Log.Info($"Steam: desktop layout: {ex.Message}");
         }
 
         if (wasRunning && exe is not null)
