@@ -83,3 +83,7 @@ dist/
 *.mp4
 *.mkv
 *.mov
+
+# Wrangler's local secrets file for the metadata proxy: never committed.
+.dev.vars
+.dev.vars.*

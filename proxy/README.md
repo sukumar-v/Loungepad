@@ -84,13 +84,14 @@ npx wrangler secret put IGDB_CLIENT_SECRET --config proxy/wrangler.toml
 npx wrangler secret put SGDB_KEY --config proxy/wrangler.toml
 ```
 
-Optionally, a Steam Web API key. It is what lets the launcher list the games a Steam account owns
-but has not installed (Settings → Library → *Show games you own but haven't installed*), and it is
-free from https://steamcommunity.com/dev/apikey — any domain name will do. Without it the route
-answers 501 and the launcher tells the user to paste a key of their own into Settings instead.
+There is no Steam key any more. The two routes that used one (`/v1/owned`, `/v1/achievements`) are
+gone: they took a SteamID, which made them the only part of the service that saw anything
+identifying, and they let anyone with the URL read any Steam account's library through the
+service's key. The launcher reads both from Steam directly, with the user's own sign-in or key. If
+a `STEAM_API_KEY` secret is still set from an earlier deploy, delete it:
 
 ```bash
-npx wrangler secret put STEAM_API_KEY --config proxy/wrangler.toml
+npx wrangler secret delete STEAM_API_KEY --config proxy/wrangler.toml
 ```
 
 Check it builds without uploading anything:
@@ -136,36 +137,27 @@ set with `npx wrangler secret list --config proxy/wrangler.toml`.
 
 ## Endpoints
 
-    GET /v1/facts?title=<title>   → { name, summary, developer, publisher, genres[],
-                                      released, criticScore, cover, artwork }
-    GET /v1/art?title=<title>     → { name, portrait, tile, hero, logo }
-    GET /v1/owned?steamid=<id64>  → { response: { game_count, games: [ { appid, name,
-                                      playtime_forever, rtime_last_played } ] } }
-    GET /v1/achievements?steamid=<id64>&appid=<id>
-                                  → { appid, hasAchievements, achievements: [ { id, name,
-                                      description, hidden, icon, iconGray, percent, unlocked,
-                                      unlockTime } ] }
+    GET /v1/facts?title=<title>[&appid=<id>][&platform=<igdb ids>]
+                                  → { name, summary, developer, publisher, genres[],
+                                      released, criticScore, pegi, cover, artwork, video,
+                                      videos[], screenshots[] }
+    GET /v1/art?title=<title>[&appid=<id>]
+                                  → { name, portrait, tile, hero, logo }
     GET /v1/health                → { ok: true }
+
+Every request except `/v1/health` must carry the header `X-Loungepad-Client: 1`, or it is answered
+`403` before anything is looked up. The launcher sends it on every call. It is not a secret -- it
+is in the shipped binary -- but it turns away the traffic that only knows the URL.
 
 `404` means "no confident answer", which is a normal outcome rather than a failure. The launcher
 treats a 404, a 429 and a dead connection identically: it keeps whatever art it already had.
 
-`/v1/owned` is Steam's own `GetOwnedGames` passed through, trimmed to four fields, so the launcher
-parses it and a direct call made with the user's own key identically. `403` is a profile whose game
-details are private (Steam answers those with no games at all), `501` means `STEAM_API_KEY` is not
-set. It is never cached: it is one person's data and it changes whenever they buy something.
-
-`/v1/achievements` is one game's achievements for one account, in one answer: Steam's
-`GetSchemaForGame` (the list, with names, descriptions, icons and the hidden flag), the account's
-`GetPlayerAchievements`, and the keyless `GetGlobalAchievementPercentagesForApp` for the rarity.
-The schema and the percentages are about the game and are cached per app (a week and a day); the
-unlocks are never cached. `403` is a private profile, as above; `501` means `STEAM_API_KEY` is not
-set; a game with no achievements answers an empty list. The same key that turns `/v1/owned` on
-turns this on.
-
 Every response carries the matched `name`, and **the launcher re-checks it against its own strict
 title rule before accepting anything**. The proxy being loose, wrong or compromised cannot put the
 wrong game's art on a tile.
+
+Icon and image URLs the launcher receives from here are checked on its side too (`https` only,
+plain URL characters) before they are written into its page.
 
 ## Things to know before you run this
 
@@ -179,6 +171,14 @@ wrong game's art on a tile.
   unaffected because they never touch this.
 - **Put a contact address in the worker's User-Agent** if you publish widely, so an upstream that
   is unhappy with your traffic can reach you before it revokes the key.
-- **`/v1/owned` and `/v1/achievements` are the routes that see something identifying.** A 64-bit SteamID is a public
-  identifier, but it is the user's, which is why the launcher only sends it when they turn the
-  Steam library on, and why this route stores nothing and caches nothing.
+- **Nothing here is about a person.** A request carries a game's title, its Steam app id and, for a
+  ROM, the IGDB platform ids of its system. KV holds answers keyed on those, the IGDB token, and
+  rate counters keyed on a hash of the client's address and the minute -- never the address
+  itself. Invocation logs are off in `wrangler.toml`, so Workers Logs keeps only the worker's own
+  console lines, which name titles and app ids on failure and nothing else.
+- **The free tier's KV write quota is the service's weak point.** Every cache miss is a write (two
+  with the rate counter), and the free plan allows a thousand a day. A refused write no longer
+  fails the request -- the answer in hand is returned and the counter or cache entry is simply not
+  kept -- but a busy day still means the cache stops growing until midnight UTC. Workers Paid, or
+  Cloudflare's Rate Limiting binding in place of the KV counter, is the next step if the launcher
+  finds an audience.

@@ -160,15 +160,15 @@ public class SteamAccountService
         }
 
         var key = settings.SteamApiKey.Trim();
-        var endpoint = string.IsNullOrWhiteSpace(settings.MetadataEndpoint)
-            ? MetadataProxyClient.DefaultEndpoint
-            : settings.MetadataEndpoint.Trim();
-        var viaProxy = key.Length == 0;
         var cached = Cached(account.SteamId);
 
-        if (viaProxy && !MetadataProxyClient.IsConfigured(endpoint))
+        // The list used to come through the shared metadata service when there was no key, which
+        // sent the SteamID -- and brought the whole library back -- through a server that is not
+        // Steam's. It no longer does: the account's data goes to Steam and nowhere else, so without
+        // a sign-in or a key of the user's own there is no route, and the row says which to add.
+        if (key.Length == 0)
         {
-            Status.Error = "No metadata service is set, so a Steam Web API key is needed";
+            Status.Error = "Sign in to Steam below, or add your own Web API key, to list the games you own";
             return Report(cached);
         }
 
@@ -178,39 +178,23 @@ public class SteamAccountService
             return Report(cached);
         }
 
-        const string Private =
-            "Steam keeps this profile's game details private. Sign in to Steam below to read them " +
-            "without making anything public, or add your own Web API key";
-
         try
         {
-            var url = viaProxy
-                ? $"{endpoint.TrimEnd('/')}/v1/owned?steamid={account.SteamId}"
-                : "https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/" +
-                  $"?key={Uri.EscapeDataString(key)}&steamid={account.SteamId}" +
-                  "&include_appinfo=1&include_played_free_games=1&format=json";
+            var url = "https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/" +
+                      $"?key={Uri.EscapeDataString(key)}&steamid={account.SteamId}" +
+                      "&include_appinfo=1&include_played_free_games=1&format=json";
             using var res = await Http.GetAsync(url, ct);
 
             if (res.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
             {
-                // The proxy answers 403 when Steam gave it nothing, which is what a private profile
-                // looks like from outside. A rejected key is the direct route's 401.
-                Status.Error = viaProxy ? Private : "Steam rejected the Web API key";
-                Log.Info($"Steam library: {(int)res.StatusCode} from {(viaProxy ? "the service" : "Steam")}");
-                return Report(cached);
-            }
-            // 501 is the service saying it has no Steam key. 400 and 404 are a service that has not
-            // been deployed with this route at all, which from here is the same fact.
-            if (viaProxy && (int)res.StatusCode is 501 or 404 or 400)
-            {
-                Status.Error = "The metadata service does not offer Steam library lookups yet. Add your own Web API key below";
-                Log.Info($"Steam library: the service answered {(int)res.StatusCode} for /v1/owned");
+                Status.Error = "Steam rejected the Web API key";
+                Log.Info($"Steam library: {(int)res.StatusCode} from Steam");
                 return Report(cached);
             }
             if (!res.IsSuccessStatusCode)
             {
                 Status.Error = $"Could not fetch the library ({(int)res.StatusCode})";
-                Log.Info($"Steam library: {(int)res.StatusCode} from {(viaProxy ? "the service" : "Steam")}");
+                Log.Info($"Steam library: {(int)res.StatusCode} from Steam");
                 return Report(cached);
             }
 
@@ -218,8 +202,9 @@ public class SteamAccountService
             if (games is null)
             {
                 // Steam's own answer to a profile it will not show: a 200 with no games array at
-                // all. An empty library, by contrast, arrives as an empty array.
-                Status.Error = Private;
+                // all. An empty library, by contrast, arrives as an empty array. The key is the
+                // owner's, so this is a key for another account rather than a privacy setting.
+                Status.Error = "Steam answered with no library for this key. Sign in to Steam below instead, or check the key is this account's";
                 return Report(cached);
             }
 

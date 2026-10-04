@@ -209,6 +209,21 @@ public sealed class AchievementService : IDisposable
         return File.Exists(Path.Combine(Paths.AchievementIconsDir, name)) ? name : null;
     }
 
+    /// <summary>
+    /// An icon URL as it may be handed to the page or fetched, or null. Icon URLs arrive from the
+    /// stores' APIs and the metadata service and are written into the page's markup, so only an
+    /// absolute https URL made of ordinary URL characters passes -- no quotes, brackets, spaces or
+    /// control characters, nothing that could end an attribute, and no scheme but https.
+    /// </summary>
+    public static string? SafeIconUrl(string? url)
+    {
+        if (string.IsNullOrEmpty(url) || url.Length > 2048) return null;
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var u) || u.Scheme != Uri.UriSchemeHttps) return null;
+        foreach (var c in url)
+            if (c <= ' ' || c >= 0x7f || c is '"' or '\'' or '<' or '>' or '\\' or '`' or '(' or ')') return null;
+        return url;
+    }
+
     public static string IconName(string url)
     {
         var hash = Convert.ToHexString(SHA1.HashData(Encoding.UTF8.GetBytes(url)))[..20].ToLowerInvariant();
@@ -223,7 +238,7 @@ public sealed class AchievementService : IDisposable
     public async Task CacheIconsAsync(GameAchievements set, IEnumerable<Achievement>? only = null, CancellationToken ct = default)
     {
         var urls = (only ?? set.Items).SelectMany(a => new[] { a.IconUrl, a.IconLockedUrl })
-            .Where(u => !string.IsNullOrEmpty(u)).Select(u => u!).Distinct().ToList();
+            .Select(SafeIconUrl).Where(u => u is not null).Select(u => u!).Distinct().ToList();
         var missing = urls.Where(u => !File.Exists(Path.Combine(Paths.AchievementIconsDir, IconName(u)))).ToList();
         if (missing.Count == 0) return;
         await _iconGate.WaitAsync(ct);

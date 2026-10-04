@@ -359,7 +359,26 @@ public partial class MainWindow : Window
 
         var uiDir = Path.Combine(AppContext.BaseDirectory, "ui");
         core.SetVirtualHostNameToFolderMapping("loungepad.ui", uiDir, CoreWebView2HostResourceAccessKind.Allow);
+        // The YouTube player lives in a page of its own on a second origin (ui\player, see
+        // player.js): YouTube's script runs there with no bridge and no data host to reach, and
+        // the launcher page drives it through postMessage. DenyCors lets the page frame it while
+        // refusing a fetch across the two origins in either direction.
+        core.SetVirtualHostNameToFolderMapping("loungepad.player", Path.Combine(uiDir, "player"), CoreWebView2HostResourceAccessKind.DenyCors);
         ServeDataFolder(core);
+
+        // The page is the trust root for every bridge command, so the top frame must never be
+        // anything but it. A cross-origin frame can set top.location with a user activation, and a
+        // pad press is one; a target=_blank link in an embed would open a bare WebView2 window on
+        // the TV. Both are refused here rather than left to the page.
+        core.NavigationStarting += (_, e) =>
+        {
+            if (!e.Uri.StartsWith("https://loungepad.ui/", StringComparison.OrdinalIgnoreCase))
+            {
+                Log.Info($"Refused a navigation to {e.Uri}");
+                e.Cancel = true;
+            }
+        };
+        core.NewWindowRequested += (_, e) => e.Handled = true;
 
         _bridge = new UiBridge(this, core, _settings, _library, _displays, _scanner, _launcher, _keyboard, _windows, _themes, _updates);
         // Saving a theme file should show up in the launcher, not after a restart.
@@ -401,6 +420,22 @@ public partial class MainWindow : Window
         ["achievements"] = Paths.AchievementIconsDir,
     };
 
+    /// <summary>
+    /// The folders under the data folder the page may read. Everything else there -- settings.json
+    /// with its keys, library.json, the log, the account tokens, the owned-games list -- is the
+    /// host's and is never served. The host used to answer for the whole folder, which put every
+    /// secret one fetch away from anything running in the WebView.
+    /// </summary>
+    private static readonly HashSet<string> ServedFolders = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "covers", "themes",
+    };
+
+    /// <summary>The one origin the data host answers to. It was `*`, which let any frame inside the
+    /// WebView -- a video embed, say -- read covers and, before <see cref="ServedFolders"/>, the
+    /// settings file.</summary>
+    private const string PageOrigin = "https://loungepad.ui";
+
     /// <summary>Whether one of the pad-driven overlays (the Power Wheel, the in-game menu) is up
     /// in front of whatever was running. The bridge only pushes live hardware readings then.</summary>
     public bool OverlayActive => _overlayActive;
@@ -418,13 +453,24 @@ public partial class MainWindow : Window
                 var uri = new Uri(e.Request.Uri);
                 // Query is only ever a cache-busting stamp; the path alone names the file.
                 var rel = Uri.UnescapeDataString(uri.AbsolutePath).TrimStart('/');
-                var baseDir = Paths.DataDir;
                 var slash = rel.IndexOf('/');
                 var head = slash < 0 ? rel : rel[..slash];
+                string baseDir;
                 if (DataRoots.TryGetValue(head, out var other))
                 {
                     baseDir = other;
                     rel = slash < 0 ? "" : rel[(slash + 1)..];
+                }
+                else if (ServedFolders.Contains(head))
+                {
+                    baseDir = Path.Combine(Paths.DataDir, head);
+                    rel = slash < 0 ? "" : rel[(slash + 1)..];
+                }
+                else
+                {
+                    // A file at the root of the data folder, or a folder that is not on the list.
+                    e.Response = core.Environment.CreateWebResourceResponse(null, 404, "Not Found", "");
+                    return;
                 }
                 var full = Path.GetFullPath(Path.Combine(baseDir, rel.Replace('/', Path.DirectorySeparatorChar)));
 
@@ -439,8 +485,9 @@ public partial class MainWindow : Window
 
                 var type = ContentTypes.TryGetValue(Path.GetExtension(full), out var t) ? t : "application/octet-stream";
                 // Allow-Origin because the page is served from loungepad.ui: without it a theme
-                // could not fetch its own JSON, and fonts would be refused outright.
-                var headers = $"Content-Type: {type}\r\nAccess-Control-Allow-Origin: *\r\nCache-Control: no-cache\r\nAccept-Ranges: bytes";
+                // could not fetch its own JSON, and fonts would be refused outright. That one
+                // origin, not `*`: nothing else inside the WebView has any business here.
+                var headers = $"Content-Type: {type}\r\nAccess-Control-Allow-Origin: {PageOrigin}\r\nCache-Control: no-cache\r\nAccept-Ranges: bytes";
                 var length = new FileInfo(full).Length;
 
                 // A <video> asks for the file in pieces -- the first few hundred KB, then the

@@ -30,7 +30,14 @@ id = "d7caac270d6543ebb25ca428d26075f6"
 #   npx wrangler secret put IGDB_CLIENT_ID
 #   npx wrangler secret put IGDB_CLIENT_SECRET
 #   npx wrangler secret put SGDB_KEY
-#   npx wrangler secret put STEAM_API_KEY     (optional: enables /v1/owned, the Steam library import)
+# STEAM_API_KEY is no longer read: the routes that used it (/v1/owned, /v1/achievements) are gone.
+# Delete it with `npx wrangler secret delete STEAM_API_KEY` if it is still set.
 
+# Workers Logs keeps the worker's own console output. Invocation logs are off: they record every
+# request's URL, which is a game title or app id from somebody's library, and there is nothing in
+# them a console line does not say better.
 [observability]
 enabled = true
+[observability.logs]
+enabled = true
+invocation_logs = false

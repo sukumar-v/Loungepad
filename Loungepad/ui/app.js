@@ -1960,22 +1960,15 @@ function fadeMs(el) {
   return !isFinite(n) ? 0 : d.endsWith("ms") ? n : n * 1000;
 }
 
-/* YouTube's player API, fetched on the first YouTube trailer and never before: it is a script off
-   youtube.com, and a library with only Steam games should not load it at all. */
-let ytApi = null;
-function youTubeApi() {
-  if (ytApi) return ytApi;
-  ytApi = new Promise((resolve, reject) => {
-    if (window.YT && window.YT.Player) { resolve(window.YT); return; }
-    const prev = window.onYouTubeIframeAPIReady;
-    window.onYouTubeIframeAPIReady = () => { if (prev) prev(); resolve(window.YT); };
-    const s = document.createElement("script");
-    s.src = "https://www.youtube.com/iframe_api";
-    s.onerror = () => { ytApi = null; reject(new Error("YouTube player unavailable")); };
-    document.head.appendChild(s);
-  });
-  return ytApi;
-}
+/* YouTube's player never runs in this page. Its API is a script off youtube.com, and a script runs
+   with the authority of the page that loaded it -- here, the bridge and everything behind it. So
+   the player lives in ui/player/player.html on an origin of its own (https://loungepad.player in
+   the app; the same folder in the preview, where there is no second origin to be had), and this
+   page drives it through postMessage. One frame per surface, made on the first YouTube trailer
+   and never before: a library with only Steam games never loads it at all. */
+const YT_PLAYER_PAGE = HOST ? "https://loungepad.player/player.html" : "player/player.html";
+const YT_PLAYER_START_MS = 15000;   // a frame that never says ready (offline) is given up on
+const YT_STATE = { UNSTARTED: -1, ENDED: 0, PLAYING: 1, PAUSED: 2, BUFFERING: 3 };
 
 /* The two ways a film is shown, behind one small interface: load(url, at), play(), pause(),
    unload(), position(), setSound(on), loaded(), and `el`, the element that carries .playing. */
@@ -2027,70 +2020,97 @@ const YT_SHOW_DELAY_MS = 900;
 const YT_END_MARGIN_S = 1.2;
 
 function youTubeBackend(hostId, wrap, on) {
-  let player = null, ready = null, videoId = null, sound = true;
-  let showTimer = null, endWatch = null;
-  const hideCaptions = (p) => {
-    try { p.unloadModule("captions"); } catch (e) { /* older player */ }
-    try { p.unloadModule("cc"); } catch (e) { /* older player */ }
+  let frame = null, origin = null, ready = null, videoId = null, sound = true;
+  let showTimer = null, endWatch = false;
+  // The player's clock, as it last reported it (every 250 ms): the viewer reads position and
+  // duration synchronously, and a frame on another origin cannot be asked synchronously.
+  let last = { t: 0, d: 0, s: YT_STATE.UNSTARTED };
+  const stopWatching = () => { clearTimeout(showTimer); showTimer = null; endWatch = false; };
+  const post = (m) => { if (frame && frame.contentWindow && origin) frame.contentWindow.postMessage(m, origin); };
+
+  // Only the frame this backend made, and only from the origin it was given. Anything else that
+  // posts to the page -- an embed inside the player's own frame, say -- is not ours and is dropped.
+  const onMessage = (e) => {
+    if (!frame || e.source !== frame.contentWindow || e.origin !== origin) return;
+    const m = e.data;
+    if (!m || typeof m.ev !== "string") return;
+    if (m.ev === "state") {
+      if (m.s === YT_STATE.PLAYING) {
+        stopWatching();
+        endWatch = true;
+        showTimer = setTimeout(() => { showTimer = null; on.playing(); }, YT_SHOW_DELAY_MS);
+      } else if (m.s === YT_STATE.ENDED) {
+        stopWatching();
+        on.ended();
+      } else if (m.s === YT_STATE.PAUSED || m.s === YT_STATE.UNSTARTED) {
+        stopWatching();
+      }
+    } else if (m.ev === "time") {
+      last = { t: Number(m.t) || 0, d: Number(m.d) || 0, s: typeof m.s === "number" ? m.s : last.s };
+      if (endWatch && last.d > 0 && last.t >= last.d - YT_END_MARGIN_S) { stopWatching(); on.ended(); }
+    } else if (m.ev === "error") {
+      stopWatching();
+      on.error();
+    }
   };
-  const stopWatching = () => { clearTimeout(showTimer); showTimer = null; clearInterval(endWatch); endWatch = null; };
-  const create = () => ready || (ready = youTubeApi().then(YT => new Promise(resolve => {
-    player = new YT.Player(hostId, {
-      width: "100%", height: "100%",
-      playerVars: {
-        controls: 0, disablekb: 1, fs: 0, iv_load_policy: 3, modestbranding: 1, rel: 0,
-        playsinline: 1, autoplay: 0, cc_load_policy: 0, hl: "en", origin: location.origin,
-      },
-      events: {
-        onReady: () => { hideCaptions(player); resolve(player); },
-        onStateChange: (e) => {
-          if (e.data === YT.PlayerState.PLAYING) {
-            hideCaptions(player);
-            stopWatching();
-            showTimer = setTimeout(() => { showTimer = null; on.playing(); }, YT_SHOW_DELAY_MS);
-            endWatch = setInterval(() => {
-              let d = 0, t = 0;
-              try { d = player.getDuration() || 0; t = player.getCurrentTime() || 0; } catch (err) { return; }
-              if (d > 0 && t >= d - YT_END_MARGIN_S) { stopWatching(); on.ended(); }
-            }, 250);
-          } else if (e.data === YT.PlayerState.ENDED) {
-            stopWatching();
-            on.ended();
-          } else if (e.data === YT.PlayerState.PAUSED || e.data === YT.PlayerState.UNSTARTED) {
-            stopWatching();
-          }
-        },
-        onError: () => { stopWatching(); on.error(); },
-      },
-    });
-  })));
-  const applySound = (p) => { if (sound) p.unMute(); else p.mute(); p.setVolume(Math.round(TRAILER_VOLUME * 100)); };
+
+  const discard = () => {
+    window.removeEventListener("message", onMessage);
+    if (frame) { const host = document.createElement("div"); host.id = hostId; frame.replaceWith(host); }
+    frame = null; origin = null; ready = null;
+  };
+
+  const create = () => ready || (ready = new Promise((resolve, reject) => {
+    const host = $(hostId);
+    if (!host) { reject(new Error("no host")); return; }
+    const url = new URL(YT_PLAYER_PAGE, location.href);
+    // The player page answers this origin and no other, and this page listens for that one.
+    url.searchParams.set("o", location.origin);
+    origin = url.origin;
+    frame = document.createElement("iframe");
+    frame.id = hostId;
+    frame.src = url.href;
+    frame.setAttribute("allow", "autoplay; encrypted-media");
+    frame.setAttribute("title", "Trailer");
+    frame.tabIndex = -1;
+    let settled = false;
+    const readyListener = (e) => {
+      if (!frame || e.source !== frame.contentWindow || e.origin !== origin) return;
+      if (e.data && e.data.ev === "ready") { settled = true; window.removeEventListener("message", readyListener); resolve(); }
+      else if (e.data && e.data.ev === "error" && !settled) { settled = true; window.removeEventListener("message", readyListener); discard(); reject(new Error("YouTube player unavailable")); }
+    };
+    window.addEventListener("message", readyListener);
+    window.addEventListener("message", onMessage);
+    setTimeout(() => { if (!settled) { settled = true; window.removeEventListener("message", readyListener); discard(); reject(new Error("YouTube player did not start")); } }, YT_PLAYER_START_MS);
+    host.replaceWith(frame);
+  }));
+  const applySound = () => { post({ cmd: sound ? "unmute" : "mute" }); post({ cmd: "volume", v: Math.round(TRAILER_VOLUME * 100) }); };
   return {
     el: wrap,
     load(url) {
       const id = youTubeId(url);
-      create().then(p => {
-        applySound(p);
+      create().then(() => {
+        applySound();
         if (videoId === id) return;
         videoId = id;
         // Cued rather than loaded: loading plays at once, and the clock has not run yet.
-        p.cueVideoById(id);
+        post({ cmd: "cue", id });
       }).catch(() => on.error());
     },
-    play() { create().then(p => { applySound(p); p.playVideo(); }).catch(() => { /* no player */ }); },
+    play() { create().then(() => { applySound(); post({ cmd: "play" }); }).catch(() => { /* no player */ }); },
     // A stop is silence, not a pause: the frame goes on moving under the fade and is stopped
     // after it, because a paused embed puts YouTube's button back. The viewer's pause is a real
     // one, and the button it brings is the price of the user asking for a pause.
-    quiet() { stopWatching(); if (player) try { player.mute(); } catch (e) { /* not ready */ } },
-    pause() { if (player) try { player.pauseVideo(); } catch (e) { /* not ready */ } },
-    resume() { if (player) try { player.playVideo(); } catch (e) { /* not ready */ } },
-    paused() { try { return !player || player.getPlayerState() !== 1 && player.getPlayerState() !== 3; } catch (e) { return true; } },
-    seek(d) { if (player) try { player.seekTo(Math.max(0, (player.getCurrentTime() || 0) + d), true); } catch (e) { /* not ready */ } },
-    duration() { try { return player ? player.getDuration() || 0 : 0; } catch (e) { return 0; } },
-    unload() { stopWatching(); videoId = null; if (player) try { player.stopVideo(); } catch (e) { /* not ready */ } },
+    quiet() { stopWatching(); post({ cmd: "mute" }); },
+    pause() { post({ cmd: "pause" }); },
+    resume() { post({ cmd: "play" }); },
+    paused() { return !frame || (last.s !== YT_STATE.PLAYING && last.s !== YT_STATE.BUFFERING); },
+    seek(d) { post({ cmd: "seek", t: Math.max(0, last.t + d) }); },
+    duration() { return frame ? last.d : 0; },
+    unload() { stopWatching(); videoId = null; last = { t: 0, d: 0, s: YT_STATE.UNSTARTED }; post({ cmd: "stop" }); },
     reload() { /* a YouTube error is a verdict on the video, not the line; nothing to retry */ },
-    position() { try { return player ? player.getCurrentTime() || 0 : 0; } catch (e) { return 0; } },
-    setSound(s) { sound = s; if (player) try { applySound(player); } catch (e) { /* not ready */ } },
+    position() { return frame ? last.t : 0; },
+    setSound(s) { sound = s; if (frame) applySound(); },
     loaded() { return !!videoId; },
   };
 }
@@ -3781,7 +3801,7 @@ function allSettingsRows() {
   rows.push({ section: "STORES & LAUNCHERS", cat: "library" });
   rows.push(...storeAccountRows(s, set));
   rows.push(secretRow("Steam Web API key", s,
-    "Optional. Only needed if your Steam profile keeps its game details private. Free from steamcommunity.com/dev/apikey — any domain name will do",
+    "The other way to read the games you own and your achievements, instead of the Steam sign-in above. Free from steamcommunity.com/dev/apikey — any domain name will do. Your account's data goes to Steam and nowhere else either way",
     () => s.steamApiKey, v => set(() => s.steamApiKey = v)));
   rows.push(secretRow("Xbox sign-in app id", s,
     "Optional. Only if Microsoft stops accepting the Xbox app's own sign-in: the client id of an app registration of your own. See the README",
@@ -3825,10 +3845,10 @@ function allSettingsRows() {
     "Optional. Register an application at dev.twitch.tv to use your own instead of the shared service",
     () => s.igdbClientId, v => set(() => s.igdbClientId = v)));
   rows.push(secretRow("IGDB client secret", s,
-    "The secret from the same Twitch application. Stored in plain text in settings.json",
+    "The secret from the same Twitch application. Kept sealed for your Windows account in settings.json",
     () => s.igdbClientSecret, v => set(() => s.igdbClientSecret = v)));
   rows.push({
-    name: "Metadata service", hint: "Where the shared lookups go. Leave blank for the built-in one",
+    name: "Metadata service", hint: "Where the shared lookups go: a game's title and Steam id, never anything about you. Leave blank for the built-in one",
     type: "action", label: s.metadataEndpoint ? "Custom" : "Default",
     action: () => openInput("METADATA SERVICE URL", s.metadataEndpoint || "",
       v => set(() => s.metadataEndpoint = v.trim())),
@@ -4212,18 +4232,26 @@ function themeSettingRows(theme, s, set) {
 }
 
 /*
- * A credential. Shown masked because these rows sit on a TV, which is the one screen in the house
- * most likely to have someone else looking at it -- but the last four characters stay visible so
- * you can tell a key that is set from a key that is set *wrong* without clearing it to find out.
- *
- * A is the only way in, and it opens the usual text prompt with the real value to edit.
+ * A credential. The page never holds one: the host keeps every key sealed for the Windows account
+ * and sends the page only a marker that says a key is set (SECRET_SET, AppSettings.ForPage on the
+ * host), so these rows -- which sit on a TV, the one screen in the house most likely to have
+ * someone else looking at it -- can show "Set" and nothing more. A opens the text prompt EMPTY:
+ * a new key replaces the old one, leaving the field empty keeps it, and typing "clear" removes it.
+ * The marker goes back to the host untouched on a save, and the host reads it as "keep".
  */
+const SECRET_SET = "dpapi:set";
 function secretRow(name, s, hint, get, setV) {
   const cur = () => get() || "";
+  const isSet = () => !!cur();
   return {
     name, hint, type: "action",
-    label: cur() ? (cur().length <= 4 ? "••••" : "••••" + cur().slice(-4)) : "Not set",
-    action: () => openInput(name.toUpperCase(), cur(), v => setV(v.trim())),
+    label: isSet() ? "Set" : "Not set",
+    action: () => openInput(name.toUpperCase(), "", v => {
+      const typed = v.trim();
+      if (!typed) return;                                  // empty keeps whatever is set
+      if (typed.toLowerCase() === "clear") { setV(""); return; }
+      setV(typed);
+    }, { note: isSet() ? "A new key replaces the one that is set. Leave empty to keep it, or type clear to remove it" : "Pasted or typed here, and kept sealed on this PC. It is never shown again" }),
   };
 }
 /* The state of the Steam link, in one line under its toggle. It names the account because the
@@ -4264,10 +4292,11 @@ function storeRow(store, name, offHint) {
   };
 }
 
-/* Steam's sign-in, for a profile that keeps its games private. Without it Steam's library comes
-   through the shared service, which only a public profile answers; with it, the account's own token
-   reads it whatever the privacy setting says (SteamWebSession on the host). Signing in turns the
-   switch above on, as signing in to any store does. */
+/* Steam's sign-in: the account's own token reads its library and achievements from Steam whatever
+   the profile's privacy says (SteamWebSession on the host). It is one of the two ways in, the other
+   being a Web API key of the user's own; the shared service no longer carries the account's data
+   at all, so nothing identifying leaves for it. Signing in turns the switch above on, as signing
+   in to any store does. */
 function steamSignInRow() {
   const st = S.stores && S.stores.steam;
   const signedIn = !!(st && st.signedIn);
@@ -4275,7 +4304,7 @@ function steamSignInRow() {
   const who = (st && st.user) || a.personaName || a.steamId || "your account";
   const why = (st && st.error) || a.error;
   const hint = !signedIn
-    ? "For a profile that keeps its game details private, or one you would rather not make public: sign in on Steam's own page and your library is read with that sign-in. Your password never reaches Loungepad"
+    ? "Sign in on Steam's own page and the games you own and your achievements are read from Steam with that sign-in, whatever your profile's privacy settings. Your password never reaches Loungepad, and your account's data goes to Steam and nowhere else"
     : why ? `Signed in as ${who} · ${why}`
     : a.fetchedAt ? `Signed in as ${who} · ${a.ownedCount} game${a.ownedCount === 1 ? "" : "s"} in your library`
     : `Signed in as ${who} · fetching your library…`;
@@ -5775,12 +5804,16 @@ $("overlay-confirm").addEventListener("click", (e) => { if (e.target.id === "ove
 
 /* ============================== text input overlay ============================== */
 
-function openInput(title, value, onConfirm) {
+function openInput(title, value, onConfirm, opts = {}) {
   inputOpen = true;
   inputConfirm = onConfirm;
   $("inputTitle").textContent = title;
   const field = $("inputField");
   field.value = value;
+  // A line under the field for the one prompt that needs explaining: a key that is set and is
+  // not shown (see secretRow). Hidden for every other prompt.
+  const note = $("inputNote");
+  if (note) { note.textContent = opts.note || ""; note.hidden = !opts.note; }
   showOverlay("overlay-input");
   send({ cmd: "focusPage" });   // see openSearch: no keystrokes reach the page without it
   setTimeout(() => { field.focus(); field.select(); }, 50);

@@ -117,7 +117,7 @@ function unlockIcons(unlocks, max) {
   const more = unlocks.length - shown.length;
   return `<span class="unlock-icons">${shown.map(u => {
     const src = achIconSrc(u.item.iconFile, u.item.icon);
-    return `<i class="ach-icon tiny"${src ? ` style="background-image:url('${src}')"` : ""}>${src ? "" : iconSvg("trophy")}</i>`;
+    return `<i class="ach-icon tiny"${achIconStyle(src)}>${src ? "" : iconSvg("trophy")}</i>`;
   }).join("")}${more > 0 ? `<b>+${more}</b>` : ""}</span>`;
 }
 
@@ -269,6 +269,15 @@ function achIconSrc(file, url) {
   if (file) return HOST ? `https://loungepad.data/achievements/${encodeURIComponent(file)}` : file;
   return url || "";
 }
+
+/* The icon as a style attribute, or nothing. The URL is a store's or the metadata service's
+   answer being written into markup, so it is escaped like any other text from outside; the host
+   has already refused anything but a plain https URL (AchievementService.SafeIconUrl), and this
+   is the second lock. `extra` is any other declaration the element needs in the same attribute. */
+function achIconStyle(src, extra = "") {
+  if (src) return ` style="${extra}background-image:url('${esc(src)}')"`;
+  return extra ? ` style="${extra}"` : "";
+}
 /* The picture for an item as it stands: the store's greyed version when there is one for a
    locked achievement, else the colour icon, which the stylesheet greys. */
 function achItemIcon(a) {
@@ -397,7 +406,7 @@ function renderAchievements() {
     if (a.unlocked) right.push(`<span class="ach-when">${esc(a.unlockedAt ? fmtDate(a.unlockedAt) : "Unlocked")}</span>`);
     else right.push(`<span class="ach-when ach-locked">${a.score ? esc(String(a.score)) + (set && set.source === "xbox" ? " G" : "") : "Locked"}</span>`);
     el.innerHTML =
-      `<div class="ach-icon${icon ? "" : " none"}"${icon && !secret ? ` style="background-image:url('${icon}')"` : ""}>${secret || !icon ? iconSvg("trophy") : ""}</div>` +
+      `<div class="ach-icon${icon ? "" : " none"}"${icon && !secret ? achIconStyle(icon) : ""}>${secret || !icon ? iconSvg("trophy") : ""}</div>` +
       `<div class="ach-text"><div class="ach-name">${esc(name)}</div><div class="ach-desc">${esc(desc)}</div></div>` +
       `<div class="ach-right mono">${right.join("")}</div>`;
     el.addEventListener("mouseenter", () => { if (hoverEnabled() && achState && achState.idx !== i) { achState.idx = i; paintAchFocus(); } });
@@ -929,7 +938,7 @@ function pinTiles(b, maxTiles) {
   // Chrome painted a column-reverse stack the other way round without the explicit order.
   const tiles = known.slice(0, fit).map((u, i) => {
     const src = achIconSrc(u.item.iconFile, u.item.icon);
-    return src ? `<i class="pin-tile" style="z-index:${i};background-image:url('${src}')"></i>` : `<i class="pin-tile none" style="z-index:${i}">${iconSvg("trophy")}</i>`;
+    return src ? `<i class="pin-tile"${achIconStyle(src, `z-index:${i};`)}></i>` : `<i class="pin-tile none" style="z-index:${i}">${iconSvg("trophy")}</i>`;
   });
   const rest = total - tiles.length;
   if (rest > 0) tiles.push(`<b class="pin-tile more" style="z-index:${tiles.length}">+${rest > 99 ? 99 : rest}</b>`);
@@ -1213,7 +1222,7 @@ function activeDays() {
 function unlockChip(u, sub) {
   const src = achIconSrc(u.item.iconFile, u.item.icon);
   const band = rarityBand(u.item.percent);
-  return `<span class="day-unlock"><i class="ach-icon tiny"${src ? ` style="background-image:url('${src}')"` : ""}>${src ? "" : iconSvg("trophy")}</i>` +
+  return `<span class="day-unlock"><i class="ach-icon tiny"${achIconStyle(src)}>${src ? "" : iconSvg("trophy")}</i>` +
     `<span class="day-unlock-text"><span class="day-unlock-name">${esc(u.item.name)}</span>` +
     `<span class="day-unlock-sub mono">${esc(sub !== undefined ? sub : fmtClock(u.at))}${band ? " · " + esc(band.label.toUpperCase()) : ""}</span></span></span>`;
 }
@@ -1418,7 +1427,7 @@ function achievementRow(r) {
   const at = new Date(r.at);
   return {
     name: r.item.name, hint: `${r.title} · ${fmtDayName(dayKey(at))} at ${fmtClock(at)}`,
-    iconHtml: `<div class="ach-icon small"${src ? ` style="background-image:url('${src}')"` : ""}>${src ? "" : iconSvg("trophy")}</div>`,
+    iconHtml: `<div class="ach-icon small"${achIconStyle(src)}>${src ? "" : iconSvg("trophy")}</div>`,
     valueHtml: band ? `<span class="ach-rarity" data-band="${band.id}">${esc(fmtPct(r.item.percent))} · ${esc(band.label.toUpperCase())}</span>` : "",
     action: () => { if (gameById(r.gameId)) openAchievements(r.gameId, "stats", r.item.id); },
   };
@@ -1712,7 +1721,7 @@ function renderDay() {
       el.innerHTML =
         `<div class="day-time mono">${esc(fmtClock(u.at))}</div>` +
         `<div class="day-rail"><i></i></div>` +
-        `<div class="ach-icon small"${src ? ` style="background-image:url('${src}')"` : ""}>${src ? "" : iconSvg("trophy")}</div>` +
+        `<div class="ach-icon small"${achIconStyle(src)}>${src ? "" : iconSvg("trophy")}</div>` +
         `<div class="day-main"><div class="day-name">${esc(u.item.name)}</div><div class="day-sub">${esc(sub)}</div></div>` +
         (band ? `<span class="ach-rarity mono" data-band="${band.id}">${esc(fmtPct(u.item.percent))} · ${esc(band.label.toUpperCase())}</span>` : "");
     }
@@ -1848,7 +1857,7 @@ function activitySettingsRows(s, set) {
     const toLibrary = () => { setSettingsTab("library"); enterSettingsPane("rows"); };
     rows.push({
       name: "Steam", hint: a && a.steamId
-        ? `As ${a.personaName || a.steamId}, through the metadata service or your own Web API key. Steam has to be able to see the profile's game details: make them public, or add your key under Library`
+        ? `As ${a.personaName || a.steamId}, read from Steam with your Steam sign-in or your own Web API key, both under Library. Your account's data goes to Steam and nowhere else`
         : "No Steam login was found on this PC. Sign in to Steam once",
       type: "action", label: "Library", action: toLibrary,
     });
@@ -1860,7 +1869,7 @@ function activitySettingsRows(s, set) {
       type: "action", label: s.retroAchievementsUser ? s.retroAchievementsUser : "Not set",
       action: () => openInput("RETROACHIEVEMENTS USERNAME", s.retroAchievementsUser || "", v => set(() => s.retroAchievementsUser = v.trim())),
     });
-    rows.push(secretRow("RetroAchievements web API key", s, "From retroachievements.org → Settings → Keys. Plain text in settings.json, like the other keys",
+    rows.push(secretRow("RetroAchievements web API key", s, "From retroachievements.org → Settings → Keys. Kept sealed for your Windows account, like the other keys",
       () => s.retroAchievementsKey, v => set(() => s.retroAchievementsKey = v)));
   }
   return rows;

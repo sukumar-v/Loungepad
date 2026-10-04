@@ -3,6 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- This page is the trust root for every bridge command, so only its own scripts may run in it:
+     no inline script, nothing from the network. Pictures and films come from wherever the stores
+     keep them (https:), styles and fonts from the page, the data host and Google Fonts, and the
+     one frame allowed is the YouTube player's own origin (ui/player). -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' https://loungepad.data; script-src 'self'; style-src 'self' 'unsafe-inline' https://loungepad.data https://fonts.googleapis.com; font-src 'self' data: https://loungepad.data https://fonts.gstatic.com; img-src 'self' data: blob: https:; media-src 'self' blob: https:; frame-src 'self' https://loungepad.player; connect-src 'self' https://loungepad.data; object-src 'none'; base-uri 'self'; form-action 'none'">
 <title>Loungepad</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -493,6 +498,7 @@
     <div class="quick-card">
       <div class="quick-title mono" id="inputTitle">NAME</div>
       <input id="inputField" class="text-input" type="text" autocomplete="off" spellcheck="false">
+      <div class="input-note" id="inputNote" hidden></div>
       <div class="input-hint" id="inputHint"></div>
     </div>
   </div>

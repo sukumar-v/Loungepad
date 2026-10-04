@@ -1,9 +1,75 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Loungepad.Models;
 
+/// <summary>
+/// A string setting that is a credential. On disk it is DPAPI-sealed for the Windows account
+/// ("dpapi:" + base64), so settings.json can be copied, backed up or read by another program
+/// without giving the key away; in memory it is the plain value every caller already expects.
+/// A plain value in the file (written by an older build, or pasted in by hand) still reads, and
+/// is sealed on the next save. A value another Windows account sealed reads as empty.
+///
+/// The page never gets the value at all: <see cref="AppSettings.ForPage"/> swaps a set key for
+/// <see cref="Redacted"/>, which says only that one is set, and <see cref="IsRedacted"/> lets the
+/// save path leave the stored key alone when that marker comes back.
+/// </summary>
+public sealed class ProtectedStringConverter : JsonConverter<string>
+{
+    private const string Prefix = "dpapi:";
+    /// <summary>What the page is shown in place of a key that is set.</summary>
+    public const string Redacted = "dpapi:set";
+
+    public override string Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        var raw = reader.TokenType == JsonTokenType.String ? reader.GetString() ?? "" : "";
+        if (raw == Redacted || !raw.StartsWith(Prefix, StringComparison.Ordinal)) return raw;
+        try
+        {
+            var sealedBytes = Convert.FromBase64String(raw[Prefix.Length..]);
+            return Encoding.UTF8.GetString(ProtectedData.Unprotect(sealedBytes, null, DataProtectionScope.CurrentUser));
+        }
+        catch
+        {
+            // Sealed by another Windows account, or damaged. The user pastes the key again, which
+            // is the same outcome as a key that was never set.
+            return "";
+        }
+    }
+
+    public override void Write(Utf8JsonWriter writer, string value, JsonSerializerOptions options)
+    {
+        if (string.IsNullOrEmpty(value) || value.StartsWith(Prefix, StringComparison.Ordinal))
+        {
+            writer.WriteStringValue(value ?? "");
+            return;
+        }
+        var sealedBytes = ProtectedData.Protect(Encoding.UTF8.GetBytes(value), null, DataProtectionScope.CurrentUser);
+        writer.WriteStringValue(Prefix + Convert.ToBase64String(sealedBytes));
+    }
+}
+
 public class AppSettings
 {
+    /// <summary>True for the marker the page is shown in place of a key, which must never be
+    /// stored as if it were one.</summary>
+    public static bool IsRedacted(string? value) => value == ProtectedStringConverter.Redacted;
+
+    /// <summary>A copy for the page: every credential that is set becomes the "set" marker, so the
+    /// page can show that there is one without ever holding it.</summary>
+    public AppSettings ForPage()
+    {
+        var copy = (AppSettings)MemberwiseClone();
+        static string Mark(string v) => string.IsNullOrEmpty(v) ? "" : ProtectedStringConverter.Redacted;
+        copy.IgdbClientSecret = Mark(IgdbClientSecret);
+        copy.SteamGridDbKey = Mark(SteamGridDbKey);
+        copy.SteamApiKey = Mark(SteamApiKey);
+        copy.RetroAchievementsKey = Mark(RetroAchievementsKey);
+        return copy;
+    }
+
     // Appearance
     /// <summary>
     /// The one colour the UI is built around -- focus rings, active tabs, sliders. "#RRGGBB";
@@ -39,13 +105,15 @@ public class AppSettings
     // none of which asks the user for anything.
     //
     // The three below are an override for people who would rather use their own credentials than
-    // someone else's server. When set they take priority over the service. Stored in plain text in
-    // settings.json, which is what Playnite does too, but worth knowing before pasting a secret in.
+    // someone else's server. When set they take priority over the service. The secrets are sealed
+    // in settings.json for this Windows account (ProtectedStringConverter) and never reach the page.
     /// <summary>Twitch application client id, for IGDB. Free, non-commercial use only.</summary>
     public string IgdbClientId { get; set; } = "";
     /// <summary>Twitch application client secret, for IGDB.</summary>
+    [JsonConverter(typeof(ProtectedStringConverter))]
     public string IgdbClientSecret { get; set; } = "";
     /// <summary>SteamGridDB API key. Art only, and the best source of it for non-Steam games.</summary>
+    [JsonConverter(typeof(ProtectedStringConverter))]
     public string SteamGridDbKey { get; set; } = "";
     /// <summary>Overrides the shipped metadata service endpoint. Empty means use the built-in one;
     /// this exists for self-hosting and for testing, not as something anyone need ever set.</summary>
@@ -68,9 +136,11 @@ public class AppSettings
     /// promises "nothing phoned anywhere" for the plain scan.
     /// </summary>
     public bool SteamShowOwned { get; set; }
-    /// <summary>The user's own Steam Web API key, free from steamcommunity.com/dev/apikey. Only
-    /// needed when the profile keeps its game details private, which the shared key cannot read;
-    /// a key issued to the profile's owner can. Plain text in settings.json, like the rest.</summary>
+    /// <summary>The user's own Steam Web API key, free from steamcommunity.com/dev/apikey. One of
+    /// the two ways to read the account's owned games and achievements, the Steam sign-in being
+    /// the other; the shared service no longer carries either, so nothing identifying leaves for
+    /// it. Sealed in settings.json like the other keys.</summary>
+    [JsonConverter(typeof(ProtectedStringConverter))]
     public string SteamApiKey { get; set; } = "";
 
     // Other stores
@@ -110,8 +180,9 @@ public class AppSettings
     /// <summary>The unlocked share on library tiles and in the hero text, for games that have any.</summary>
     public bool AchievementsOnTiles { get; set; } = true;
     /// <summary>RetroAchievements username, for the achievements of emulated games. With the key
-    /// below, free from retroachievements.org/settings. Plain text in settings.json, like the rest.</summary>
+    /// below, free from retroachievements.org/settings. The key is sealed like the other keys.</summary>
     public string RetroAchievementsUser { get; set; } = "";
+    [JsonConverter(typeof(ProtectedStringConverter))]
     public string RetroAchievementsKey { get; set; } = "";
 
     // Emulation

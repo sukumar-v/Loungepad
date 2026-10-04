@@ -152,8 +152,8 @@ Loungepad/
   own time, **◂ ▸** to the next day with anything in it. A game's session rows show what each
   unlocked, and a session's charts mark every unlock at the moment it happened.
 - **Achievements** — each game's list from its own store, asked by the id the library already
-  has, never by title: Steam by app id through the metadata service (or your own Web API key
-  under Library, if the profile keeps its game details private), Xbox by title id, Epic by
+  has, never by title: Steam by app id straight from Steam, with the Steam sign-in or your own
+  Web API key under Library (never through the metadata service), Xbox by title id, Epic by
   catalogue namespace and GOG by product id through their sign-ins, and ROMs through
   RetroAchievements (username and web API key under Settings → Stats), matched by the ROM's
   hash where the system allows it and by title otherwise. Lists are fetched in the background

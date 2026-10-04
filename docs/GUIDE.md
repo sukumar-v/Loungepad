@@ -121,15 +121,14 @@ Anything the scanners drag in that isn't a game (benchmarks, wallpaper tools, re
 gets hidden with one button.
 
 Turn on **Show games you own but haven't installed** under Settings → Library and your whole Steam
-library comes in too, the way Playnite's Steam integration does it. The account is read off the
-Steam client's own login, so there is nothing to sign into; anything not on disk sits greyed out
-in the grid, and pressing A on one hands it to Steam to install — the tile turns playable the
-moment the download finishes. Steam's default privacy settings are enough. For a profile that
-keeps its game details private, or one you would rather not make public, use **Steam sign-in**
-under the toggle: you sign in on Steam's own page, and the library is read with that sign-in, so
-nothing has to be made public and Loungepad never sees your password. A free
-[Steam Web API key](https://steamcommunity.com/dev/apikey) in the row below does the same job
-without signing in.
+library comes in too, the way Playnite's Steam integration does it. Anything not on disk sits
+greyed out in the grid, and pressing A on one hands it to Steam to install — the tile turns
+playable the moment the download finishes. Steam has to be asked for the list, and it is asked
+with your own credentials and nothing else: use **Steam sign-in** under the toggle (you sign in on
+Steam's own page, the library is read with that sign-in whatever your profile's privacy settings,
+and Loungepad never sees your password), or paste a free
+[Steam Web API key](https://steamcommunity.com/dev/apikey) into the row below. Your achievements
+come the same way. Nothing about your account goes anywhere but Steam.
 
 **Epic, GOG and Xbox** work the way they do in Playnite: sign in to each store once, from
 Settings → Library, and its library is listed here. The sign-in is the store's own web page in a

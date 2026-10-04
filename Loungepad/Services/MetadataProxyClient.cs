@@ -32,9 +32,21 @@ public interface IArtProvider
 /// Note that the strict title check still happens *here*, on every response, even though the proxy
 /// applies one of its own. The proxy is a convenience, not an authority: if it is ever wrong,
 /// stale or replaced, it still cannot put another game's art on a tile.
+///
+/// What the service is sent is a game's title and, when there is one, its Steam app id and the
+/// IGDB platform ids of a ROM's system -- about a game, never about the person. The owned-games
+/// and achievements routes it once had took a SteamID; they are gone from both ends.
 /// </summary>
 public class MetadataProxyClient : IFactsProvider, IArtProvider
 {
+    /// <summary>
+    /// Sent with every request so the service can refuse the drive-by traffic that only knows its
+    /// URL -- a scraper, a bot, somebody else's launcher -- before it costs an upstream call. It is
+    /// a speed bump and not a secret: the value is in the binary. The service checks for it.
+    /// </summary>
+    public const string ClientHeader = "X-Loungepad-Client";
+    public const string ClientHeaderValue = "1";
+
     /// <summary>
     /// Where a shipped build looks, and the reason installing Loungepad comes with no setup. Set
     /// to empty to turn the proxy tier off entirely; a user can override it in Settings, and their
@@ -153,7 +165,11 @@ public class MetadataProxyClient : IFactsProvider, IArtProvider
             // A worker that predates the parameter ignores it and answers by title alone, which
             // is what every non-Steam game got before ROMs existed -- a downgrade, not a failure.
             if (platforms is { Count: > 0 }) url += $"&platform={string.Join(",", platforms)}";
-            using var res = await _http.GetAsync(url, ct);
+            // On the request rather than the client: the client is shared with Steam's CDN, which
+            // has no business seeing the header.
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            req.Headers.TryAddWithoutValidation(ClientHeader, ClientHeaderValue);
+            using var res = await _http.SendAsync(req, ct);
 
             // 404 is the service saying "no confident answer", which is an ordinary outcome.
             if (res.StatusCode == System.Net.HttpStatusCode.NotFound) return null;

@@ -6,18 +6,25 @@
  * exists for the same reason: a desktop binary cannot keep a secret, and Twitch's terms say the
  * client secret must never be exposed to users.
  *
- * Three endpoints, all GET:
+ * Two endpoints, all GET, both about a game and never about a person:
  *
  *   /v1/facts?title=<title>   description, developer, genres, release date, critic score
  *   /v1/art?title=<title>     portrait / tile / hero / logo image URLs
- *   /v1/owned?steamid=<id>    the games a Steam account owns, for the uninstalled half of a
- *                             library -- the one route that is not cached, see ownedGames
- *   /v1/achievements?steamid=<id>&appid=<id>
- *                             one game's achievements for one account: the schema, the account's
- *                             unlocks and the global rarity, in one answer; see steamAchievements
  *
- * The first two may answer 404, which means "no confident answer", not "something broke". The
- * launcher treats a 404 and a network failure identically: it keeps whatever art it already had.
+ * Both take an optional appid (a Steam app id) and facts takes an optional platform list; both
+ * may answer 404, which means "no confident answer", not "something broke". The launcher treats a
+ * 404 and a network failure identically: it keeps whatever art it already had.
+ *
+ * There used to be two more, /v1/owned and /v1/achievements, which took a SteamID and read that
+ * account's library and unlocks with a Steam key held here. They are gone, on both ends: they were
+ * the only routes that saw anything identifying, they let anyone with the URL look up any Steam
+ * account through this service's key, and the launcher reads both from Steam directly with the
+ * user's own sign-in or key now. Nothing this service receives names a user, and nothing it
+ * stores is keyed on one.
+ *
+ * Every request has to carry the launcher's client header (CLIENT_HEADER). It is a speed bump,
+ * not a secret -- the value is in the shipped binary -- but it turns away the scrapers and bots
+ * that only know the URL before they cost an upstream call or a KV write.
  *
  * The cache is the whole economy of this service. IGDB allows 4 requests a second across the
  * entire credential -- not per user -- so an uncached proxy would fall over the moment more than
@@ -33,6 +40,9 @@ const SCHEMA = "v7";                   // bump when a fetcher changes shape or i
                                        // rules; it is part of every cache key, so stale answers retire
 const RATE_LIMIT = 240;                // requests per IP per window
 const RATE_WINDOW = 60;                // seconds
+// The header every launcher sends (MetadataProxyClient.ClientHeader on the host side).
+const CLIENT_HEADER = "x-loungepad-client";
+const CLIENT_VALUE = "1";
 
 export default {
   async fetch(request, env, ctx) {
@@ -40,22 +50,12 @@ export default {
 
     if (request.method !== "GET") return json({ error: "method not allowed" }, 405);
     if (url.pathname === "/v1/health") return json({ ok: true });
-    if (url.pathname === "/v1/owned") {
-      try { return await ownedGames(env, request, url); }
-      catch (err) {
-        console.error(`/v1/owned: ${err && err.message}`);
-        return json({ error: "upstream failed" }, 502);
-      }
-    }
-    if (url.pathname === "/v1/achievements") {
-      try { return await steamAchievements(env, request, url); }
-      catch (err) {
-        console.error(`/v1/achievements: ${err && err.message}`);
-        return json({ error: "upstream failed" }, 502);
-      }
-    }
+    if (request.headers.get(CLIENT_HEADER) !== CLIENT_VALUE) return json({ error: "forbidden" }, 403);
 
-    const title = (url.searchParams.get("title") || "").trim();
+    // The title is quoted into an APIcalypse query (igdbFacts). Quotes, backslashes and control
+    // characters are the only things that could change what the query means, and no game is
+    // named with them; the launcher's own strict match rejects anything that comes back wrong.
+    const title = (url.searchParams.get("title") || "").replace(/["\\\u0000-\u001f\u007f]/g, " ").trim();
     // A Steam app id, when the caller has one. Worth far more than a title: both upstreams can be
     // asked by it directly, so there is no name matching and therefore no way to answer with a
     // different game. The title is still sent alongside as the fallback.
@@ -190,7 +190,7 @@ async function igdbFacts(env, title, appid, platform) {
   // "(a, b)" is APIcalypse for "released on any of these", which is the right question for a
   // ROM: the SNES folder's "Doom" is whichever DOOM has an SNES release.
   const where = platform ? ` where platforms = (${platform});` : "";
-  const all = await igdbGames(env, token, `search "${title.replace(/"/g, " ")}";${where}`, 20);
+  const all = await igdbGames(env, token, `search "${title}";${where}`, 20);
   if (!all) return null;
 
   // category 0 is a main game. The rest are DLC, bundles, ports and episodes, which share their
@@ -203,11 +203,15 @@ async function igdbFacts(env, title, appid, platform) {
 }
 
 /**
- * One /games query, retried down the age-rating shapes when IGDB rejects a field name.
+ * One /games query, retried down the age-rating shapes when IGDB rejects an age-rating field.
  *
- * Only a 400 steps down: that is the code for "I do not know that field", and it is the only
- * failure another shape can fix. Anything else is a real upstream problem and is thrown, so it
- * shows up as a 502 rather than being quietly downgraded into a game with no rating.
+ * Only a 400 whose body names an age_ratings field steps down: that is IGDB saying "I do not know
+ * that field", and it is the only failure another shape can fix. A 400 for any other reason -- a
+ * title it will not take, some other field -- used to step down too, which walked the isolate to
+ * the last shape (no age fields at all) and latched it there, and every answer it then cached
+ * carried no rating for 30 days. Now that 400 is thrown like any other upstream failure, so it is
+ * a 502 for that one request and is never cached. The isolate is still latched once a shape is
+ * found; a fresh isolate starts from the top.
  */
 async function igdbGames(env, token, clause, limit) {
   for (let i = ageShape; i < AGE_SHAPES.length; i++) {
@@ -220,6 +224,8 @@ async function igdbGames(env, token, clause, limit) {
       return res.json();
     }
     if (res.status !== 400) throw new Error(`igdb ${res.status}`);
+    const body = await res.text().catch(() => "");
+    if (!/age_ratings/i.test(body) || AGE_SHAPES[i] === "") throw new Error("igdb 400");
   }
   throw new Error("igdb 400");
 }
@@ -336,9 +342,11 @@ async function igdbToken(env) {
   const data = await res.json();
   if (!data.access_token) throw new Error("twitch token missing");
 
-  // A minute early, so a token cannot expire between our check and IGDB's.
+  // A minute early, so a token cannot expire between our check and IGDB's. The token is in hand
+  // whether or not KV takes it, so a refused write (the day's quota spent) is not a failure.
   const ttl = Math.max(60, (data.expires_in || 3600) - 60);
-  await env.METADATA.put("igdb:token", data.access_token, { expirationTtl: ttl });
+  try { await env.METADATA.put("igdb:token", data.access_token, { expirationTtl: ttl }); }
+  catch (err) { console.error(`kv: token not cached: ${err && err.message}`); }
   return data.access_token;
 }
 
@@ -392,190 +400,6 @@ async function sgdb(env, path) {
   return res.json();
 }
 
-/* ----------------------------------------------------------- Steam library */
-
-/**
- * The games a Steam account owns, installed or not, so the launcher can show the whole library
- * rather than the part on disk.
- *
- * Needs a Steam Web API key, which is the one credential here that is optional: without
- * STEAM_API_KEY set this answers 501 and the launcher tells the user to add their own key. Any
- * key can read a profile whose game details are public, which is Steam's default; a private one
- * comes back with no games at all, reported here as 403 so the launcher can say what to change.
- *
- * Not cached in KV, and marked uncacheable for the edge. It is one person's data, it changes
- * whenever they buy something, and the launcher already holds the last answer for six hours on
- * its own. The rate limit still applies, since every call here is an upstream call.
- */
-async function ownedGames(env, request, url) {
-  const steamid = (url.searchParams.get("steamid") || "").trim();
-  if (!/^7656\d{13}$/.test(steamid)) return json({ error: "steamid must be a 64-bit Steam id" }, 400);
-  if (!env.STEAM_API_KEY) return json({ error: "steam library lookups are not enabled on this service" }, 501);
-  if (await rateLimited(request, env))
-    return json({ error: "slow down" }, 429, { "Retry-After": String(RATE_WINDOW) });
-
-  const api = new URL("https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/");
-  api.search = new URLSearchParams({
-    key: env.STEAM_API_KEY, steamid, include_appinfo: "1", include_played_free_games: "1", format: "json",
-  }).toString();
-  const res = await fetch(api);
-  // A rejected key is this service's misconfiguration, not the caller's. It surfaces as the
-  // generic 502 so Steam's own error page, which talks about the key parameter, reaches nobody.
-  if (!res.ok) throw new Error(`steam ${res.status}`);
-
-  const body = await res.json();
-  const games = body && body.response && body.response.games;
-  if (!Array.isArray(games)) return json({ error: "private" }, 403, { "Cache-Control": "no-store" });
-
-  // Steam's own shape, trimmed to what the launcher reads, so it parses this and a direct call
-  // with the user's own key identically.
-  return json({
-    response: {
-      game_count: games.length,
-      games: games.map(g => ({
-        appid: g.appid,
-        name: g.name,
-        playtime_forever: g.playtime_forever || 0,
-        rtime_last_played: g.rtime_last_played || 0,
-      })),
-    },
-  }, 200, { "Cache-Control": "private, no-store" });
-}
-
-/* --------------------------------------------------------- Steam achievements */
-
-/**
- * One game's achievements for one account, in one answer: the schema (every achievement the game
- * has, with names, descriptions, icons and the hidden flag), the account's unlocks, and the
- * global unlock percentages the rarity chips are read off. Three upstream calls the launcher
- * would otherwise have to make with a key of its own, which most people do not have.
- *
- * The schema and the percentages are about the game and are cached in KV, per app: a week for
- * the schema, a day for the percentages. The unlocks are about the person and are never cached,
- * and the whole answer is marked uncacheable for the edge. Rate limited like everything else.
- *
- * A private profile answers 403, as /v1/owned does, so the launcher can say what to change; a
- * game without achievements answers an empty list, which is an answer and not an error.
- */
-const SCHEMA_TTL = 60 * 60 * 24 * 7;
-const PERCENT_TTL = 60 * 60 * 24;
-
-async function steamAchievements(env, request, url) {
-  const steamid = (url.searchParams.get("steamid") || "").trim();
-  const appid = (url.searchParams.get("appid") || "").trim();
-  if (!/^7656\d{13}$/.test(steamid)) return json({ error: "steamid must be a 64-bit Steam id" }, 400);
-  if (!/^\d{1,10}$/.test(appid)) return json({ error: "appid must be a number" }, 400);
-  if (!env.STEAM_API_KEY) return json({ error: "steam achievements are not enabled on this service" }, 501);
-  if (await rateLimited(request, env))
-    return json({ error: "slow down" }, 429, { "Retry-After": String(RATE_WINDOW) });
-
-  // The schema first, and alone: an app with no achievements is answered from it without
-  // touching the account at all. GetPlayerAchievements says 403 for such an app as well as for a
-  // private profile, and only the body tells them apart, so it is not asked when it need not be.
-  const schema = await cachedJson(env, `ach:schema:v1:${appid}`, SCHEMA_TTL, () => steamSchema(env, appid));
-  if (!schema || schema.length === 0)
-    return json({ appid: Number(appid), hasAchievements: false, achievements: [] }, 200, { "Cache-Control": "private, no-store" });
-  const [percents, player] = await Promise.all([
-    cachedJson(env, `ach:pct:v1:${appid}`, PERCENT_TTL, () => steamPercents(appid)),
-    steamPlayer(env, steamid, appid),
-  ]);
-  if (player === "private") return json({ error: "private" }, 403, { "Cache-Control": "no-store" });
-
-  const unlocked = new Map((player || []).map(a => [a.apiname, a]));
-  const pct = new Map((percents || []).map(p => [p.name, parseFloat(p.percent)]));
-  const achievements = (schema || []).map(a => {
-    const u = unlocked.get(a.name);
-    const got = !!(u && Number(u.achieved) === 1);
-    const p = pct.get(a.name);
-    return {
-      id: a.name,
-      name: a.displayName || a.name,
-      description: a.description || null,
-      hidden: Number(a.hidden) === 1,
-      icon: a.icon || null,
-      iconGray: a.icongray || null,
-      percent: typeof p === "number" && !Number.isNaN(p) ? p : null,
-      unlocked: got,
-      unlockTime: got ? (u.unlocktime || 0) : 0,
-    };
-  });
-  return json({ appid: Number(appid), hasAchievements: achievements.length > 0, achievements }, 200,
-    { "Cache-Control": "private, no-store" });
-}
-
-/** KV first, else the fetcher's answer, kept for ttl seconds. */
-async function cachedJson(env, key, ttl, fetcher) {
-  const hit = await env.METADATA.get(key, "json");
-  if (hit !== null && hit !== undefined) return hit;
-  const value = await fetcher();
-  await env.METADATA.put(key, JSON.stringify(value), { expirationTtl: ttl });
-  return value;
-}
-
-/** The game's achievement definitions. Steam answers 400 for an app with no stats at all. */
-async function steamSchema(env, appid) {
-  const api = new URL("https://api.steampowered.com/ISteamUserStats/GetSchemaForGame/v2/");
-  api.search = new URLSearchParams({ key: env.STEAM_API_KEY, appid, l: "english" }).toString();
-  const res = await fetch(api);
-  if (res.status === 400 || res.status === 403) return [];
-  if (!res.ok) throw new Error(`steam schema ${res.status}`);
-  const body = await res.json();
-  const list = body && body.game && body.game.availableGameStats && body.game.availableGameStats.achievements;
-  if (!Array.isArray(list)) return [];
-  return list.map(a => ({
-    name: a.name, displayName: a.displayName, description: a.description || null,
-    hidden: a.hidden, icon: a.icon, icongray: a.icongray,
-  }));
-}
-
-/** Keyless: the share of players holding each achievement. */
-async function steamPercents(appid) {
-  const res = await fetch(`https://api.steampowered.com/ISteamUserStats/GetGlobalAchievementPercentagesForApp/v2/?gameid=${appid}&format=json`);
-  if (!res.ok) return [];
-  const body = await res.json();
-  const list = body && body.achievementpercentages && body.achievementpercentages.achievements;
-  return Array.isArray(list) ? list.map(p => ({ name: p.name, percent: p.percent })) : [];
-}
-
-/**
- * Whether GetOwnedGames can read the profile's game details, kept for an hour under the SteamID.
- * One bit, not the list: the list is the person's and /v1/owned promises not to keep it.
- */
-async function detailsPublic(env, steamid) {
-  const key = `vis:v1:${steamid}`;
-  const hit = await env.METADATA.get(key);
-  if (hit !== null) return hit === "1";
-  const api = new URL("https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/");
-  api.search = new URLSearchParams({ key: env.STEAM_API_KEY, steamid, include_played_free_games: "1", format: "json" }).toString();
-  const res = await fetch(api);
-  if (!res.ok) throw new Error(`steam owned ${res.status}`);
-  const body = await res.json();
-  const pub = !!(body && body.response && Array.isArray(body.response.games));
-  await env.METADATA.put(key, pub ? "1" : "0", { expirationTtl: 3600 });
-  return pub;
-}
-
-/** The account's unlocks: a list, [] for a game with no stats, or "private". */
-async function steamPlayer(env, steamid, appid) {
-  const api = new URL("https://api.steampowered.com/ISteamUserStats/GetPlayerAchievements/v1/");
-  api.search = new URLSearchParams({ key: env.STEAM_API_KEY, steamid, appid }).toString();
-  const res = await fetch(api);
-  // A 403 "Profile is not public" is what Steam says for a private profile -- and ALSO for an
-  // app the account has never started or does not own, on a perfectly public one (checked Sept
-  // 2026: 3DMark answered it on this profile while Hollow Knight answered with its unlocks). The
-  // body cannot tell the two apart, so the profile's game-details visibility is checked once
-  // (detailsPublic, cached an hour) and a 403 on a readable profile means "no unlocks here".
-  if (res.status === 403 || res.status === 400) {
-    if (res.status === 400) return [];
-    return (await detailsPublic(env, steamid)) ? [] : "private";
-  }
-  if (!res.ok) throw new Error(`steam player achievements ${res.status}`);
-  const body = await res.json();
-  const stats = body && body.playerstats;
-  if (!stats || stats.success === false) return [];
-  return Array.isArray(stats.achievements) ? stats.achievements : [];
-}
-
 /* ------------------------------------------------------------- shared bits */
 
 /**
@@ -604,24 +428,44 @@ const popularityFirst = (a, b) => weight(b) - weight(a);
 /**
  * A crude per-IP cap. Not a security boundary -- an IP is cheap to change -- just enough that one
  * broken client cannot burn the whole IGDB budget for everyone else.
+ *
+ * The key is a hash of the address and the minute, not the address: a client's IP is personal
+ * data and has no business sitting in KV in the clear, even for two minutes. And the counter is
+ * bookkeeping, so a KV that refuses it (the day's writes spent, or two misses from one address in
+ * the same second tripping the one-write-per-key limit) lets the request through rather than
+ * failing it: a request whose data is already paid for must not come back 502 over a counter.
  */
 async function rateLimited(request, env) {
   const ip = request.headers.get("CF-Connecting-IP") || "unknown";
   const bucket = Math.floor(Date.now() / 1000 / RATE_WINDOW);
-  const key = `rl:${ip}:${bucket}`;
-  const count = parseInt(await env.METADATA.get(key) || "0", 10);
-  if (count >= RATE_LIMIT) return true;
-  await env.METADATA.put(key, String(count + 1), { expirationTtl: RATE_WINDOW * 2 });
+  const key = `rl:${await sha256Hex(`${ip}|${bucket}`)}`;
+  try {
+    const count = parseInt(await env.METADATA.get(key) || "0", 10);
+    if (count >= RATE_LIMIT) return true;
+    await env.METADATA.put(key, String(count + 1), { expirationTtl: RATE_WINDOW * 2 });
+  } catch (err) {
+    console.error(`kv: rate counter skipped: ${err && err.message}`);
+  }
   return false;
 }
 
+async function sha256Hex(text) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
 function json(body, status = 200, headers = {}) {
+  // A hit and a confident miss are both answers about a game and may sit in any cache for as long
+  // as KV keeps them. A refusal, a rate limit or an upstream failure is about this moment and
+  // must not be held by a shared cache on the way: a 502 cached for an hour is an hour's outage.
+  const cache = status === 200 ? `public, max-age=${CACHE_TTL}`
+    : status === 404 ? `public, max-age=${MISS_TTL}`
+    : "no-store";
   return new Response(JSON.stringify(body), {
     status,
     headers: {
       "Content-Type": "application/json; charset=utf-8",
-      // Let Cloudflare's own edge cache absorb repeats before they even reach the worker.
-      "Cache-Control": status === 200 ? `public, max-age=${CACHE_TTL}` : "public, max-age=3600",
+      "Cache-Control": cache,
       ...headers,
     },
   });

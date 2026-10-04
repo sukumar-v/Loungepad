@@ -120,7 +120,7 @@ public class UiBridge
         _achievements = new AchievementService(_achievementStore, _library, () => _settings.Settings,
             new IAchievementProvider[]
             {
-                new SteamAchievementProvider(() => _settings.Settings),
+                new SteamAchievementProvider(() => _settings.Settings, _steamWeb),
                 new XboxAchievementProvider((XboxAccountClient)_accounts["xbox"]),
                 new EpicAchievementProvider((EpicAccountClient)_accounts["epic"]),
                 new GogAchievementProvider((GogAccountClient)_accounts["gog"]),
@@ -142,8 +142,18 @@ public class UiBridge
         _achievements.Dispose();
     }
 
+    /// <summary>Where a bridge command may come from. Every command runs with the host's
+    /// authority, so only the launcher's own page is answered -- never a frame inside it (the
+    /// YouTube player) and never a top frame that somehow ended up somewhere else.</summary>
+    private const string PageOrigin = "https://loungepad.ui/";
+
     public void OnWebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
+        if (!e.Source.StartsWith(PageOrigin, StringComparison.OrdinalIgnoreCase))
+        {
+            Log.Info($"Ignored a bridge message from {e.Source}");
+            return;
+        }
         JsonNode? msg;
         try { msg = JsonNode.Parse(e.WebMessageAsJson); }
         catch { return; }
@@ -334,7 +344,7 @@ public class UiBridge
                 // route to the same answer, so it re-asks too.
                 var cur = _settings.Settings;
                 var storesChanged = incoming.SteamShowOwned != cur.SteamShowOwned
-                                    || (incoming.SteamApiKey ?? "").Trim() != cur.SteamApiKey
+                                    || Secret(incoming.SteamApiKey, cur.SteamApiKey) != cur.SteamApiKey
                                     || incoming.GamePassCatalog != cur.GamePassCatalog
                                     || incoming.DetectEmulators != cur.DetectEmulators;
                 // Turned on: look now, rather than leave the row saying nothing for six hours.
@@ -342,7 +352,7 @@ public class UiBridge
                 // A key added, or achievements switched on: ask now rather than on the next scan.
                 var achievementsChanged = (incoming.AchievementsEnabled && !cur.AchievementsEnabled)
                                           || (incoming.RetroAchievementsUser ?? "").Trim() != cur.RetroAchievementsUser
-                                          || (incoming.RetroAchievementsKey ?? "").Trim() != cur.RetroAchievementsKey;
+                                          || Secret(incoming.RetroAchievementsKey, cur.RetroAchievementsKey) != cur.RetroAchievementsKey;
                 CopySettings(incoming);
                 _settings.Save();
                 if (storesChanged) StartScan(force: true);
@@ -1846,6 +1856,12 @@ public class UiBridge
         return ShowDialog(dlg) ? dlg.FileName : null;
     }
 
+    /// <summary>What a credential the page sent back should be stored as. The page is only ever
+    /// shown the "set" marker for a key (AppSettings.ForPage), and sends it back untouched unless
+    /// the user typed a new one -- so the marker means "keep what is there".</summary>
+    private static string Secret(string? incoming, string current) =>
+        AppSettings.IsRedacted(incoming) ? current : (incoming ?? "").Trim();
+
     private void CopySettings(AppSettings s)
     {
         var t = _settings.Settings;
@@ -1858,13 +1874,13 @@ public class UiBridge
         t.AnimationSpeed = Math.Clamp(s.AnimationSpeed, 0.5, 2.0);
         t.ThemeSettings = ThemeService.CleanSettingValues(s.ThemeSettings);
         t.IgdbClientId = s.IgdbClientId.Trim();
-        t.IgdbClientSecret = s.IgdbClientSecret.Trim();
-        t.SteamGridDbKey = s.SteamGridDbKey.Trim();
+        t.IgdbClientSecret = Secret(s.IgdbClientSecret, t.IgdbClientSecret);
+        t.SteamGridDbKey = Secret(s.SteamGridDbKey, t.SteamGridDbKey);
         t.MetadataEndpoint = s.MetadataEndpoint.Trim();
         t.CacheTrailers = s.CacheTrailers;
         t.AgeRatingBoard = s.AgeRatingBoard == "PEGI" ? "PEGI" : "ESRB";
         t.SteamShowOwned = s.SteamShowOwned;
-        t.SteamApiKey = (s.SteamApiKey ?? "").Trim();
+        t.SteamApiKey = Secret(s.SteamApiKey, t.SteamApiKey);
         t.GamePassCatalog = s.GamePassCatalog;
         t.XboxClientId = (s.XboxClientId ?? "").Trim();
         t.DetectEmulators = s.DetectEmulators;
@@ -1920,7 +1936,7 @@ public class UiBridge
         t.AchievementNotifications = s.AchievementNotifications;
         t.AchievementsOnTiles = s.AchievementsOnTiles;
         t.RetroAchievementsUser = (s.RetroAchievementsUser ?? "").Trim();
-        t.RetroAchievementsKey = (s.RetroAchievementsKey ?? "").Trim();
+        t.RetroAchievementsKey = Secret(s.RetroAchievementsKey, t.RetroAchievementsKey);
     }
 
 
@@ -2474,7 +2490,8 @@ public class UiBridge
             type = "state",
             games = _library.Games,
             collections = _library.Collections,
-            settings = s,
+            // The keys stay on this side; the page sees only that each is set or not.
+            settings = s.ForPage(),
             displays = _displays.GetDisplays(),
             startupRegistered = StartupService.IsRegistered(),
             update = _updates.Status,
@@ -2740,7 +2757,9 @@ public class UiBridge
         edited = a.Edited ? true : (bool?)null,
         storeUnlocked = a.Edited ? a.StoreUnlocked : (bool?)null,
         storeUnlockedAt = a.Edited ? a.StoreUnlockedAt : null,
-        icon = a.IconUrl, iconLocked = a.IconLockedUrl,
+        // Only an https URL the page can safely put in markup; a store's answer is data, not
+        // something to trust with the page's own authority.
+        icon = AchievementService.SafeIconUrl(a.IconUrl), iconLocked = AchievementService.SafeIconUrl(a.IconLockedUrl),
         iconFile = AchievementService.IconFileIfCached(a.IconUrl),
         iconLockedFile = AchievementService.IconFileIfCached(a.IconLockedUrl),
     };

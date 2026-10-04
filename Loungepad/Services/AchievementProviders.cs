@@ -93,49 +93,68 @@ internal static class AchievementJson
 // ============================================================================ Steam
 
 /// <summary>
-/// Steam, by app id and the SteamID read off the client's login file. Two routes to one answer:
-/// the user's own Web API key straight to Steam (three calls: the schema, the player's unlocks,
-/// the global percentages), or the shared metadata service, which holds a key of its own and
-/// answers the three in one -- the same arrangement as the owned-games list, for the same reason.
-/// Whichever route, Steam has to be able to see the profile's game details, and says so with a
-/// 403 when it cannot.
+/// Steam, by app id, straight to Steam's Web API and nowhere else: three calls (the schema, the
+/// player's unlocks, the global percentages), authorised by the user's own Web API key or, failing
+/// that, by the token of a Steam sign-in (SteamWebSession). The shared metadata service used to
+/// carry this with a key of its own, which meant the SteamID and the unlock list of everyone who
+/// had not set a key passed through it on every start. It no longer does: the account's data goes
+/// only to Steam, and a launcher with neither a key nor a sign-in fetches no achievements.
+///
+/// The token route is Steam's own `access_token=` form, which GetOwnedGames accepts for the token's
+/// owner. Whether the two ISteamUserStats calls accept it as well has not been seen working on a
+/// signed-in account yet; a 401 or 403 on the schema says so in the row's hint.
 /// </summary>
 public sealed class SteamAchievementProvider : IAchievementProvider
 {
     private readonly Func<AppSettings> _settings;
+    private readonly SteamWebSession? _web;
     public string Source => "steam";
     public bool Unavailable { get; private set; }
 
-    public SteamAchievementProvider(Func<AppSettings> settings) { _settings = settings; }
+    public SteamAchievementProvider(Func<AppSettings> settings, SteamWebSession? web = null)
+    {
+        _settings = settings;
+        _web = web;
+    }
 
     public void ResetPass() => Unavailable = false;
 
     public bool Supports(Game g) => !g.Emulated && g.Platform == "Steam" && g.Id.StartsWith("steam:", StringComparison.Ordinal);
 
+    private const string NeedsAuth = "Sign in to Steam or add a Steam Web API key under Settings → Library. Achievements are read from Steam with your own sign-in or key only";
+
     public string? Blocked(Game g)
     {
-        if (SteamAccountService.DetectAccount() is null) return "No Steam login was found on this PC";
         var s = _settings();
-        if (s.SteamApiKey.Trim().Length == 0 && !MetadataProxyClient.IsConfigured(Endpoint(s)))
-            return "No metadata service is set, so a Steam Web API key is needed (Settings → Library)";
-        return null;
+        if (s.SteamApiKey.Trim().Length > 0)
+            return SteamAccountService.DetectAccount() is null ? "No Steam login was found on this PC" : null;
+        return _web is { SignedIn: true } ? null : NeedsAuth;
     }
-
-    private static string Endpoint(AppSettings s) =>
-        string.IsNullOrWhiteSpace(s.MetadataEndpoint) ? MetadataProxyClient.DefaultEndpoint : s.MetadataEndpoint.Trim();
 
     public async Task<GameAchievements> FetchAsync(Game game, GameAchievements? previous, CancellationToken ct)
     {
-        var account = SteamAccountService.DetectAccount();
-        if (account is null) return AchievementJson.Failed(game, Source, previous, "No Steam login was found on this PC");
         var appId = game.Id["steam:".Length..];
-        var s = _settings();
-        var key = s.SteamApiKey.Trim();
+        var key = _settings().SteamApiKey.Trim();
+        string steamId, auth;
+        if (key.Length > 0)
+        {
+            var account = SteamAccountService.DetectAccount();
+            if (account is null) return AchievementJson.Failed(game, Source, previous, "No Steam login was found on this PC");
+            steamId = account.SteamId;
+            auth = $"key={Uri.EscapeDataString(key)}";
+        }
+        else if (_web is { SignedIn: true } web)
+        {
+            var token = await web.TokenAsync(ct);
+            if (token is null) return AchievementJson.Failed(game, Source, previous, web.Status.Error ?? "Sign in to Steam again");
+            steamId = token.Value.SteamId;
+            auth = $"access_token={Uri.EscapeDataString(token.Value.Token)}";
+        }
+        else return AchievementJson.Failed(game, Source, previous, NeedsAuth);
+
         try
         {
-            return key.Length > 0
-                ? await DirectAsync(game, previous, appId, account.SteamId, key, ct)
-                : await ProxyAsync(game, previous, appId, account.SteamId, Endpoint(s), ct);
+            return await DirectAsync(game, previous, appId, steamId, auth, key.Length > 0, ct);
         }
         catch (Exception ex)
         {
@@ -145,50 +164,18 @@ public sealed class SteamAchievementProvider : IAchievementProvider
         }
     }
 
-    private const string Private = "Steam keeps this profile's game details private. Make them public under Steam's privacy settings, or add your own Web API key under Settings → Library";
-
-    private async Task<GameAchievements> ProxyAsync(Game game, GameAchievements? previous, string appId, string steamId, string endpoint, CancellationToken ct)
-    {
-        var url = $"{endpoint.TrimEnd('/')}/v1/achievements?steamid={steamId}&appid={Uri.EscapeDataString(appId)}";
-        using var res = await AchievementJson.Http.GetAsync(url, ct);
-        var status = (int)res.StatusCode;
-        if (status == 403) return AchievementJson.Failed(game, Source, previous, Private);
-        if (status is 501 or 404 or 400)
-            return AchievementJson.Failed(game, Source, previous, "The metadata service does not offer achievements yet. Add your own Web API key under Settings → Library");
-        if (status == 429) { Unavailable = true; return AchievementJson.Failed(game, Source, previous, "The metadata service is busy; try again in a minute"); }
-        if (!res.IsSuccessStatusCode) return AchievementJson.Failed(game, Source, previous, $"The metadata service answered {status}");
-
-        using var doc = JsonDocument.Parse(await res.Content.ReadAsStringAsync(ct));
-        var root = doc.RootElement;
-        var items = new List<Achievement>();
-        if (AchievementJson.Arr(root, "achievements") is { } arr)
-            foreach (var a in arr.EnumerateArray())
-            {
-                var id = AchievementJson.Str(a, "id");
-                if (string.IsNullOrEmpty(id)) continue;
-                items.Add(new Achievement
-                {
-                    Id = id,
-                    Name = AchievementJson.Str(a, "name") ?? id,
-                    Description = AchievementJson.Str(a, "description"),
-                    Hidden = AchievementJson.Bool(a, "hidden"),
-                    IconUrl = AchievementJson.Str(a, "icon"),
-                    IconLockedUrl = AchievementJson.Str(a, "iconGray"),
-                    Percent = JsonNum.Double(a, "percent"),
-                    Unlocked = AchievementJson.Bool(a, "unlocked"),
-                    UnlockedAt = AchievementJson.Unix(JsonNum.Long(a, "unlockTime")),
-                });
-            }
-        return AchievementJson.Fresh(game, Source, previous, items);
-    }
-
-    private async Task<GameAchievements> DirectAsync(Game game, GameAchievements? previous, string appId, string steamId, string key, CancellationToken ct)
+    private async Task<GameAchievements> DirectAsync(Game game, GameAchievements? previous, string appId, string steamId, string auth, bool viaKey, CancellationToken ct)
     {
         // The schema: every achievement the game has, with names, descriptions and icons.
-        var schemaUrl = $"https://api.steampowered.com/ISteamUserStats/GetSchemaForGame/v2/?key={Uri.EscapeDataString(key)}&appid={appId}&l=english";
+        var schemaUrl = $"https://api.steampowered.com/ISteamUserStats/GetSchemaForGame/v2/?{auth}&appid={appId}&l=english";
         using var schemaRes = await AchievementJson.Http.GetAsync(schemaUrl, ct);
         if (schemaRes.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
-            return AchievementJson.Failed(game, Source, previous, "Steam rejected the Web API key");
+        {
+            Log.Info($"Steam achievements: {(int)schemaRes.StatusCode} for the schema through the {(viaKey ? "key" : "sign-in")}");
+            return AchievementJson.Failed(game, Source, previous, viaKey
+                ? "Steam rejected the Web API key"
+                : "Steam did not accept the sign-in for achievements. Sign in again, or add a Steam Web API key under Settings → Library");
+        }
         // 400 is what Steam says for an app with no stats at all; that is "none", not a failure.
         if (!schemaRes.IsSuccessStatusCode) return AchievementJson.Fresh(game, Source, previous, new List<Achievement>());
 
@@ -221,7 +208,7 @@ public sealed class SteamAchievementProvider : IAchievementProvider
         // account has never started or does not own, on a public profile as much as a private
         // one -- and this is the account's own key on the account's own profile, which a privacy
         // setting cannot keep out. So a 403 is "nothing unlocked", never "private".
-        var playerUrl = $"https://api.steampowered.com/ISteamUserStats/GetPlayerAchievements/v1/?key={Uri.EscapeDataString(key)}&steamid={steamId}&appid={appId}";
+        var playerUrl = $"https://api.steampowered.com/ISteamUserStats/GetPlayerAchievements/v1/?{auth}&steamid={steamId}&appid={appId}";
         using (var playerRes = await AchievementJson.Http.GetAsync(playerUrl, ct))
         {
             if (playerRes.IsSuccessStatusCode)

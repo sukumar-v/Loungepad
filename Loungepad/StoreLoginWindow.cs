@@ -195,6 +195,9 @@ public class StoreLoginWindow : Window
             var core = _web.CoreWebView2;
             core.Settings.AreDefaultContextMenusEnabled = false;
             core.Settings.IsStatusBarEnabled = false;
+            // This view shows the stores' own pages. Nothing listens for messages from it, and
+            // nothing should be able to start: the host reads what it needs with a probe script.
+            core.Settings.IsWebMessageEnabled = false;
             // A fragment-only change (OAuth's #access_token=…) raises SourceChanged and not
             // NavigationCompleted, so both are watched.
             core.NavigationCompleted += async (_, _) => await ProbeAsync(core);

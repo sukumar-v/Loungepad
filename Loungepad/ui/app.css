@@ -1026,6 +1026,8 @@ body.no-motion .pill-primary.focused { animation: none; }
   outline: none;
 }
 .text-input:focus { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 0 44px 6px color-mix(in srgb, var(--accent) 20%, transparent); }
+/* A line of explanation under a prompt that needs one (a key that is set is never shown). */
+.input-note { font-size: 17px; line-height: 1.4; color: color-mix(in srgb, var(--ink) 58%, transparent); max-width: 720px; }
 /* Enter and Esc under the text prompt, as key caps whatever is in hand: it is a text field. */
 .input-hint { display: flex; align-items: center; gap: 28px; }
 .input-hint .legend-item { cursor: pointer; }

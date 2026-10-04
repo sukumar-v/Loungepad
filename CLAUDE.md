@@ -64,6 +64,50 @@ Stop the scrolled grid from clipping through the All games header
   as a layered window and the WebView2 then receives no mouse or wheel messages at
   all. Overlay menus paint their own dim over a screen capture instead.
 
+## Trust boundaries (the security pass of Oct 3 2026)
+
+- **The page at `https://loungepad.ui` is the trust root**: anything running in it can post any
+  bridge command. So nothing from the network runs there. `index.html` carries a CSP with
+  `script-src 'self'` (no inline script anywhere in the UI, and a theme template's `<script>` is
+  refused too), `UiBridge.OnWebMessageReceived` drops a message whose `e.Source` is not that origin,
+  and `MainWindow` cancels any top-level navigation off it and swallows `NewWindowRequested`.
+- **YouTube's player runs in `ui/player/player.html` on a second virtual host,
+  `https://loungepad.player`** (`DenyCors`, so the page can frame it and neither origin can fetch
+  the other), and `youTubeBackend` in app.js drives it through postMessage: `{cmd}` in, `{ev}`
+  out, with a 250 ms `time` event because position and duration are read synchronously by the
+  viewer. Both sides check `e.source` and `e.origin` on every message; the page's origin travels
+  to the frame as `?o=`. The embed is on `youtube-nocookie.com`. In the preview the frame is the
+  same origin (`player/player.html`), which still exercises the whole protocol; the headless
+  harness in the scratchpad (`yt-relay.js`, puppeteer-core with `--autoplay-policy`) is how it
+  was checked, because the pane is a hidden document and YouTube will not start a film in one.
+- **The data host serves an allow-list of folders** (`ServedFolders`: covers, themes; `DataRoots`:
+  trailers, achievements) with `Access-Control-Allow-Origin: https://loungepad.ui`. It used to
+  answer for the whole data folder with `*`, which put settings.json one `fetch` away from any
+  frame in the WebView.
+- **Credentials never reach the page.** The four keys (IGDB secret, SteamGridDB, Steam Web API,
+  RetroAchievements) are DPAPI-sealed in settings.json through `ProtectedStringConverter`
+  (`"dpapi:<base64>"`; a plain value from an older file still reads and is sealed on the next save),
+  `PushState` sends `AppSettings.ForPage()`, which replaces a set key with the marker `dpapi:set`,
+  and `CopySettings` keeps the stored key when the marker comes back (`Secret(...)`). On the page a
+  `secretRow` says "Set" or "Not set" and opens the prompt EMPTY: a new value replaces, empty
+  keeps, "clear" removes. A key is never displayed again once entered.
+- **Remote strings are escaped before they are markup.** Achievement icon URLs come from the stores
+  and the metadata service and were written raw into `style="background-image:url('…')"`, which is
+  attribute injection and therefore script in the trust root. `achIconStyle` escapes them and the
+  host hands the page only `AchievementService.SafeIconUrl` (https, plain URL characters). The same
+  rule for anything else from outside: `esc()` it, or set it through the DOM.
+- **Nothing identifying goes to the metadata service.** `/v1/owned` and `/v1/achievements` are gone
+  from the worker and from the launcher: both took a SteamID, and the worker let anyone with the
+  URL read any account through its Steam key. Owned games and achievements come from Steam
+  directly, with the user's own Web API key or the Steam sign-in token (`access_token=`, which
+  GetOwnedGames takes; the ISteamUserStats calls are **unverified** with it -- a 401/403 on the
+  schema says so in the row). A launcher with neither fetches no Steam achievements. The worker
+  also requires `X-Loungepad-Client: 1` (a speed bump, not a secret), hashes the client IP in its
+  rate-limit keys, fails open when a KV write is refused, caches only 200 and 404, and only steps
+  down an age-rating shape when IGDB's 400 names `age_ratings`. `invocation_logs` is off.
+  **Deploying the worker breaks every build older than this one** (they send no header): ship the
+  build first, or in the same sitting.
+
 ## Art and metadata
 
 - Five shapes, and they are not interchangeable. Putting the wrong one in a slot is what
