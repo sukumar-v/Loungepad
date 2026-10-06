@@ -859,15 +859,19 @@ Stop the scrolled grid from clipping through the All games header
   again -- which read as "trailers do not play anywhere". FetchVersion 11 refills them, and
   `Game.Unknown` (`[JsonExtensionData]`, carried by `MergeScanned`) keeps unknown fields from here
   on -- which only protects against builds that have it, not against 1.6.0 or older.
-- **Releases are signed with Azure Artifact Signing** (formerly Trusted Signing; set up Oct 2026,
-  **unverified until the first signed build**). `package.ps1` signs `Loungepad.exe` before it is
-  copied to `dist\` and into the zip, when `tools\signing.json` exists (gitignored; shape in
-  `signing.example.json`), through the `ArtifactSigning` PowerShell module, authenticated by
-  whatever `DefaultAzureCredential` finds (`az login`). The certificate lasts three days, so the
-  timestamp is mandatory and the script fails without one. GitHub's digest is of the uploaded,
-  already signed file, so the updater's sha256 check is unaffected. README, GUIDE and the
-  website's install step still say "not code-signed" / "if Windows shows a warning"; change them
-  with the first signed release.
+- **Releases are signed with Azure Artifact Signing** (formerly Trusted Signing). `package.ps1`
+  signs `Loungepad.exe` before it is copied to `dist\` and into the zip, when `tools\signing.json`
+  exists (gitignored; shape in `signing.example.json`), through the `ArtifactSigning` PowerShell
+  module, authenticated by whatever `DefaultAzureCredential` finds (`az login`). The certificate
+  lasts three days, so the timestamp is mandatory and the script fails without one. GitHub's digest
+  is of the uploaded, already signed file, so the updater's sha256 check is unaffected. **First
+  signed release: 1.7.0 (Oct 6 2026)**, signed in under 4 s; the subject is the user's legal name
+  under "Microsoft ID Verified CS EOC CA 03". The module installs signtool and its client into
+  `%LOCALAPPDATA%\ArtifactSigning` on first use. **`az` has to be on PATH** for the CLI
+  credential: a shell opened before the Azure CLI was installed does not have
+  `C:\Program Files\Microsoft SDKs\Azure\CLI2\wbin`, and signing then has no credential. README
+  and GUIDE say releases are signed and SmartScreen may still warn until the identity has
+  reputation; the website's step 03 ("If Windows shows a warning") stays for the same reason.
 - `TrayIcon` is WinForms' NotifyIcon (`UseWindowsForms`, with its global usings removed in the
   csproj so `Application`/`MessageBox` stay WPF's). Left click shows the launcher, the menu has
   Show, the update step and Quit. It is disposed on `Closed`, hidden first, or it lingers as a
