@@ -389,8 +389,8 @@ Stop the scrolled grid from clipping through the All games header
   screenshot combo; the Settings row warns for both. **Which key is the game's**: `ScreenshotRequested`
   goes to `MainWindow.TakeScreenshot`, F12 (the Steam overlay's key) for a focused `steam:` game and
   Win+PrintScreen for everything else, the combo included -- it used to send F12 regardless, which in
-  a browser opens the developer tools. Unverified on hardware: this PC's DualSense was on the cable
-  but no game was run in the session.
+  a browser opens the developer tools. **Verified by the user on a DualSense over a game** (Oct 6
+  2026, "working as expected"); the Switch Pro's Capture is still untried on hardware.
 - "Which pad is driving" is decided by movement against an **anchor** (`StickNoise`, 5% of
   travel), not the previous tick: a DualSense streams a report every 4 ms and its sticks rest a
   few percent off centre, so a per-tick delta never crossed the threshold on a slow push and a
