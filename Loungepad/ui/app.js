@@ -1721,11 +1721,20 @@ function artFit(el, w, h) {
  * screen -- which is what artFit did to the detail page, whose 3:1 hero is nowhere near its 16:9
  * box. Only tiles, whose art carries the game's name near the edges, are worth fitting.
  */
+/* Natural sizes of pictures already loaded, by URL. A box cut to its picture (Shelf's recents, the
+   detail hero) takes its shape from --art-aspect, and every state push rebuilds the row: without
+   the size known up front, each rebuild drew a wide tile at the default width for a frame and then
+   pushed its neighbours along when the picture arrived. */
+const artSizes = new Map();
+
 function applyArt(g, el, url, fit) {
   if (!url) { paintPlaceholder(g, el); setArtAspect(el, 0, 0); return; }
+  const known = artSizes.get(url);
+  if (known) setArtAspect(el, known.w, known.h);
   queueArt(url, (src, w, h) => {
     if (!el.isConnected) return;          // tile was re-rendered while loading
     if (!src) { paintPlaceholder(g, el); setArtAspect(el, 0, 0); return; }
+    if (w && h) artSizes.set(url, { w, h });
     setArtAspect(el, w, h);
     const size = fit || artFit(el, w, h);
 
@@ -2627,12 +2636,11 @@ function preferEdition(g) {
 }
 
 /* Continue carousel geometry.
-   Measured off the rendered tiles rather than assumed: the built-in layout is a 300px tile on a
-   328px pitch, but a theme is free to change both, and a hardcoded pitch slides the track by the
-   wrong amount the moment it does. The constants below are only the fallback for the first paint,
-   before there are two tiles to measure. */
+   Measured off the rendered tiles rather than assumed: a theme is free to change the tile and the
+   gap, and Shelf's own tiles are not all one width -- each is cut to its picture, 300px for a
+   Steam capsule and 368px for a 2.14:1 header (see .cont-art). So the track slides to the leading
+   tile's real position, and how many fit is counted from wherever the row starts. */
 const CONTINUE_MAX = 12;
-const CONT_STEP = 328;
 
 /* How many recents the row shows. The built-in row is a carousel and takes twelve; a theme that
    lays them out with nowhere to scroll to says how many it has room for with `--continue-max` on
@@ -2647,34 +2655,38 @@ function continueMax() {
 const CONT_VIEWPORT = 1760;
 let contScroll = 0;   // index of the leftmost visible tile
 
-/** Distance between two adjacent tiles, gap included. */
-function contStep() {
+/** How far the track slides to put tile `i` at the start of the row. */
+function contOffset(i) {
   const track = $("continueTrack");
-  const a = track && track.children[0], b = track && track.children[1];
-  if (a && b) {
-    const d = b.offsetLeft - a.offsetLeft;
-    if (d > 0) return d;
-  }
-  return CONT_STEP;
+  const first = track && track.children[0], lead = track && track.children[i];
+  return first && lead ? lead.offsetLeft - first.offsetLeft : 0;
 }
 
-/* How many tiles fit, by walking them rather than dividing: the row's padding is cancelled by a
-   negative margin so its width is not the usable width, and tiles need not all be one size. */
-function contPerView() {
+/* How many tiles fit with tile `start` leading, by walking them rather than dividing: the row's
+   padding is cancelled by a negative margin so its width is not the usable width, and tiles need
+   not all be one size, so the answer depends on where the row starts. */
+function contPerView(start = 0) {
   const track = $("continueTrack");
-  const first = track && track.children[0];
-  if (!first) return 1;
+  const kids = track ? track.children : [];
+  const lead = kids[start];
+  if (!lead) return 1;
   const row = $("continueRow");
   const width = row && row.clientWidth ? row.clientWidth : CONT_VIEWPORT;
   let n = 0;
-  for (const el of track.children) {
-    if (el.offsetLeft - first.offsetLeft + el.offsetWidth > width + 1) break;
+  for (let k = start; k < kids.length; k++) {
+    const el = kids[k];
+    if (el.offsetLeft - lead.offsetLeft + el.offsetWidth > width + 1) break;
     n++;
   }
   return Math.max(1, n);
 }
 
-function contMaxScroll() { return Math.max(0, contItems.length - contPerView()); }
+/** The furthest the row needs to go: the first start from which every remaining tile fits. */
+function contMaxScroll() {
+  const n = contItems.length;
+  for (let s = 0; s < n; s++) if (s + contPerView(s) >= n) return s;
+  return 0;
+}
 
 /**
  * Slide the carousel the minimum distance needed to keep the focused tile on screen.
@@ -2691,15 +2703,13 @@ function focusedContIndex() {
 function updateContinueScroll(follow) {
   const track = $("continueTrack");
   if (!track) return;
-  const perView = contPerView();
-
   const i = focusedContIndex();
   if (follow && i !== null) {
     if (i < contScroll) contScroll = i;
-    else if (i > contScroll + perView - 1) contScroll = i - perView + 1;
+    else while (contScroll < i && i > contScroll + contPerView(contScroll) - 1) contScroll++;
   }
   contScroll = Math.max(0, Math.min(contScroll, contMaxScroll()));
-  track.style.transform = `translateX(${-contScroll * contStep()}px)`;
+  track.style.transform = `translateX(${-contOffset(contScroll)}px)`;
 }
 
 /* Right stick horizontal -> carousel. The host turns stick X into real HWHEEL events, so this

@@ -264,21 +264,31 @@ body[data-view="detail"] #screen-library.under { opacity: 0; }
 }
 .cont-item.focused { transform: scale(1.05); z-index: 3; }
 .cont-art {
-  /* 300x172, which is 1.75:1 -- Steam's capsule_616x353 exactly. The box being the shape of the
-     picture is what lets the art run corner to corner with nothing cropped and no mat around it;
-     anything of another shape is fitted rather than cropped, see artFit. */
-  position: relative; width: 300px; height: 172px; border-radius: 14px;
+  /* 172 tall, and as wide as the picture in it: 300 for Steam's 1.745:1 capsule, 368 for the
+     2.14:1 header a game without one gets (SteamGridDB's grids are that shape too). The box being
+     the shape of the picture is what lets the art run corner to corner with nothing cropped and no
+     mat around it. Every tile here was 300 once, and a header sat in it fitted, on a blurred bed
+     16px deep above and below -- which on a light picture read as two pale bars across the tile
+     (the user's report, Oct 6 2026). A row can take tiles of different widths where a grid
+     cannot, so here the box gives way. Clamped, so a portrait cover (the fallback with no banner)
+     still gets the landscape box, fitted, and nothing wider than a header stretches the row.
+     --art-aspect is written by applyArt; anything of another shape is still fitted, see artFit. */
+  position: relative; height: 172px; border-radius: 14px;
+  width: calc(172px * clamp(1.745, var(--art-aspect, 1.745), 2.2));
   overflow: hidden; background-color: var(--surface);
   background-size: cover; background-position: center;
   transition: opacity var(--t-fade) linear;
 }
 .zone-dim .cont-art { opacity: 0.55; }
+/* As wide as the picture above it and never wider: width 0 keeps a long title out of the tile's
+   own width, and min-width 100% then gives it all of it -- so a 368px tile's title gets 368px. */
 .cont-meta {
   display: flex; flex-direction: column; gap: 3px; min-height: 50px;
+  width: 0; min-width: 100%;
   transition: opacity var(--t-focus) linear;
 }
 .zone-dim .cont-meta { opacity: 0.5; }
-.cont-title { font-size: 21px; font-weight: 500; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 300px; }
+.cont-title { font-size: 21px; font-weight: 500; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cont-sub { font-size: 17px; color: color-mix(in srgb, var(--ink) 42%, transparent); }
 
 /* focus ring + glow — box-shadow on the element so the glow is never clipped */
