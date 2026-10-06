@@ -104,8 +104,8 @@ Works with Xbox, PlayStation, Switch and other controllers. A keyboard and mouse
 1. **[Download `Loungepad.exe`](https://github.com/sukumar-v/Loungepad/releases/latest)** and move
    it somewhere it can stay under your user folder, such as a folder in Documents (not
    `Program Files`, so it can update itself).
-2. Run it. The build isn't code-signed yet: if SmartScreen warns, choose
-   **More info → Run anyway**.
+2. Run it. Releases are code-signed, but SmartScreen can still warn about a new release until
+   enough people have run it: if it does, choose **More info → Run anyway**.
 3. A short setup, driven with the controller, asks which screen is the TV, signs in to your stores
    and picks the look. It finds your games while you answer.
 

@@ -20,8 +20,8 @@ inside it, so there is nothing to unzip and nothing else to install. Windows 11 
 thing that is not bundled — the **Edge WebView2 Runtime** — and on Windows 10 the app will tell you
 where to get it.
 
-The build is not code-signed yet, so Windows SmartScreen will warn the first time you run it:
-choose **More info → Run anyway**.
+Releases are code-signed. Windows SmartScreen can still warn about a new release it has not seen
+many downloads of yet; if it does, choose **More info → Run anyway**.
 
 On first run Loungepad opens a short setup, all of it driven with the controller: which screen is
 the TV, the look, your store accounts (for the games you own but have not installed), the
