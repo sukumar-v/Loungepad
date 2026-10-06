@@ -110,8 +110,12 @@ public sealed class RestService
     private long _asleepAt;
     /// <summary>When the last wake happened. A wake by the power button, or by a resume Windows
     /// reports, moves neither input stamp, and without this the idle timer would read the hours
-    /// asleep as hours idle and rest again on the very next tick.</summary>
-    private long _wokeAt = long.MinValue / 2;
+    /// asleep as hours idle and rest again on the very next tick.
+    ///
+    /// The launcher starting counts as one. Every input stamp starts at "never", so with this at
+    /// "never" too the first tick read the idle time as forever and rested one to four seconds
+    /// after every start (the log, Oct 2026). The timer runs from the start instead.</summary>
+    private long _wokeAt;
     private bool _warned;
     private bool _sawSuspend;
     private bool _wakeOnUnlock;
@@ -123,6 +127,7 @@ public sealed class RestService
     {
         _settings = settings;
         _p = ports;
+        _wokeAt = ports.Now();
     }
 
     /// <summary>Whether any program has told Windows the display must stay on. Browsers and
