@@ -157,8 +157,9 @@ public class ThemeService : IDisposable
     {
         try
         {
-            var src = Path.Combine(AppContext.BaseDirectory, "themes");
-            if (!Directory.Exists(src)) return;
+            // Shipped inside the exe (ShippedFiles), one folder per theme as in the project.
+            var shipped = ShippedFiles.Folders("themes");
+            if (shipped.Count == 0) return;
             Directory.CreateDirectory(Paths.ThemesDir);
 
             foreach (var (oldId, newId) in Renamed)
@@ -172,24 +173,23 @@ public class ThemeService : IDisposable
                          + (moved is null ? "" : $"; the old copy is in {moved}"));
             }
 
-            foreach (var dir in Directory.GetDirectories(src))
+            foreach (var id in shipped)
             {
-                var id = Path.GetFileName(dir);
-                // A build output folder is never cleaned: `dotnet build` and `dotnet publish` copy
-                // themes\** in and delete nothing, so a retired folder stays next to the exe for
-                // as long as the output folder lives. Installed from there, the old theme came
-                // straight back one line after it had been retired.
+                // A retired id put back into the project would be installed one line after being
+                // retired, and retired again on the next start. (This guarded against stale build
+                // output when the themes were copied beside the exe, which never deletes anything.)
                 if (Renamed.ContainsKey(id))
                 {
-                    Log.Info($"Ignoring the retired theme folder '{id}' next to the exe");
+                    Log.Info($"Ignoring the retired theme '{id}' shipped in this build");
                     continue;
                 }
+                var dir = $"themes/{id}";
                 var dst = Path.Combine(Paths.ThemesDir, id);
                 var stamp = ShippedStamp(dir);
 
                 if (!Directory.Exists(dst))
                 {
-                    CopyTheme(dir, dst);
+                    InstallShipped(dir, dst);
                     WriteStamp(dst, stamp);
                     Log.Info($"Installed the bundled theme '{id}'");
                     continue;
@@ -206,10 +206,10 @@ public class ThemeService : IDisposable
 
                 var installed = VersionOf(dst);
                 var backup = BackUp(dst, id, installed);
-                CopyTheme(dir, dst);
+                InstallShipped(dir, dst);
                 WriteStamp(dst, stamp);
                 Log.Info($"Updated the bundled theme '{id}' from {installed ?? "an unversioned copy"} " +
-                         $"to {VersionOf(dir) ?? "an unversioned copy"} (its shipped files changed)"
+                         $"to {ShippedVersion(dir) ?? "an unversioned copy"} (its shipped files changed)"
                          + (backup is null ? "" : $"; the old copy is in {backup}"));
             }
         }
@@ -262,20 +262,39 @@ public class ThemeService : IDisposable
     /// <summary>Beside the installed files: the stamp of the shipped set they were last synced from.</summary>
     private const string StampFile = ".shipped";
 
-    /// <summary>A hash over a shipped theme folder's files -- names and contents, in name order --
-    /// so any change to any of them reads as a new shipment.</summary>
-    private static string ShippedStamp(string dir)
+    /// <summary>A hash over a shipped theme's files -- names and contents, in name order -- so any
+    /// change to any of them reads as a new shipment. The same hash the folder beside the exe used
+    /// to give, so moving the files into the exe did not re-sync anybody's themes.</summary>
+    private static string ShippedStamp(string folder)
     {
         using var sha = System.Security.Cryptography.SHA1.Create();
-        foreach (var f in Directory.GetFiles(dir).OrderBy(f => f, StringComparer.OrdinalIgnoreCase))
+        foreach (var f in ShippedFiles.Files(folder))
         {
             var name = System.Text.Encoding.UTF8.GetBytes(Path.GetFileName(f).ToLowerInvariant() + "\n");
             sha.TransformBlock(name, 0, name.Length, null, 0);
-            var bytes = File.ReadAllBytes(f);
+            var bytes = ShippedFiles.ReadAllBytes(f)!;
             sha.TransformBlock(bytes, 0, bytes.Length, null, 0);
         }
         sha.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
         return Convert.ToHexString(sha.Hash!).ToLowerInvariant();
+    }
+
+    private static void InstallShipped(string folder, string dst)
+    {
+        Directory.CreateDirectory(dst);
+        foreach (var f in ShippedFiles.Files(folder))
+            File.WriteAllBytes(Path.Combine(dst, Path.GetFileName(f)), ShippedFiles.ReadAllBytes(f)!);
+    }
+
+    private static string? ShippedVersion(string folder)
+    {
+        try
+        {
+            var json = ShippedFiles.ReadAllText($"{folder}/theme.json");
+            var parsed = json is null ? null : JsonSerializer.Deserialize<ThemeInfo>(json, JsonOpts);
+            return string.IsNullOrWhiteSpace(parsed?.Version) ? null : parsed!.Version;
+        }
+        catch { return null; }
     }
 
     private static string? ReadStamp(string dst)

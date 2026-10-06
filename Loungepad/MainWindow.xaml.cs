@@ -357,13 +357,18 @@ public partial class MainWindow : Window
         core.Settings.AreDevToolsEnabled = false;
 #endif
 
-        var uiDir = Path.Combine(AppContext.BaseDirectory, "ui");
-        core.SetVirtualHostNameToFolderMapping("loungepad.ui", uiDir, CoreWebView2HostResourceAccessKind.Allow);
-        // The YouTube player lives in a page of its own on a second origin (ui\player, see
-        // player.js): YouTube's script runs there with no bridge and no data host to reach, and
-        // the launcher page drives it through postMessage. DenyCors lets the page frame it while
-        // refusing a fetch across the two origins in either direction.
-        core.SetVirtualHostNameToFolderMapping("loungepad.player", Path.Combine(uiDir, "player"), CoreWebView2HostResourceAccessKind.DenyCors);
+        // The page is built into the exe. A build whose csproj stopped embedding it would open to
+        // a black screen with nothing in the log to say why.
+        if (!ShippedFiles.Exists("ui/index.html"))
+        {
+            Log.Info("This build has no ui/index.html embedded; nothing to show");
+            MessageBox.Show("This copy of Loungepad was built without its interface. Download it again from " +
+                            $"https://github.com/{UpdateService.Repo}/releases/latest",
+                "Loungepad", MessageBoxButton.OK, MessageBoxImage.Error);
+            Application.Current.Shutdown();
+            return;
+        }
+        ServeShipped(core);
         ServeDataFolder(core);
 
         // The page is the trust root for every bridge command, so the top frame must never be
@@ -398,6 +403,78 @@ public partial class MainWindow : Window
         [".ico"] = "image/x-icon", [".mp4"] = "video/mp4", [".webm"] = "video/webm",
         [".woff"] = "font/woff", [".woff2"] = "font/woff2", [".ttf"] = "font/ttf", [".otf"] = "font/otf",
     };
+
+    /// <summary>
+    /// The hosts the app's own pages come from, and the folder of shipped files behind each.
+    ///
+    /// The YouTube player is a page of its own on a second origin (ui/player, see player.js):
+    /// YouTube's script runs there with no bridge and no data host to reach, and the launcher page
+    /// drives it through postMessage. Its folder is NOT served on the page's host as well: the
+    /// player's policy lets YouTube's script run, and a copy framed on the page's own origin would
+    /// be that script with the bridge one `parent` away.
+    /// </summary>
+    private static readonly Dictionary<string, string> ShippedHosts = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["loungepad.ui"] = "ui/",
+        ["loungepad.player"] = "ui/player/",
+    };
+
+    private static readonly HashSet<string> TextTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".html", ".css", ".js", ".json", ".svg", ".txt",
+    };
+
+    /// <summary>
+    /// Serve https://loungepad.ui/... and https://loungepad.player/... out of the exe (see
+    /// <see cref="ShippedFiles"/>). They used to be folder mappings onto ui\ beside the exe, which
+    /// is what kept a release from being one file.
+    ///
+    /// No Access-Control-Allow-Origin on either host, so a fetch from one to the other is refused
+    /// both ways -- what DenyCors gave the player -- while the page can still frame the player and
+    /// load its own scripts. Checked in a scratch WebView2 (runtime 154): the frame starts and
+    /// messages its parent, and both cross-origin fetches fail.
+    /// </summary>
+    private static void ServeShipped(CoreWebView2 core)
+    {
+        foreach (var host in ShippedHosts.Keys)
+        {
+            // The overload with source kinds, not the plain one: the plain filter never saw the
+            // requests a cross-site frame makes for its own scripts, so the player's page arrived
+            // and its player.js went out to a network that has no such host.
+            core.AddWebResourceRequestedFilter($"https://{host}/*", CoreWebView2WebResourceContext.All,
+                CoreWebView2WebResourceRequestSourceKinds.Document);
+        }
+        core.WebResourceRequested += (_, e) =>
+        {
+            if (!Uri.TryCreate(e.Request.Uri, UriKind.Absolute, out var uri)
+                || !ShippedHosts.TryGetValue(uri.Host, out var folder)) return;
+            try
+            {
+                var rel = Uri.UnescapeDataString(uri.AbsolutePath).TrimStart('/');
+                var allowed = rel.Length > 0
+                    && !rel.Split('/').Any(s => s is "" or "." or ".." || s.Contains('\\'))
+                    && !(folder == "ui/" && rel.StartsWith("player/", StringComparison.OrdinalIgnoreCase));
+                var body = allowed ? ShippedFiles.ReadAllBytes(folder + rel) : null;
+                if (body is null)
+                {
+                    e.Response = core.Environment.CreateWebResourceResponse(null, 404, "Not Found", "");
+                    return;
+                }
+                var ext = Path.GetExtension(rel);
+                var type = ContentTypes.TryGetValue(ext, out var t) ? t : "application/octet-stream";
+                if (TextTypes.Contains(ext)) type += "; charset=utf-8";
+                // no-store: these change with the exe, and an update must never be shown a page
+                // the WebView kept from the version before.
+                e.Response = core.Environment.CreateWebResourceResponse(new MemoryStream(body), 200, "OK",
+                    $"Content-Type: {type}\r\nContent-Length: {body.Length}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff");
+            }
+            catch (Exception ex)
+            {
+                Log.Info($"Serving {e.Request.Uri} failed: {ex.Message}");
+                e.Response = core.Environment.CreateWebResourceResponse(null, 500, "Error", "");
+            }
+        };
+    }
 
     /// <summary>
     /// Serve https://loungepad.data/... out of the data folder, by hand.
@@ -448,6 +525,8 @@ public partial class MainWindow : Window
         core.AddWebResourceRequestedFilter("https://loungepad.data/*", CoreWebView2WebResourceContext.All);
         core.WebResourceRequested += (_, e) =>
         {
+            // Every handler hears every filtered request, and the shipped hosts have their own.
+            if (!e.Request.Uri.StartsWith("https://loungepad.data/", StringComparison.OrdinalIgnoreCase)) return;
             try
             {
                 var uri = new Uri(e.Request.Uri);

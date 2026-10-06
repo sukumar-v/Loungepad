@@ -47,7 +47,8 @@ public sealed class VortexBackend
     public static string VortexDataDir { get; } = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Vortex");
     public static string PluginDir { get; } = Path.Combine(VortexDataDir, "plugins", PluginFolderName);
-    private static string ShippedPluginDir => Path.Combine(AppContext.BaseDirectory, "vortex-bridge");
+    /// <summary>Where the extension ships: inside the exe (<see cref="ShippedFiles"/>).</summary>
+    private const string ShippedPluginFolder = "vortex-bridge";
 
     public VortexBackend(Func<string?> configuredPath)
     {
@@ -155,7 +156,7 @@ public sealed class VortexBackend
         if (await PingAsync(ct) is { } v)
         {
             status.Version = v is { Length: > 0 } ? v : Version;
-            var shipped = PluginVersion(Path.Combine(ShippedPluginDir, "info.json"));
+            var shipped = ShippedPluginVersion();
             if (shipped is not null && _bridgeVersion is not null && _bridgeVersion != shipped) status.NeedsRestart = true;
             else status.BridgeReady = true;
         }
@@ -179,16 +180,16 @@ public sealed class VortexBackend
     {
         try
         {
-            var src = ShippedPluginDir;
-            if (!Directory.Exists(src)) { Log.Info($"Vortex bridge: nothing shipped at {src}"); return; }
+            var files = ShippedFiles.Files(ShippedPluginFolder);
+            if (files.Count == 0) { Log.Info("Vortex bridge: the extension is not in this build"); return; }
             Directory.CreateDirectory(PluginDir);
 
-            var shipped = PluginVersion(Path.Combine(src, "info.json"));
+            var shipped = ShippedPluginVersion();
             var installed = PluginVersion(Path.Combine(PluginDir, "info.json"));
             if (shipped is null || shipped != installed || !File.Exists(Path.Combine(PluginDir, "index.js")))
             {
-                foreach (var f in Directory.GetFiles(src))
-                    File.Copy(f, Path.Combine(PluginDir, Path.GetFileName(f)), overwrite: true);
+                foreach (var f in files)
+                    File.WriteAllBytes(Path.Combine(PluginDir, Path.GetFileName(f)), ShippedFiles.ReadAllBytes(f)!);
                 _pluginJustInstalled = true;
                 Log.Info($"Vortex bridge: {(installed is null ? "installed" : $"updated from {installed}")} to {shipped} in {PluginDir}");
             }
@@ -201,11 +202,16 @@ public sealed class VortexBackend
 
     private static string? PluginVersion(string infoJson)
     {
-        try
-        {
-            if (!File.Exists(infoJson)) return null;
-            return JsonNode.Parse(File.ReadAllText(infoJson))?["version"]?.GetValue<string>();
-        }
+        try { return File.Exists(infoJson) ? VersionIn(File.ReadAllText(infoJson)) : null; }
+        catch { return null; }
+    }
+
+    private static string? ShippedPluginVersion() =>
+        ShippedFiles.ReadAllText($"{ShippedPluginFolder}/info.json") is { } json ? VersionIn(json) : null;
+
+    private static string? VersionIn(string infoJson)
+    {
+        try { return JsonNode.Parse(infoJson)?["version"]?.GetValue<string>(); }
         catch { return null; }
     }
 
@@ -228,7 +234,7 @@ public sealed class VortexBackend
             // Vortex loads an extension once, at startup: a bridge updated on disk is not the one
             // answering until Vortex restarts, and an older one is missing routes this build
             // asks for. Say so rather than let a missing route read as an empty answer.
-            var shipped = PluginVersion(Path.Combine(ShippedPluginDir, "info.json"));
+            var shipped = ShippedPluginVersion();
             if (shipped is not null && _bridgeVersion is not null && _bridgeVersion != shipped)
             {
                 status.NeedsRestart = true;

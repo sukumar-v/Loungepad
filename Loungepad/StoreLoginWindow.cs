@@ -257,24 +257,20 @@ public class StoreLoginWindow : Window
     /// <summary>The bar's page: the launcher's own drawings, inlined, over a few buttons.</summary>
     private static string BarHtml(BrowseOptions o)
     {
-        string glyphs;
-        try { glyphs = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "ui", "glyphs.js")); }
-        catch (Exception ex)
+        var glyphs = ShippedFiles.ReadAllText("ui/glyphs.js");
+        if (glyphs is null)
         {
-            Log.Info($"Browse bar: glyphs.js could not be read ({ex.Message}); drawing plain chips");
+            Log.Info("Browse bar: glyphs.js is not in this build; drawing plain chips");
             glyphs = "function btnIcon(b){return '<span class=\"chip\">'+b+'</span>';} function iconSvg(){return '';}";
         }
         // The drawings colour themselves with the launcher's tokens (a shoulder pill is filled
         // with var(--ink)); without the tokens a pill is black on black. The :root block of
         // app.css is the one source of them, so it is copied in rather than restated.
         var tokens = ":root { --ink: #F6F5F3; --accent: #F0A253; --bg: #08080A; --card: #101012; --edge: #FFFFFF; --danger: #E97A6C; }";
-        try
-        {
-            var css = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "ui", "app.css"));
-            var m = System.Text.RegularExpressions.Regex.Match(css, @":root\s*\{[^}]*\}");
-            if (m.Success) tokens = m.Value;
-        }
-        catch (Exception ex) { Log.Info($"Browse bar: app.css could not be read ({ex.Message}); using built-in tokens"); }
+        var css = ShippedFiles.ReadAllText("ui/app.css");
+        var m = css is null ? null : System.Text.RegularExpressions.Regex.Match(css, @":root\s*\{[^}]*\}");
+        if (m is { Success: true }) tokens = m.Value;
+        else Log.Info("Browse bar: no :root block in app.css; using built-in tokens");
         var kbButton = string.IsNullOrEmpty(o.KeyboardButton) || o.KeyboardButton == "Off" ? "" : o.KeyboardButton;
         var setup = JsonSerializer.Serialize(new
         {
