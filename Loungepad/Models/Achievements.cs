@@ -61,6 +61,17 @@ public class GameAchievements
     public string? SourceName { get; set; }
     /// <summary>UTC. When the list was last fetched successfully.</summary>
     public DateTime FetchedAt { get; set; }
+    /// <summary>Which build's fetch made the list (<see cref="CurrentVersion"/> at the time; 0 for
+    /// one from before there was a number). Anything older is stale however recent FetchedAt is.</summary>
+    public int Version { get; set; }
+
+    /// <summary>
+    /// Bump when a provider learns to answer differently, so every list it wrote before is asked
+    /// again rather than held for its freshness window. 1: Steam stopped saving an empty list over
+    /// a real one when the sign-in could not read it, and GOG stopped storing each achievement up
+    /// to twenty times (Oct 6 2026) -- lists both had written that same day looked fresh.
+    /// </summary>
+    public const int CurrentVersion = 1;
     /// <summary>Why the last attempt gave nothing, in words for the page, or null. A failed
     /// attempt keeps the previous list.</summary>
     public string? Error { get; set; }

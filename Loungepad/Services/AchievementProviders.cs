@@ -85,6 +85,7 @@ internal static class AchievementJson
         return new GameAchievements
         {
             GameId = game.Id, Source = source, Items = items, FetchedAt = DateTime.UtcNow, Error = null,
+            Version = GameAchievements.CurrentVersion,
             SourceGameId = previous?.SourceGameId, SourceName = previous?.SourceName,
         };
     }
@@ -93,16 +94,21 @@ internal static class AchievementJson
 // ============================================================================ Steam
 
 /// <summary>
-/// Steam, by app id, straight to Steam's Web API and nowhere else: three calls (the schema, the
-/// player's unlocks, the global percentages), authorised by the user's own Web API key or, failing
-/// that, by the token of a Steam sign-in (SteamWebSession). The shared metadata service used to
-/// carry this with a key of its own, which meant the SteamID and the unlock list of everyone who
-/// had not set a key passed through it on every start. It no longer does: the account's data goes
-/// only to Steam, and a launcher with neither a key nor a sign-in fetches no achievements.
+/// Steam, by app id, straight to Steam and nowhere else. The shared metadata service used to carry
+/// this with a key of its own, which meant the SteamID and the unlock list of everyone who had not
+/// set a key passed through it on every start. It no longer does: the account's data goes only to
+/// Steam, and a launcher with neither a key nor a sign-in fetches no achievements.
 ///
-/// The token route is Steam's own `access_token=` form, which GetOwnedGames accepts for the token's
-/// owner. Whether the two ISteamUserStats calls accept it as well has not been seen working on a
-/// signed-in account yet; a 401 or 403 on the schema says so in the row's hint.
+/// Two asks. The list -- names, descriptions, icons, hidden, and the share of players who have each
+/// -- is IPlayerService/GetGameAchievements, which takes no key or token at all. The player's
+/// unlocks are ISteamUserStats/GetPlayerAchievements with the user's own key, or, with a Steam
+/// sign-in, the account's Community stats page (?xml=1), which carries every unlock's time.
+///
+/// The sign-in's token does NOT work here. ISteamUserStats does not know `access_token=` at all
+/// (it answers 400 "Required parameter 'key' is missing", where GetOwnedGames answers a bad token
+/// with a 401), and that 400 used to be read as "this game has no achievements" -- so signing in
+/// saved an empty list over every Steam game's real one (Oct 6 2026). The Community page needs no
+/// token for a profile whose game details are public; a private one says so in the row's hint.
 /// </summary>
 public sealed class SteamAchievementProvider : IAchievementProvider
 {
@@ -135,26 +141,20 @@ public sealed class SteamAchievementProvider : IAchievementProvider
     {
         var appId = game.Id["steam:".Length..];
         var key = _settings().SteamApiKey.Trim();
-        string steamId, auth;
+        string steamId;
         if (key.Length > 0)
         {
             var account = SteamAccountService.DetectAccount();
             if (account is null) return AchievementJson.Failed(game, Source, previous, "No Steam login was found on this PC");
             steamId = account.SteamId;
-            auth = $"key={Uri.EscapeDataString(key)}";
         }
-        else if (_web is { SignedIn: true } web)
-        {
-            var token = await web.TokenAsync(ct);
-            if (token is null) return AchievementJson.Failed(game, Source, previous, web.Status.Error ?? "Sign in to Steam again");
-            steamId = token.Value.SteamId;
-            auth = $"access_token={Uri.EscapeDataString(token.Value.Token)}";
-        }
+        // The sign-in only says whose account it is: the Community page is read without its token.
+        else if (_web is { SignedIn: true, SteamId: { Length: > 0 } signedIn }) steamId = signedIn;
         else return AchievementJson.Failed(game, Source, previous, NeedsAuth);
 
         try
         {
-            return await DirectAsync(game, previous, appId, steamId, auth, key.Length > 0, ct);
+            return await DirectAsync(game, previous, appId, steamId, key.Length > 0 ? key : null, ct);
         }
         catch (Exception ex)
         {
@@ -164,39 +164,45 @@ public sealed class SteamAchievementProvider : IAchievementProvider
         }
     }
 
-    private async Task<GameAchievements> DirectAsync(Game game, GameAchievements? previous, string appId, string steamId, string auth, bool viaKey, CancellationToken ct)
+    private const string PrivateProfile = "Steam shows this account's achievements to its owner only. Set Game details to Public in Steam's privacy settings, or add a Steam Web API key under Settings → Library";
+
+    private async Task<GameAchievements> DirectAsync(Game game, GameAchievements? previous, string appId, string steamId, string? key, CancellationToken ct)
     {
-        // The schema: every achievement the game has, with names, descriptions and icons.
-        var schemaUrl = $"https://api.steampowered.com/ISteamUserStats/GetSchemaForGame/v2/?{auth}&appid={appId}&l=english";
-        using var schemaRes = await AchievementJson.Http.GetAsync(schemaUrl, ct);
-        if (schemaRes.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+        // The list, keyless: every achievement the game has, its names, icons and how many players
+        // have it. "{"response":{}}" is a game with none -- the one answer that may say so.
+        var listUrl = $"https://api.steampowered.com/IPlayerService/GetGameAchievements/v1/?appid={appId}&language=english";
+        using var listRes = await AchievementJson.Http.GetAsync(listUrl, ct);
+        if (!listRes.IsSuccessStatusCode)
         {
-            Log.Info($"Steam achievements: {(int)schemaRes.StatusCode} for the schema through the {(viaKey ? "key" : "sign-in")}");
-            return AchievementJson.Failed(game, Source, previous, viaKey
-                ? "Steam rejected the Web API key"
-                : "Steam did not accept the sign-in for achievements. Sign in again, or add a Steam Web API key under Settings → Library");
+            var code = (int)listRes.StatusCode;
+            Log.Info($"Steam achievements: {code} for the list of {appId}");
+            Unavailable = code == 429 || code >= 500;
+            return AchievementJson.Failed(game, Source, previous, $"Steam did not answer ({code})");
         }
-        // 400 is what Steam says for an app with no stats at all; that is "none", not a failure.
-        if (!schemaRes.IsSuccessStatusCode) return AchievementJson.Fresh(game, Source, previous, new List<Achievement>());
 
         var items = new List<Achievement>();
-        var byId = new Dictionary<string, Achievement>(StringComparer.Ordinal);
-        using (var doc = JsonDocument.Parse(await schemaRes.Content.ReadAsStringAsync(ct)))
+        // Case-blind: the list says "CHARMED" and the Community page "charmed" for the same one.
+        var byId = new Dictionary<string, Achievement>(StringComparer.OrdinalIgnoreCase);
+        using (var doc = JsonDocument.Parse(await listRes.Content.ReadAsStringAsync(ct)))
         {
-            var stats = AchievementJson.Obj(AchievementJson.Obj(doc.RootElement, "game") ?? default, "availableGameStats");
-            if (stats is { } st && AchievementJson.Arr(st, "achievements") is { } arr)
+            var resp = AchievementJson.Obj(doc.RootElement, "response");
+            if (resp is { } r && AchievementJson.Arr(r, "achievements") is { } arr)
                 foreach (var a in arr.EnumerateArray())
                 {
-                    var id = AchievementJson.Str(a, "name");
-                    if (string.IsNullOrEmpty(id)) continue;
+                    var id = AchievementJson.Str(a, "internal_name");
+                    // Archived ones are retired from the game; Steam's own pages do not list them.
+                    if (string.IsNullOrEmpty(id) || AchievementJson.Bool(a, "archived") || byId.ContainsKey(id)) continue;
+                    var pct = double.TryParse(AchievementJson.Str(a, "player_percent_unlocked"), System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture, out var d) ? d : (double?)null;
                     var ach = new Achievement
                     {
                         Id = id,
-                        Name = AchievementJson.Str(a, "displayName") ?? id,
-                        Description = AchievementJson.Str(a, "description"),
+                        Name = AchievementJson.Str(a, "localized_name") ?? id,
+                        Description = AchievementJson.Str(a, "localized_desc"),
                         Hidden = AchievementJson.Bool(a, "hidden"),
-                        IconUrl = AchievementJson.Str(a, "icon"),
-                        IconLockedUrl = AchievementJson.Str(a, "icongray"),
+                        IconUrl = IconUrl(appId, AchievementJson.Str(a, "icon")),
+                        IconLockedUrl = IconUrl(appId, AchievementJson.Str(a, "icon_gray")),
+                        Percent = pct,
                     };
                     items.Add(ach);
                     byId[id] = ach;
@@ -204,50 +210,99 @@ public sealed class SteamAchievementProvider : IAchievementProvider
         }
         if (items.Count == 0) return AchievementJson.Fresh(game, Source, previous, items);
 
-        // The player's unlocks. Steam answers 403 "Profile is not public" here for an app the
-        // account has never started or does not own, on a public profile as much as a private
-        // one -- and this is the account's own key on the account's own profile, which a privacy
-        // setting cannot keep out. So a 403 is "nothing unlocked", never "private".
-        var playerUrl = $"https://api.steampowered.com/ISteamUserStats/GetPlayerAchievements/v1/?{auth}&steamid={steamId}&appid={appId}";
-        using (var playerRes = await AchievementJson.Http.GetAsync(playerUrl, ct))
+        return key is not null
+            ? await UnlocksByKeyAsync(game, previous, appId, steamId, key, items, byId, ct)
+            : await UnlocksByCommunityAsync(game, previous, appId, steamId, items, byId, ct);
+    }
+
+    /// <summary>The icon file names the list gives, as the URLs Steam's own Community page uses.</summary>
+    private static string? IconUrl(string appId, string? file) =>
+        string.IsNullOrEmpty(file) ? null : $"https://shared.akamai.steamstatic.com/community_assets/images/apps/{appId}/{file}";
+
+    private async Task<GameAchievements> UnlocksByKeyAsync(Game game, GameAchievements? previous, string appId, string steamId, string key,
+        List<Achievement> items, Dictionary<string, Achievement> byId, CancellationToken ct)
+    {
+        // Steam answers 403 "Profile is not public" here for an app the account has never started
+        // or does not own, on a public profile as much as a private one -- and this is the account's
+        // own key on the account's own profile, which a privacy setting cannot keep out. So a 403 is
+        // "nothing unlocked", never "private". A 401 is the key.
+        var playerUrl = $"https://api.steampowered.com/ISteamUserStats/GetPlayerAchievements/v1/?key={Uri.EscapeDataString(key)}&steamid={steamId}&appid={appId}";
+        using var playerRes = await AchievementJson.Http.GetAsync(playerUrl, ct);
+        if (playerRes.StatusCode == HttpStatusCode.Unauthorized)
         {
-            if (playerRes.IsSuccessStatusCode)
-            {
-                using var doc = JsonDocument.Parse(await playerRes.Content.ReadAsStringAsync(ct));
-                var ps = AchievementJson.Obj(doc.RootElement, "playerstats");
-                if (ps is { } p && AchievementJson.Arr(p, "achievements") is { } arr)
-                    foreach (var a in arr.EnumerateArray())
-                    {
-                        var id = AchievementJson.Str(a, "apiname");
-                        if (id is null || !byId.TryGetValue(id, out var ach)) continue;
-                        ach.Unlocked = AchievementJson.Bool(a, "achieved");
-                        ach.UnlockedAt = ach.Unlocked ? AchievementJson.Unix(JsonNum.Long(a, "unlocktime")) : null;
-                    }
-            }
+            Log.Info("Steam achievements: 401 for the unlocks through the key");
+            return AchievementJson.Failed(game, Source, previous, "Steam rejected the Web API key");
+        }
+        if (playerRes.IsSuccessStatusCode)
+        {
+            using var doc = JsonDocument.Parse(await playerRes.Content.ReadAsStringAsync(ct));
+            var ps = AchievementJson.Obj(doc.RootElement, "playerstats");
+            if (ps is { } p && AchievementJson.Arr(p, "achievements") is { } arr)
+                foreach (var a in arr.EnumerateArray())
+                {
+                    var id = AchievementJson.Str(a, "apiname");
+                    if (id is null || !byId.TryGetValue(id, out var ach)) continue;
+                    ach.Unlocked = AchievementJson.Bool(a, "achieved");
+                    ach.UnlockedAt = ach.Unlocked ? AchievementJson.Unix(JsonNum.Long(a, "unlocktime")) : null;
+                }
+        }
+        else if (playerRes.StatusCode != HttpStatusCode.Forbidden)
+        {
+            var code = (int)playerRes.StatusCode;
+            Unavailable = code == 429 || code >= 500;
+            return AchievementJson.Failed(game, Source, previous, $"Steam did not answer ({code})");
+        }
+        return AchievementJson.Fresh(game, Source, previous, items);
+    }
+
+    /// <summary>
+    /// The unlocks off the account's Community stats page, which carries each one's time and needs
+    /// no key for a profile whose game details are public. Three answers: the stats as XML; an HTML
+    /// page instead, which is Steam having no stats for this account in this game (owned and never
+    /// started); or an error. Anything that is not plainly the first two keeps the previous list --
+    /// and so does "no stats" for a game this account had unlocks in, since that cannot be true.
+    /// </summary>
+    private async Task<GameAchievements> UnlocksByCommunityAsync(Game game, GameAchievements? previous, string appId, string steamId,
+        List<Achievement> items, Dictionary<string, Achievement> byId, CancellationToken ct)
+    {
+        var url = $"https://steamcommunity.com/profiles/{steamId}/stats/{appId}/achievements/?xml=1&l=english";
+        using var res = await AchievementJson.Http.GetAsync(url, ct);
+        var code = (int)res.StatusCode;
+        if (!res.IsSuccessStatusCode)
+        {
+            Log.Info($"Steam achievements: {code} from the Community page for {appId}");
+            Unavailable = code == 429 || code >= 500;
+            return AchievementJson.Failed(game, Source, previous, $"Steam Community did not answer ({code})");
+        }
+        var body = await res.Content.ReadAsStringAsync(ct);
+        if (!body.TrimStart().StartsWith("<?xml", StringComparison.Ordinal))
+        {
+            if (previous is not null && previous.Items.Any(a => a.Unlocked))
+                return AchievementJson.Failed(game, Source, previous, "Steam Community has no stats for this game right now");
+            return AchievementJson.Fresh(game, Source, previous, items);
         }
 
-        // Rarity, keyless.
-        try
+        System.Xml.Linq.XDocument xml;
+        try { xml = System.Xml.Linq.XDocument.Parse(body); }
+        catch (System.Xml.XmlException) { return AchievementJson.Failed(game, Source, previous, "Steam Community answered something unreadable"); }
+        var root = xml.Root;
+        var list = root?.Element("achievements");
+        if (root is null || root.Name != "playerstats" || list is null)
         {
-            using var pctRes = await AchievementJson.Http.GetAsync($"https://api.steampowered.com/ISteamUserStats/GetGlobalAchievementPercentagesForApp/v2/?gameid={appId}&format=json", ct);
-            if (pctRes.IsSuccessStatusCode)
-            {
-                using var doc = JsonDocument.Parse(await pctRes.Content.ReadAsStringAsync(ct));
-                var wrap = AchievementJson.Obj(doc.RootElement, "achievementpercentages");
-                if (wrap is { } w && AchievementJson.Arr(w, "achievements") is { } arr)
-                    foreach (var a in arr.EnumerateArray())
-                    {
-                        var id = AchievementJson.Str(a, "name");
-                        if (id is null || !byId.TryGetValue(id, out var ach)) continue;
-                        // Steam writes the number as a string in this one endpoint.
-                        var pct = JsonNum.Double(a, "percent")
-                                  ?? (double.TryParse(AchievementJson.Str(a, "percent"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var d) ? d : null);
-                        ach.Percent = pct;
-                    }
-            }
+            var why = root?.Element("error")?.Value?.Trim();
+            var priv = (root?.Element("privacyState")?.Value ?? "").Trim();
+            Log.Info($"Steam achievements: no stats on the Community page for {appId}" + (why is { Length: > 0 } ? $" ({why})" : priv.Length > 0 ? $" (privacy {priv})" : ""));
+            return AchievementJson.Failed(game, Source, previous,
+                (priv.Length > 0 && priv != "public") || (why ?? "").Contains("private", StringComparison.OrdinalIgnoreCase)
+                    ? PrivateProfile : "Steam Community did not show this game's stats");
         }
-        catch (Exception ex) { Log.Info($"Steam achievement percentages for {appId} skipped: {ex.Message}"); }
-
+        foreach (var a in list.Elements("achievement"))
+        {
+            var id = a.Element("apiname")?.Value?.Trim();
+            if (string.IsNullOrEmpty(id) || !byId.TryGetValue(id, out var ach)) continue;
+            ach.Unlocked = (string?)a.Attribute("closed") == "1";
+            ach.UnlockedAt = ach.Unlocked && long.TryParse(a.Element("unlockTimestamp")?.Value, out var secs) ? AchievementJson.Unix(secs) : null;
+        }
         return AchievementJson.Fresh(game, Source, previous, items);
     }
 }
@@ -506,6 +561,10 @@ public sealed class GogAchievementProvider : IAchievementProvider
             var (userId, token) = auth.Value;
             var productId = game.Id["gog:".Length..];
             var items = new List<Achievement>();
+            // GOG hands back a page_token on the last page too, and the same list again for it:
+            // walking the tokens to the 20-page cap stored Cyberpunk's 57 achievements twenty times
+            // over (Oct 6 2026). So an achievement is taken once, and a page with nothing new ends it.
+            var seen = new HashSet<string>(StringComparer.Ordinal);
             string? pageToken = null;
             for (var page = 0; page < 20; page++)
             {
@@ -523,11 +582,13 @@ public sealed class GogAchievementProvider : IAchievementProvider
                 if (!res.IsSuccessStatusCode) return AchievementJson.Failed(game, Source, previous, $"GOG answered {status}");
 
                 using var doc = JsonDocument.Parse(await res.Content.ReadAsStringAsync(ct));
+                var added = 0;
                 if (AchievementJson.Arr(doc.RootElement, "items") is { } arr)
                     foreach (var a in arr.EnumerateArray())
                     {
                         var id = AchievementJson.Str(a, "achievement_key") ?? AchievementJson.Str(a, "achievement_id") ?? AchievementJson.Str(a, "id");
-                        if (string.IsNullOrEmpty(id)) continue;
+                        if (string.IsNullOrEmpty(id) || !seen.Add(id)) continue;
+                        added++;
                         var when = AchievementJson.Iso(AchievementJson.Str(a, "date_unlocked"));
                         items.Add(new Achievement
                         {
@@ -542,8 +603,9 @@ public sealed class GogAchievementProvider : IAchievementProvider
                             Percent = JsonNum.Double(a, "rarity"),
                         });
                     }
-                pageToken = AchievementJson.Str(doc.RootElement, "page_token");
-                if (string.IsNullOrEmpty(pageToken)) break;
+                var next = AchievementJson.Str(doc.RootElement, "page_token");
+                if (string.IsNullOrEmpty(next) || next == pageToken || added == 0) break;
+                pageToken = next;
             }
             return AchievementJson.Fresh(game, Source, previous, items);
         }

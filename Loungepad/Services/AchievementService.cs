@@ -78,7 +78,8 @@ public sealed class AchievementService : IDisposable
 
     /// <summary>Whether the list on record is worth showing without asking again first.</summary>
     public static bool IsFresh(GameAchievements? set) =>
-        set is not null && set.FetchedAt != default && DateTime.UtcNow - set.FetchedAt < Fresh;
+        set is not null && set.FetchedAt != default && set.Version >= GameAchievements.CurrentVersion
+        && DateTime.UtcNow - set.FetchedAt < Fresh;
 
     /// <summary>
     /// Fetches the game's list unless one fresh enough is on record. One fetch per game at a
@@ -159,7 +160,7 @@ public sealed class AchievementService : IDisposable
                 var provider = ProviderFor(g)!;
                 if (provider.Unavailable || provider.Blocked(g) is not null) continue;
                 var have = _store.Get(g.Id);
-                if (!force && have is not null && have.FetchedAt != default)
+                if (!force && have is not null && have.FetchedAt != default && have.Version >= GameAchievements.CurrentVersion)
                 {
                     var window = g.Installed || g.Sessions > 0 ? PassFresh : IdleFresh;
                     if (DateTime.UtcNow - have.FetchedAt < window) continue;

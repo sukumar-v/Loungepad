@@ -51,7 +51,13 @@ public sealed class AchievementStore
                     try
                     {
                         var set = JsonSerializer.Deserialize<GameAchievements>(File.ReadAllText(f));
-                        if (set is { GameId.Length: > 0 }) _sets[set.GameId] = set;
+                        if (set is not { GameId.Length: > 0 }) continue;
+                        // One entry per achievement. GOG's paging once stored each up to twenty
+                        // times; a list kept from then, when the store will not answer to replace
+                        // it, would otherwise show every row twenty times and count 100 of 1140.
+                        if (set.Items.Select(a => a.Id).Distinct(StringComparer.Ordinal).Count() != set.Items.Count)
+                            set.Items = set.Items.GroupBy(a => a.Id, StringComparer.Ordinal).Select(g => g.First()).ToList();
+                        _sets[set.GameId] = set;
                     }
                     catch (Exception ex) { Log.Info($"Achievements: {Path.GetFileName(f)} unreadable: {ex.Message}"); }
                 }
@@ -175,8 +181,10 @@ public sealed class AchievementStore
     {
         var had = before is null ? new HashSet<string>() : before.Items.Where(a => a.Unlocked).Select(a => a.Id).ToHashSet();
         // A first fetch has nothing to compare against, and everything already unlocked years ago
-        // would read as new: nothing is announced on it.
-        if (before is null) return new List<Achievement>();
+        // would read as new: nothing is announced on it. Nor on a list that was empty, which is the
+        // same thing: the Steam sign-in once saved an empty list over every Steam game's real one,
+        // and the first fetch after that announced all of it.
+        if (before is null || before.Items.Count == 0) return new List<Achievement>();
         return now.Items.Where(a => a.Unlocked && !had.Contains(a.Id)).ToList();
     }
 }
