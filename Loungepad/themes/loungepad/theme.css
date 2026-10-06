@@ -535,7 +535,7 @@ body[data-view="detail"]:has(#screen-library.under) #backdrop::after { backgroun
 /* ------------------------------------------------------------ achievements --
    The unlocked share, bottom left of the art and only on the tile under the highlight, the
    way the caption is: a screenful of percentages would be the wall of captions this layout is
-   built to avoid. The app only writes the field while "Show on tiles" is on. */
+   built to avoid. The app only writes the field while the "Achievement progress" option is on. */
 .tv-ach {
   position: absolute; left: 10px; bottom: 8px;
   padding: 3px 8px; border-radius: 8px;

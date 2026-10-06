@@ -923,7 +923,7 @@ function applyTheme() {
    defaults" empties that one bag and nothing else. */
 const LOOK_IDS = {
   accent: "accent", hideHints: "hide-hints", animations: "animations", speed: "animation-speed",
-  trailers: "trailers", trailerSound: "trailer-sound",
+  trailers: "trailers", trailerSound: "trailer-sound", achievements: "achievement-progress",
 };
 const RESERVED_IDS = new Set(Object.values(LOOK_IDS));
 
@@ -976,6 +976,13 @@ function lookTrailers() {
   return mode === "all" && !libraryCanHostTrailers() ? "detail" : mode;
 }
 function lookTrailerSound() { return lookGet(LOOK_IDS.trailerSound) !== false; }
+/* The unlocked share on the library: the tiles' percentages and Loungepad's "23/50 achievements".
+   Per theme since Oct 6 2026 (the user's ask, for both themes); it was one switch under Stats, and
+   that switch's value in settings.json is what a theme with nothing set still reads. */
+function lookAchievements() {
+  const v = lookGet(LOOK_IDS.achievements);
+  return typeof v === "boolean" ? v : !(S.settings && S.settings.achievementsOnTiles === false);
+}
 
 /* ---- animation ----
    One number on the root, --motion, that every duration in app.css (and a well-behaved theme.css)
@@ -4206,6 +4213,9 @@ function themeSettingRows(theme, s, set) {
   if (lookTrailers() !== "off")
     rows.push(toggleRow("Trailer sound", "Off, trailers play silently",
       () => lookTrailerSound(), v => set(() => lookSet(LOOK_IDS.trailerSound, v))));
+  if (s.achievementsEnabled !== false)
+    rows.push(toggleRow("Achievement progress", "How much of each game's achievements you have unlocked, shown on the library. Off, it shows only on a game's page and in Stats",
+      () => lookAchievements(), v => set(() => { lookSet(LOOK_IDS.achievements, v); renderLibrary(); })));
   const put = (d, v) => set(() => { lookBag(true)[d.id] = v; });
   for (const d of defs) {
     const cur = () => themeSettingValue(theme, d);

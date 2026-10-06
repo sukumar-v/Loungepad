@@ -155,7 +155,8 @@ function achievementShare(g) {
   return a ? a.unlocked / a.total : -1;
 }
 
-function achievementsOnTiles() { return !S.settings || S.settings.achievementsOnTiles !== false; }
+/* The theme's "Achievement progress" option (lookAchievements in app.js). */
+function achievementsOnTiles() { return lookAchievements(); }
 
 /* For a theme's tile template. */
 function achievementView(g) {
@@ -1843,8 +1844,6 @@ function activitySettingsRows(s, set) {
   if (s.achievementsEnabled !== false) {
     rows.push(toggleRow("Unlock cards", "Once a game closes, a card for each achievement the session unlocked",
       () => s.achievementNotifications !== false, v => set(() => s.achievementNotifications = v)));
-    rows.push(toggleRow("Show on tiles", "The unlocked share on library tiles and in the hero text, for games that have any",
-      () => s.achievementsOnTiles !== false, v => set(() => s.achievementsOnTiles = v)));
     const withAch = Object.keys(S.achievements || {}).length;
     rows.push({
       name: "Refresh all achievements", hint: `${withAch} game${withAch === 1 ? "" : "s"} with achievements on record. Fetches every game again, paced, in the background`,
