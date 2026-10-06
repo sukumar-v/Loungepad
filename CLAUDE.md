@@ -99,9 +99,9 @@ Stop the scrolled grid from clipping through the All games header
 - **Nothing identifying goes to the metadata service.** `/v1/owned` and `/v1/achievements` are gone
   from the worker and from the launcher: both took a SteamID, and the worker let anyone with the
   URL read any account through its Steam key. Owned games and achievements come from Steam
-  directly, with the user's own Web API key or the Steam sign-in token (`access_token=`, which
-  GetOwnedGames takes; the ISteamUserStats calls are **unverified** with it -- a 401/403 on the
-  schema says so in the row). A launcher with neither fetches no Steam achievements. The worker
+  directly, with the user's own Web API key or the Steam sign-in (the token, `access_token=`, for
+  GetOwnedGames; the ISteamUserStats calls do not take it at all -- see "Steam achievements" under
+  Play sessions). A launcher with neither fetches no Steam achievements. The worker
   also requires `X-Loungepad-Client: 1` (a speed bump, not a secret), hashes the client IP in its
   rate-limit keys, fails open when a KV write is refused, caches only 200 and 404, and only steps
   down an age-rating shape when IGDB's 400 names `age_ratings`. `invocation_logs` is off.
@@ -480,13 +480,32 @@ Stop the scrolled grid from clipping through the All games header
   the top of the view when a search opens below the fold, with the shelf kept `min-height:
   var(--view-h)` while searching so a short result list can get there. B also scrolls the page
   home when the highlight is already on the recents but the stick moved the page.
-- **The first move down still jumps to the grid** (the user's call, the same day: keep the old
-  slide's landing, All games filling the view, for the initial scroll only). `gridJumpTarget`
-  answers the grid's top when the grid is under the fold at the top of the page (never in Shelf)
-  and the page is above it; `libraryNav` jumps on a step from outside the grid into it, the wheel
-  router and the stick loop on the first push down from scrollTop 0 (`fromRest`). Wheel-down and
-  stick input are held off while the jump glides (`gridJumpRunning`), or the animator would hand
-  over to them halfway. Scrolling back up is continuous, so the recents return as a row.
+- **The browsing look changes with the motion, and only by fading** (theme 4.6; "a small flicker
+  when we scroll up", the user's report, Oct 6 2026). Two causes, both fixed. `watchScrolled` marked
+  by `scrollTop`, so a glide back to the top dropped `.scrolled` on its last frame and the whole
+  look changed on a screen that had stopped; it marks by `scrollTarget` now, so the drop is on the
+  first frame (checked: 770 of 842, the D-pad's and the wheel's glides alike). And the browsing
+  wash was `#backdrop::after` with a different background, and a gradient does not transition into
+  another gradient: the scrim swapped in one frame while the art took 380ms to blur. The resting
+  scrim now only fades (opacity), and the wash is `.tv::before` (z-index -1 inside the isolated
+  screen), fading in against it. The edge mask still toggles with `.scrolled`: leaving it on at
+  rest would make `.tv-view` a backdrop root and take the blur out of the Playing chip.
+- **The page never rests between the art and the grid** (the user's calls, Oct 6 2026: first the
+  jump down, then the same snap on the way up). A move down from above the grid lands on
+  `gridJumpStop`; a move up that would end above it lands on 0. `libraryNav` jumps down on a step
+  from outside the grid into it (its step back onto the recents already lands on 0, through their
+  scroll-margin); the wheel router and the stick loop jump both ways (`gridJumpFor(sc, dir, by)`,
+  `by` being how far the move would go, and the stick's coast counting in the direction it moves).
+  A wheel or stick push the same way as a running jump is held off (`gridJumpRunning(sc, dir)`), or
+  the animator would hand over to it halfway; the other way is answered. Never in Shelf: its grid
+  starts on screen, and `gridJumpStop` is null for it.
+- **`gridJumpStop` is the section top less `REVEAL_MARGIN`, not the grid's top edge.** It is exactly
+  where `revealOffset` puts the page for a highlight on the first row. Landing on the edge (872)
+  left the reveal's 30px to be made by the first Right along the row (842), which read as the row
+  settling a moment after it had landed (the user's report). Search reveals to the same stop.
+  Checked in the preview: Right x5 along the top row stays at 842, the held stick goes 1250 → 846
+  → 0 without resting in between, wheel-up deep in the grid scrolls natively until a notch would
+  cross the stop.
 - **Rows scrolled out of a list still have real rects.** In Loungepad they used to sit behind the
   recents row, which parked over the top of the grid; it is a row of the same page now. Holding Up, the scroll's glide trails the
   highlight; 22-40 px of lag (stage px) made a recents tile score nearer than the grid row above,
@@ -1800,7 +1819,27 @@ Stop the scrolled grid from clipping through the All games header
   `namespace`), GOG by the numeric product id. Both new fields are carried in `MergeScanned` with
   `??=`, since the manifest scan knows Epic's and not Xbox's. RetroAchievements is the one title
   match, and only where the ROM's hash finds nothing (`RetroHash`; disc systems are never hashed).
-- **Steam goes through the proxy's `/v1/achievements`** (deployed Sept 2026, verified on this PC's
+- **Steam achievements: the list keyless, the unlocks by key or by the Community page** (Oct 6
+  2026). The list, rarity included, is `IPlayerService/GetGameAchievements` (no key, no token;
+  `{"response":{}}` is a game with none, the one answer that may say so; icons are file names under
+  `shared.akamai.steamstatic.com/community_assets/images/apps/<appid>/`). With a key the unlocks are
+  `GetPlayerAchievements`; with only the sign-in they are the account's Community stats page,
+  `steamcommunity.com/profiles/<id>/stats/<appid>/achievements/?xml=1`, which carries every
+  unlock's time and needs nothing for a profile whose game details are public (this PC's is).
+  **The ISteamUserStats calls do not take the sign-in's `access_token`**: they answer 400 "Required
+  parameter 'key' is missing" (GetOwnedGames answers a bad token with 401), and that 400 was read as
+  "no stats", so signing in saved 0/0 over every Steam game's list. Answers from the Community
+  page: XML; an HTML profile page for a game with no stats for this account (owned and never
+  started -- Half-Life 2 here -- or achievement-less), which is "nothing unlocked" unless the
+  record had unlocks, when the record is kept; `<response><error>` for a profile Steam will not
+  load. Ids are the same api names as before, compared case-blind (the page lower-cases them).
+  A private profile with only the sign-in needs the community cookies, which are not read yet:
+  the row says to make game details public or add a key. Harness (20 checks, real endpoints, the
+  real log held shut): Hollow Knight 42/63 with times, TFC none, HL2 0/69, unowned Cyberpunk 0/57.
+  `GameAchievements.Version` (`CurrentVersion` 1) makes every list from before this stale, and
+  `NewlyUnlocked` announces nothing against an empty list, or refilling the emptied ones would
+  have carded every old unlock.
+- **Steam used to go through the proxy's `/v1/achievements`** (gone in 1.6.2; verified on this PC's
   account: Hollow Knight 42/63 with rarity and icons) or the user's own key. **`GetPlayerAchievements`
   answers 403 "Profile is not public" for an app the account has never started or does not own,
   on a public profile too** (3DMark did, on this account, while Hollow Knight answered with its
@@ -1813,7 +1852,12 @@ Stop the scrolled grid from clipping through the All games header
   (`menu.gog.com/v1/account/basic`: `accessToken`, `accessTokenExpires`, `userId`) and
   `gameplay.gog.com/clients/<GAME id>/users/<userId>/achievements` takes it -- "clients" is the
   game, not an OAuth client. That is Galaxy's route without Galaxy's dead credentials. Kept on the
-  session (`GogSession`) and re-read near expiry. Epic is two GraphQL queries on
+  session (`GogSession`) and re-read near expiry. **Its `page_token` never runs out**: the last page
+  carries one too and answers the same list again, so walking tokens to the 20-page cap stored
+  Cyberpunk's 57 achievements 20 times (1140, 100 unlocked; Oct 6 2026). Ids are taken once and a
+  page with nothing new ends the walk, and `AchievementStore.Load` drops duplicate ids from any
+  list kept from before. The live paging fix is unverified (it needs the GOG session); the
+  stored list loads as 5/57. Epic is two GraphQL queries on
   `launcher.store.epicgames.com/graphql` with `Authorization: bearer <eg1 token>`; Xbox is
   `achievements.xboxlive.com` with contract version 2. All three are unverified live (no fetch was
   made against a signed-in account here); the shapes are the ones Playnite's SuccessStory and
