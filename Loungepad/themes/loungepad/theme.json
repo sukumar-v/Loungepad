@@ -1,7 +1,7 @@
 {
   "name": "Loungepad",
   "author": "Loungepad",
-  "version": "4.5",
+  "version": "4.6",
   "description": "Full-bleed art, recents in a row, the grid on the way down",
   "tokens": {
     "--bg": "#05070B",

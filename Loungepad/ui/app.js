@@ -1269,9 +1269,14 @@ const REVEAL_MARGIN = 30;
 /**
  * Mark a scroller while it is scrolled away from the top, which is what turns on the top fade.
  * Attaches once per element; the scroller nodes outlive the rows rendered into them.
+ *
+ * By where it is heading, not where it is: a glide back to the top drops the mark on its first
+ * frame rather than its last. The Loungepad theme hangs its whole browsing look off this class,
+ * and going down the change already started with the motion; coming back up it waited for the
+ * glide to finish and then played on a screen that had stopped, which read as a flicker.
  */
 function watchScrolled(scroller) {
-  const mark = () => scroller.classList.toggle("scrolled", scroller.scrollTop > 1);
+  const mark = () => scroller.classList.toggle("scrolled", scrollTarget(scroller, "y") > 1);
   if (!scroller.dataset.scrollWatched) {
     scroller.dataset.scrollWatched = "1";
     scroller.addEventListener("scroll", mark, { passive: true });

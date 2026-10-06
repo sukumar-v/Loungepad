@@ -226,19 +226,37 @@ html[data-theme-dim-art="false"] body:not([data-view="detail"]):has(#screen-libr
 body:has(#screen-library:is(.active, .closing, .under)) #backdrop::after {
   content: "";
   position: absolute; inset: 0; pointer-events: none;
-  transition: background calc(380ms * var(--motion, 1)) var(--ease);
+  transition: opacity calc(380ms * var(--motion, 1)) var(--ease);
   background:
     linear-gradient(180deg, color-mix(in srgb, var(--bg) 50%, transparent) 0, transparent 14%),
     linear-gradient(0deg, color-mix(in srgb, var(--bg) 90%, transparent) 0, color-mix(in srgb, var(--bg) 80%, transparent) 22%, color-mix(in srgb, var(--bg) 55%, transparent) 32%, transparent 40%),
     radial-gradient(ellipse 46% 34% at 8% 66%, color-mix(in srgb, var(--bg) 72%, transparent) 0, color-mix(in srgb, var(--bg) 30%, transparent) 60%, transparent 100%);
 }
-body:not([data-view="detail"]):has(#screen-library:is(.active, .closing, .under) .tv-view.scrolled) #backdrop::after {
+/* Browsing, the resting scrim fades out as the wash behind the grid (.tv::before, below) fades in.
+   The wash used to BE this scrim with another background, and a gradient cannot be transitioned
+   into a different gradient: the two swapped in one frame, while the art underneath took 380ms to
+   blur and darken. Going down that hid in the motion; coming back up to the recents it landed on
+   a still screen as a flicker (the user's report, Oct 6 2026). Two layers crossfading have nothing
+   that cannot be eased. */
+body:not([data-view="detail"]):has(#screen-library:is(.active, .closing, .under) .tv-view.scrolled) #backdrop::after { opacity: 0; }
+
+/* The wash behind the grid while browsing: on the layout rather than the backdrop, so it sits over
+   the art and under every tile the way the scrim did, and fades with an opacity rather than
+   swapping. Behind .tv's own content (the screen is isolated, so -1 stays inside it), and gone with
+   the library under a game's page, which hides the library. */
+.tv { position: relative; }
+.tv::before {
+  content: "";
+  position: absolute; inset: 0; z-index: -1; pointer-events: none;
   background: linear-gradient(180deg,
     color-mix(in srgb, var(--bg) 90%, transparent),
     color-mix(in srgb, var(--bg) 82%, transparent));
+  opacity: 0;
+  transition: opacity calc(380ms * var(--motion, 1)) var(--ease);
 }
-/* With the art kept bright the scrim only has to hold the chrome and the tiles, not hide a picture. */
-html[data-theme-dim-art="false"] body:not([data-view="detail"]):has(#screen-library:is(.active, .closing, .under) .tv-view.scrolled) #backdrop::after {
+.tv:has(.tv-view.scrolled)::before { opacity: 1; }
+/* With the art kept bright the wash only has to hold the chrome and the tiles, not hide a picture. */
+html[data-theme-dim-art="false"] .tv::before {
   background: linear-gradient(180deg,
     color-mix(in srgb, var(--bg) 46%, transparent),
     color-mix(in srgb, var(--bg) 58%, transparent));
