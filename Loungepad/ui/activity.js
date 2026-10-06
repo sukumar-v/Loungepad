@@ -289,11 +289,13 @@ function achItemIcon(a) {
 /* ============================== the achievements sheet ============================== */
 
 const ACH_FILTERS = [["all", "All"], ["unlocked", "Unlocked"], ["locked", "Locked"]];
-const ACH_SORTS = [["default", "Store order"], ["rarity", "Rarest first"], ["date", "Latest unlocked"], ["name", "A – Z"]];
+/* Latest unlocked first, and the list opens on it (the user's call, Oct 6 2026): what you got last
+   is what you came to look at, where the store's own order put it wherever the store had it. */
+const ACH_SORTS = [["date", "Latest unlocked"], ["default", "Store order"], ["rarity", "Rarest first"], ["name", "A – Z"]];
 
 /* `focusId` opens the list on one achievement: the one a Stats row or a day's timeline was on. */
 function openAchievements(gameId, from, focusId) {
-  achState = { gameId, idx: 0, filter: "all", sort: "default", set: null, head: null, reveal: new Set(), from: from || view, focusId: focusId || null };
+  achState = { gameId, idx: 0, filter: "all", sort: ACH_SORTS[0][0], set: null, head: null, reveal: new Set(), from: from || view, focusId: focusId || null };
   showOverlay("overlay-achievements");
   renderAchievements();
   send({ cmd: "achievementsOpen", id: gameId });
@@ -323,7 +325,10 @@ function achItems() {
   const pct = (a) => (typeof a.percent === "number" ? a.percent : 101);
   const when = (a) => (a.unlockedAt ? new Date(a.unlockedAt).getTime() : 0);
   if (achState.sort === "rarity") items = [...items].sort((a, b) => pct(a) - pct(b) || a.name.localeCompare(b.name));
-  else if (achState.sort === "date") items = [...items].sort((a, b) => when(b) - when(a) || pct(a) - pct(b));
+  // Unlocked before locked, the newest unlock first; an unlock the store gave no date for comes
+  // after the dated ones rather than among the locked. Ties keep the store's order (the sort is
+  // stable): the locked ones read as the store lists them.
+  else if (achState.sort === "date") items = [...items].sort((a, b) => (b.unlocked ? 1 : 0) - (a.unlocked ? 1 : 0) || when(b) - when(a));
   else if (achState.sort === "name") items = [...items].sort((a, b) => a.name.localeCompare(b.name));
   return items;
 }
