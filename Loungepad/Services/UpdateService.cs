@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.IO;
-using System.IO.Compression;
 using System.Net;
 using System.Net.Http;
 using System.Runtime.InteropServices;
@@ -29,14 +28,19 @@ public sealed class UpdateStatus
 }
 
 /// <summary>
-/// Updates from the GitHub releases, the same zip a person would download by hand.
+/// Updates from the GitHub releases, the same Loungepad.exe a person would download by hand.
 ///
-/// The release's zip is fetched, checked against the size and SHA-256 GitHub publishes for it,
-/// and unpacked into %LOCALAPPDATA%\Loungepad\updates. Installing is then a swap in the folder the
-/// app was unzipped into: every file the release carries is renamed aside and the new one copied
-/// in its place, the new exe is started, and this one exits. Windows lets a running exe be
+/// The release's exe is fetched, checked against the size and SHA-256 GitHub publishes for it and
+/// against the version it was released as, and staged in %LOCALAPPDATA%\Loungepad\updates.
+/// Installing is then a swap beside the running copy: this exe is renamed aside and the new one
+/// copied in its place, the new exe is started, and this one exits. Windows lets a running exe be
 /// renamed, though not deleted, so nothing has to wait for this process to be gone first; the
-/// set-aside files are deleted by the next start (<see cref="FinishPreviousUpdate"/>).
+/// set-aside file is deleted by the next start (<see cref="FinishPreviousUpdate"/>).
+///
+/// Up to 1.6.3 a release was a zip of the exe with ui\, themes\ and vortex-bridge\ beside it. Those
+/// are inside the exe now (<see cref="ShippedFiles"/>). Releases still carry a
+/// Loungepad-v&lt;version&gt;-win-x64.zip for the copies that only know how to read one, and
+/// <see cref="RemoveZipLeftovers"/> clears the old folders out from beside an exe that came that way.
 ///
 /// With automatic updates on, a new version is downloaded in the background and installed the
 /// next time the app starts -- at login, usually -- because installing means a restart and the
@@ -60,7 +64,18 @@ public sealed class UpdateService : IDisposable
     public static string UpdatesDir => Path.Combine(Paths.LocalDir, "updates");
     private static string StagedFile => Path.Combine(UpdatesDir, "staged.json");
     private static string InstallDir => AppContext.BaseDirectory;
+    /// <summary>The name this copy runs as. A download keeps the asset's name, but a person may
+    /// have renamed theirs, and the swap has to replace the file that actually runs.</summary>
     private static string ExeName => Path.GetFileName(Environment.ProcessPath ?? "Loungepad.exe");
+
+    /// <summary>
+    /// The release asset this build updates from: the exe itself, under a name with no version in
+    /// it, so https://github.com/sukumar-v/Loungepad/releases/latest/download/Loungepad.exe is
+    /// always the newest. x64 is the only build; another architecture would be Loungepad-arm64.exe.
+    /// </summary>
+    public static string AssetName { get; } = RuntimeInformation.ProcessArchitecture == Architecture.X64
+        ? "Loungepad.exe"
+        : $"Loungepad-{RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant()}.exe";
 
     private readonly Func<bool> _auto;
     private readonly HttpClient _http;
@@ -131,7 +146,7 @@ public sealed class UpdateService : IDisposable
         if (_auto() && !userAsked) await DownloadAsync(userAsked: false);
     }
 
-    /// <summary>Download and unpack the release found by the last check, ready to install.</summary>
+    /// <summary>Download and check the release found by the last check, ready to install.</summary>
     public async Task DownloadAsync(bool userAsked)
     {
         lock (_gate)
@@ -140,8 +155,7 @@ public sealed class UpdateService : IDisposable
             _busy = true;
         }
         var release = _release;
-        var zip = Path.Combine(UpdatesDir, release.AssetName);
-        var part = zip + ".part";
+        var part = Path.Combine(UpdatesDir, release.AssetName + ".part");
         try
         {
             Status.UserAsked = userAsked;
@@ -179,14 +193,22 @@ public sealed class UpdateService : IDisposable
                     actual = Convert.ToHexString(await SHA256.HashDataAsync(fs)).ToLowerInvariant();
                 if (actual != expected) throw new InvalidDataException("the download does not match its checksum");
             }
-            File.Move(part, zip, overwrite: true);
+
+            // The tag and the exe have to agree. An exe built with the previous version number
+            // would install, start, find the release newer than itself, and install it again on
+            // every start after.
+            var built = BuiltVersion(part);
+            if (built != release.Version)
+                throw new InvalidDataException(built is null
+                    ? "the download is not a Loungepad program"
+                    : $"the download is version {Format(built)}, not {Format(release.Version)}");
 
             var dir = Path.Combine(UpdatesDir, Format(release.Version));
             if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
-            // ExtractToDirectory refuses an entry that would land outside the folder.
-            ZipFile.ExtractToDirectory(zip, dir);
-            File.Delete(zip);
-            if (Validate(dir) is { } problem) throw new InvalidDataException(problem);
+            Directory.CreateDirectory(dir);
+            // Under the name this copy runs as: that is the file the swap replaces.
+            File.Move(part, Path.Combine(dir, ExeName));
+            if (Validate(dir, release.Version) is { } problem) throw new InvalidDataException(problem);
 
             File.WriteAllText(StagedFile, JsonSerializer.Serialize(new StagedUpdate { Version = Format(release.Version), Dir = dir }));
             Log.Info($"Update: {Status.Latest} downloaded to {dir}");
@@ -239,13 +261,58 @@ public sealed class UpdateService : IDisposable
     {
         try
         {
-            foreach (var f in Directory.EnumerateFiles(InstallDir, "*" + SetAsideSuffix, SearchOption.AllDirectories))
+            // Not recursive: the exe may live in Downloads or on the Desktop now, and walking
+            // everything under one of those at every start is a slow start for nothing. Only the
+            // exe is ever set aside; a zip's set-aside files in ui\ go with the folder below.
+            foreach (var f in Directory.EnumerateFiles(InstallDir, "*" + SetAsideSuffix, SearchOption.TopDirectoryOnly))
             {
                 try { File.Delete(f); } catch { /* still held; the next start tries again */ }
             }
         }
         catch { }
+        if (WhyNot() is null) RemoveZipLeftovers();
         if (ReadStaged() is null && Directory.Exists(UpdatesDir)) Discard();
+    }
+
+    /// <summary>
+    /// The folders a zip release put beside the exe, which this exe carries inside itself and
+    /// never reads: an install updated from 1.6.3 or older by its own updater still has them.
+    /// Only folders that are plainly ours go, because the exe can sit in a folder with other
+    /// things in it, and only from a release build (a dev build's output is nobody's install).
+    /// </summary>
+    private static void RemoveZipLeftovers()
+    {
+        void Remove(string dir)
+        {
+            try
+            {
+                Directory.Delete(dir, recursive: true);
+                Log.Info($"Removed {dir}: a zip release's files, which are inside the exe now");
+            }
+            catch (Exception ex) { Log.Info($"Could not remove {dir}: {ex.Message}"); }
+        }
+
+        static bool Mentions(string file, string word)
+        {
+            try { return File.Exists(file) && File.ReadAllText(file).Contains(word, StringComparison.OrdinalIgnoreCase); }
+            catch { return false; }
+        }
+
+        var ui = Path.Combine(InstallDir, "ui");
+        if (Mentions(Path.Combine(ui, "index.html"), "<title>Loungepad</title>")) Remove(ui);
+
+        var bridge = Path.Combine(InstallDir, "vortex-bridge");
+        if (Mentions(Path.Combine(bridge, "info.json"), "\"Loungepad bridge\"")) Remove(bridge);
+
+        var themes = Path.Combine(InstallDir, "themes");
+        if (!Directory.Exists(themes)) return;
+        foreach (var id in ShippedFiles.Folders("themes").Concat(ThemeService.Renamed.Keys))
+        {
+            var dir = Path.Combine(themes, id);
+            if (File.Exists(Path.Combine(dir, "theme.json"))) Remove(dir);
+        }
+        try { if (!Directory.EnumerateFileSystemEntries(themes).Any()) Directory.Delete(themes); }
+        catch { /* not ours to insist on */ }
     }
 
     // ---- the swap ----
@@ -359,14 +426,13 @@ public sealed class UpdateService : IDisposable
             var tag = node?["tag_name"]?.GetValue<string>();
             if (ParseVersion(tag) is not { } version) { Fail($"The latest release has no version number ({tag})"); return null; }
 
-            var suffix = $"-win-{RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant()}.zip";
             foreach (var asset in node!["assets"]?.AsArray() ?? new JsonArray())
             {
                 var name = asset?["name"]?.GetValue<string>();
                 var url = asset?["browser_download_url"]?.GetValue<string>();
-                if (name is null || url is null || !name.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)) continue;
-                // Only a plain file name: it becomes a path under the updates folder.
-                if (name != Path.GetFileName(name)) continue;
+                // The exe by its exact name. The zip beside it is for builds up to 1.6.3, which
+                // look for "-win-x64.zip" and cannot read anything else.
+                if (name is null || url is null || !name.Equals(AssetName, StringComparison.OrdinalIgnoreCase)) continue;
                 var size = asset!["size"]?.GetValue<long>() ?? 0;
                 var digest = asset["digest"]?.GetValue<string>();
                 var sha = digest is not null && digest.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase)
@@ -405,16 +471,31 @@ public sealed class UpdateService : IDisposable
             // Only ever a folder we unpacked into, whatever the file says.
             var dir = Path.GetFullPath(s.Dir);
             if (!dir.StartsWith(Path.GetFullPath(UpdatesDir) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) return null;
-            return Validate(dir) is null ? new Staged(v, dir) : null;
+            return Validate(dir, v) is null ? new Staged(v, dir) : null;
         }
         catch { return null; }
     }
 
-    private static string? Validate(string dir)
+    private static string? Validate(string dir, Version version)
     {
-        if (!File.Exists(Path.Combine(dir, ExeName))) return $"the download has no {ExeName}";
-        if (!File.Exists(Path.Combine(dir, "ui", "index.html"))) return "the download has no ui folder";
+        var exe = Path.Combine(dir, ExeName);
+        if (!File.Exists(exe)) return $"the download has no {ExeName}";
+        if (BuiltVersion(exe) != version) return $"the downloaded {ExeName} is not version {Format(version)}";
         return null;
+    }
+
+    /// <summary>The version an exe was built as, from its version resource (the csproj's
+    /// &lt;Version&gt;, which is also what <see cref="Current"/> reads), or null for a file that
+    /// has none -- which is anything that is not a program.</summary>
+    private static Version? BuiltVersion(string exe)
+    {
+        try
+        {
+            var info = FileVersionInfo.GetVersionInfo(exe);
+            if (info.FileMajorPart == 0 && info.FileMinorPart == 0 && info.FileBuildPart == 0) return null;
+            return new Version(info.FileMajorPart, info.FileMinorPart, info.FileBuildPart);
+        }
+        catch { return null; }
     }
 
     /// <summary>Everything under the updates folder goes: a download that was installed, one
