@@ -10,11 +10,11 @@
                row of the grid peeks under it.
      browsing  anywhere below the top, however it got there: the art recedes to a wash,
                the title fades, and the recents go up off the screen like any other row.
-               The first move down from the top -- the D-pad's step into the grid, a
-               wheel, the stick -- goes the whole way, so All games fills the view (the
-               app's gridJumpTarget); from there the page scrolls normally, and the
-               recents come back as a row on the way up. Walking up onto them with the
-               D-pad returns to the top of the page.
+               The page never rests between the two: a move down from above the grid --
+               the D-pad's step into it, a wheel, the stick -- goes the whole way, so All
+               games fills the view, and a move up past the grid's first row goes the
+               whole way back to the top (the app's gridJumpFor). Inside the grid the
+               page scrolls normally.
 
    The page used to be a fixed stack slid up with translateY when the highlight reached
    the grid, and the grid scrolled inside it. Only a D-pad step into the grid moved the

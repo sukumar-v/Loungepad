@@ -656,49 +656,68 @@ function canScrollY(el, dy) {
 }
 
 /*
- * The jump to the grid. Where a library page opens on a screen of art with the grid under the fold
- * -- the Loungepad theme, whose recents sit under the hero and whose grid is a peek below them --
- * the first move down goes the whole way, and All games fills the view (the user's call, Oct 6
- * 2026). Only that first move: from there the page scrolls like any other, and the recents come back
- * as a row on the way up. The D-pad's step from the recents into the grid jumps; so does the first
- * wheel or stick push from the top of the page. Shelf's grid starts on screen, so there is nothing
- * to jump to and nothing changes there.
- *
- * Returns the scrollTop of the grid's top, or null for no jump: the grid is already on screen at the
- * top of the page, or the page is already at or past it. `fromRest` asks for the page to be at its
- * very top as well, which is what "the first move" is for a wheel and the stick.
+ * The jumps between the art and the grid. Where a library page opens on a screen of art with the
+ * grid under the fold -- the Loungepad theme, whose recents sit under the hero and whose grid is a
+ * peek below them -- the stretch between the top of the page and the grid is never somewhere the
+ * page comes to rest (the user's calls, Oct 6 2026). A move down from anywhere above the grid goes
+ * the whole way, and All games fills the view; a move up that would carry the page above the grid
+ * goes the whole way back to the top. Inside the grid the page scrolls like any other. The D-pad's
+ * step from the recents into the grid jumps down (and its step back onto them already lands on the
+ * top, see the recents' scroll-margin); the wheel and the stick jump both ways. Shelf's grid starts
+ * on screen, so there is nothing to jump to and nothing changes there.
  */
-let gridJumpTo = null;
+let gridJumpTo = null, gridJumpDir = 0;
 
-function gridJumpTarget(sc, fromRest) {
+/**
+ * Where the page stands with All games filling the view: exactly where revealOffset puts the page
+ * for a highlight on the grid's first row -- the section's top less REVEAL_MARGIN, the room it keeps
+ * for the lift and the glow. Landing on the grid's own top edge instead left that room to be made
+ * by the first step along the row, which read as the row settling a moment after it had landed.
+ * Null where the grid starts on screen at the top of the page (Shelf), so there is nothing to jump.
+ */
+function gridJumpStop(sc) {
   const grid = $("gridScroll");
   if (view !== "library" || !sc || !grid || sc === grid || sc !== libraryScroller()) return null;
   const first = grid.querySelector(FOCUSABLE_SEL);
-  if (!first || offsetWithin(first, sc, "y") + first.offsetHeight + REVEAL_MARGIN <= sc.clientHeight) return null;
-  const top = offsetWithin(grid, sc, "y");
+  if (!first) return null;
+  const near = offsetWithin(first, sc, "y");
+  if (near + first.offsetHeight + REVEAL_MARGIN <= sc.clientHeight) return null;
+  const sec = first.closest(".lib-section");
+  const reach = sec && sec !== sc && sc.contains(sec) ? offsetWithin(sec, sc, "y") : near;
+  return Math.max(0, Math.min(reach - REVEAL_MARGIN, sc.scrollHeight - sc.clientHeight));
+}
+
+/** Where a move `dir` (1 down, -1 up) of `by` pixels lands instead, or null to let it scroll. */
+function gridJumpFor(sc, dir, by) {
+  const stop = gridJumpStop(sc);
+  if (stop === null || !dir) return null;
   const at = scrollTarget(sc, "y");
-  if (fromRest ? at > 1 : at >= top - 1) return null;
-  return top;
+  if (dir > 0) return at < stop - 1 ? stop : null;
+  return at > 1 && at - by < stop - 1 ? 0 : null;
 }
 
 function startGridJump(sc, to) {
+  gridJumpDir = Math.sign(to - scrollTarget(sc, "y"));
   animateScroll(sc, "y", to);
   gridJumpTo = scrollTarget(sc, "y");   // clamped: a short library jumps to its end
 }
 
-/** The jump is still gliding. A wheel or the stick pushing on meanwhile would tear it in half
-    (the animator hands over to any scroll it did not make), so they wait for it. */
-function gridJumpRunning(sc) {
+/** A jump in that direction is still gliding. A wheel or the stick pushing the same way meanwhile
+    would tear it in half (the animator hands over to any scroll it did not make), so it waits; the
+    other way is a change of mind and is answered. */
+function gridJumpRunning(sc, dir) {
   const a = sc && scrollAnims.get("y").get(sc);
-  return gridJumpTo !== null && !!a && a.running && a.target === gridJumpTo;
+  return gridJumpTo !== null && dir === gridJumpDir && !!a && a.running && a.target === gridJumpTo;
 }
 
 window.addEventListener("wheel", (e) => {
   if (Math.abs(e.deltaY) <= Math.abs(e.deltaX) || e.ctrlKey) return;
-  if (e.deltaY > 0 && !searchOpen && Nav.activeScope() === $("screen-library")) {
+  if (!searchOpen && Nav.activeScope() === $("screen-library")) {
     const page = libraryScroller();
-    if (gridJumpRunning(page)) { e.preventDefault(); return; }
-    const to = gridJumpTarget(page, true);
+    const dir = Math.sign(e.deltaY);
+    if (gridJumpRunning(page, dir)) { e.preventDefault(); return; }
+    const by = Math.abs(e.deltaMode === 1 ? e.deltaY * 40 : e.deltaMode === 2 ? e.deltaY * page.clientHeight : e.deltaY);
+    const to = gridJumpFor(page, dir, by);
     if (to !== null) { e.preventDefault(); startGridJump(page, to); return; }
   }
   for (let p = e.target instanceof Element ? e.target : null; p; p = p.parentElement)
@@ -763,13 +782,16 @@ function onStickScroll(notchesPerSec) {
 
     const el = stickScrollEl();
     if (el !== stickEl) { stickEl = el; stickPos = el ? el.scrollTop : 0; }
-    const jump = el && target > 0 && !gridJumpRunning(el) ? gridJumpTarget(el, true) : null;
+    // Which way it is going: the stick's push, or, once it is let go, the coast -- a coast that
+    // carries the page up past the grid finishes the move like a push would.
+    const dir = Math.sign(target || stickVel);
+    const jump = el && !gridJumpRunning(el, dir) ? gridJumpFor(el, dir, Math.abs(stickVel * dt)) : null;
     if (jump !== null) {
-      // The first push down from the top of the page goes to the grid in one glide (see
-      // gridJumpTarget); held on, the stick carries on from there once it lands.
+      // Down from above the grid lands on it in one glide, up past its top lands on the top of the
+      // page (see gridJumpFor); held on, the stick carries on from there once it lands.
       startGridJump(el, jump);
       stickPos = el.scrollTop;
-    } else if (el && gridJumpRunning(el)) {
+    } else if (el && gridJumpRunning(el, dir)) {
       stickPos = el.scrollTop;
     } else if (el) {
       // Something else moved it -- the D-pad's glide, a real wheel -- so carry on from there.
@@ -2939,10 +2961,10 @@ function updateLibraryFocus(noScroll) {
 
 function libraryNav(btn) {
   // A step from the recents (or the Playing card) into the grid lands with All games filling the
-  // view (gridJumpTarget). Asked before the step, whose own reveal moves the scroll target.
+  // view (gridJumpFor). Asked before the step, whose own reveal moves the scroll target.
   const grid = $("gridScroll"), page = libraryScroller();
   const before = focusEl();
-  const jump = before && !grid.contains(before) ? gridJumpTarget(page, false) : null;
+  const jump = before && !grid.contains(before) ? gridJumpFor(page, 1, 0) : null;
   if (!navMove(btn)) return;
   const now = focusEl();
   if (jump !== null && now && grid.contains(now)) startGridJump(page, jump);
@@ -6014,9 +6036,10 @@ function openSearch() {
 
 /* A search is about the grid, so opening one brings the grid up when it is under the fold: at the
    top of the Loungepad theme's page it is a peek below the recents, and the results would be
-   typed into a sliver. Its top goes to the top of the view (the theme keeps the page tall enough
-   while searching). Shelf's grid starts on screen, and a page already scrolled down into the
-   grid is left where it is; a grid that scrolls on its own needs nothing. */
+   typed into a sliver. It goes where the jump down lands (gridJumpStop), so taking the first
+   result afterwards moves nothing; the theme keeps the page tall enough while searching. Shelf's
+   grid starts on screen, and a page already scrolled down into the grid is left where it is; a
+   grid that scrolls on its own needs nothing. */
 function revealSearchResults() {
   const sc = libraryScroller(), grid = $("gridScroll");
   if (!sc || sc === grid) return;
@@ -6024,7 +6047,8 @@ function revealSearchResults() {
   const below = offsetWithin(first, sc, "y") + first.offsetHeight + REVEAL_MARGIN;
   if (below <= scrollTarget(sc, "y") + sc.clientHeight) return;
   watchScrolled(sc);
-  animateScroll(sc, "y", offsetWithin(grid, sc, "y"));
+  const stop = gridJumpStop(sc);
+  animateScroll(sc, "y", stop !== null ? stop : offsetWithin(grid, sc, "y"));
 }
 
 function closeSearch(keep) {
