@@ -55,6 +55,14 @@ Stop the scrolled grid from clipping through the All games header
   `try/finally` with the close in the `finally`: WM_CLOSE to the window and a wait, and
   `Stop-Process` only if it has not gone (a kill mid-save can truncate library.json; see the
   first-run setup notes).
+- **The real app can be read without sending it a single key**: start it with
+  `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333` in its environment (set it
+  in the launching shell only) and talk CDP to `http://127.0.0.1:9333/json` -- `Runtime.evaluate`
+  for the page's state, `Page.captureScreenshot` for a picture,
+  `Page.addScriptToEvaluateOnNewDocument` + `Page.reload` to trace boot order. It works on a
+  Release build with `AreDevToolsEnabled = false` (Oct 6 2026). The window still opens in front of
+  the user, so their mouse or pad still reaches it: a test screenshot once showed a tile the
+  cursor was resting on.
 
 ## Architecture
 
@@ -64,6 +72,34 @@ Stop the scrolled grid from clipping through the All games header
   as a layered window and the WebView2 then receives no mouse or wheel messages at
   all. Overlay menus paint their own dim over a screen capture instead.
 
+## One file: what ships inside the exe
+
+- **A release is `Loungepad.exe` and nothing else** (Oct 6 2026, the user's ask: no zip to unpack).
+  `ui\`, `themes\` and `vortex-bridge\` are `EmbeddedResource`s named `shipped\<path>` (plus
+  `shipped\LICENSE` and `shipped\NOTICE`), read back by `ShippedFiles` with forward-slash paths.
+  Nothing is copied beside the exe any more; `bin\` and `publish\` still hold stale copies from
+  older builds, which nothing reads. `WithCulture="false"` is on the item so a name like `x.de.js`
+  cannot be taken for a satellite assembly.
+- `.NET`'s own `IncludeAllContentForSelfExtract` was the wrong tool: it unpacks to `%TEMP%` at
+  start and moves `AppContext.BaseDirectory` there, so the updater would install into the temp
+  folder and `Assembly.Location` stops being empty (which is how a build knows it may update).
+- `MainWindow.ServeShipped` answers `https://loungepad.ui/*` and `https://loungepad.player/*` from
+  the resources through `WebResourceRequested`. **It has to use the overload with source kinds**
+  (`CoreWebView2WebResourceRequestSourceKinds.Document`): with the plain two-argument filter the
+  cross-site player frame's document arrived and its own `player.js` was never seen by the handler
+  (scratch WebView2, runtime 154). **Every handler hears every filtered request**, so each checks
+  its host first -- the data host's used to answer everything with a 404. Responses are
+  `no-store`, so an update is never shown a page kept from the version before.
+- **The page says `ready` on `DOMContentLoaded`, not from inside app.js.** The host answers it with
+  the whole state at once, and app.js came before radial/actions/activity/playnite/onboarding: off
+  disk those always finished loading first, but served from the exe (each request a trip through
+  the UI thread, busy building that state) the state landed first, the handler threw on
+  `withActionIcons`, and the first highlight stayed on the search box. Traced with CDP: state at
+  59 ms, DOMContentLoaded at 66.
+- `package.ps1` checks what it can no longer see in the bundle: that the publish folder holds only
+  `Loungepad.exe` (anything else is something the release would go without), and that every file
+  under the three folders is named in the Release `obj\...\<rid>\Loungepad.dll`'s metadata.
+
 ## Trust boundaries (the security pass of Oct 3 2026)
 
 - **The page at `https://loungepad.ui` is the trust root**: anything running in it can post any
@@ -71,9 +107,11 @@ Stop the scrolled grid from clipping through the All games header
   `script-src 'self'` (no inline script anywhere in the UI, and a theme template's `<script>` is
   refused too), `UiBridge.OnWebMessageReceived` drops a message whose `e.Source` is not that origin,
   and `MainWindow` cancels any top-level navigation off it and swallows `NewWindowRequested`.
-- **YouTube's player runs in `ui/player/player.html` on a second virtual host,
-  `https://loungepad.player`** (`DenyCors`, so the page can frame it and neither origin can fetch
-  the other), and `youTubeBackend` in app.js drives it through postMessage: `{cmd}` in, `{ev}`
+- **YouTube's player runs in `ui/player/player.html` on a second host, `https://loungepad.player`**
+  (served out of the exe with no `Access-Control-Allow-Origin`, so the page can frame it and
+  neither origin can fetch the other -- what `DenyCors` gave when it was a folder mapping; and
+  `ui/player/` is NOT served on `loungepad.ui`, so YouTube's script can never be framed on the
+  page's own origin), and `youTubeBackend` in app.js drives it through postMessage: `{cmd}` in, `{ev}`
   out, with a 250 ms `time` event because position and duration are read synchronously by the
   viewer. Both sides check `e.source` and `e.origin` on every message; the page's origin travels
   to the frame as `?o=`. The embed is on `youtube-nocookie.com`. In the preview the frame is the
@@ -783,15 +821,28 @@ Stop the scrolled grid from clipping through the All games header
 ## Updates and the tray icon
 
 - `UpdateService` reads `api.github.com/repos/sukumar-v/Loungepad/releases/latest`, picks the asset
-  ending `-win-x64.zip`, checks its size and the `sha256:` digest GitHub publishes, and unpacks it
-  under `%LOCALAPPDATA%\Loungepad\updates`. **The repo name is in the code** (`UpdateService.Repo`):
-  rename the repo and every shipped build stops finding updates, because GitHub redirects old
-  names to new ones but not the other way.
+  named exactly `Loungepad.exe` (`AssetName`), checks its size and the `sha256:` digest GitHub
+  publishes, **and that the exe's version resource is the tag's** (`BuiltVersion`, which is
+  `FileVersionInfo`): an exe built with the previous number would install, restart, see the
+  release as newer than itself and install again on every start. It is staged as
+  `%LOCALAPPDATA%\Loungepad\updates\<version>\<the name this copy runs as>`, since a person may
+  have renamed theirs and the swap has to replace the file that runs. **The repo name is in the
+  code** (`UpdateService.Repo`): rename the repo and every shipped build stops finding updates,
+  because GitHub redirects old names to new ones but not the other way.
+- **Builds up to 1.6.3 only know the zip**: they take the asset ending `-win-x64.zip` and refuse
+  one without `Loungepad.exe` and `ui\index.html` in it. So every release still carries
+  `Loungepad-v<version>-win-x64.zip` -- the same exe, the page's `index.html`, README, LICENSE and
+  NOTICE -- until nobody can be on 1.6.3. Drop it from `package.ps1` and nothing breaks for anyone
+  newer. The new exe's first start removes the zip's leftovers (`RemoveZipLeftovers`: `ui\` if its
+  index.html has Loungepad's title, `vortex-bridge\` if its info.json names the bridge, each
+  bundled theme folder under `themes\` and `themes\` itself if that empties it; docs and README are
+  left alone). Checked on a 1.6.3 install updated by a replay of 1.6.3's own install step.
 - Installing renames each file the release carries to `<name>.loungepad-old`, copies the new one
   in, starts the new exe with `--updated-from <v> --wait-for <pid>` and exits. Windows lets a
   running single-file exe be renamed but not deleted (verified with a throwaway single-file app),
-  so the next start's `FinishPreviousUpdate` deletes the set-aside files. A failure halfway puts
-  every file back.
+  so the next start's `FinishPreviousUpdate` deletes the set-aside files -- **top level only**: the
+  exe can live in Downloads or on the Desktop now, and walking everything under one of those at
+  every start is a slow start. A failure halfway puts every file back.
 - The new copy waits for the old pid, then for WebView2's `EBWebView\lockfile` to be free: a
   browser process outlives its host briefly, and a second environment on a locked profile fails.
   It then takes the mutex with `WaitOne`, since the old one may still be holding it.
@@ -808,6 +859,15 @@ Stop the scrolled grid from clipping through the All games header
   again -- which read as "trailers do not play anywhere". FetchVersion 11 refills them, and
   `Game.Unknown` (`[JsonExtensionData]`, carried by `MergeScanned`) keeps unknown fields from here
   on -- which only protects against builds that have it, not against 1.6.0 or older.
+- **Releases are signed with Azure Artifact Signing** (formerly Trusted Signing; set up Oct 2026,
+  **unverified until the first signed build**). `package.ps1` signs `Loungepad.exe` before it is
+  copied to `dist\` and into the zip, when `tools\signing.json` exists (gitignored; shape in
+  `signing.example.json`), through the `ArtifactSigning` PowerShell module, authenticated by
+  whatever `DefaultAzureCredential` finds (`az login`). The certificate lasts three days, so the
+  timestamp is mandatory and the script fails without one. GitHub's digest is of the uploaded,
+  already signed file, so the updater's sha256 check is unaffected. README, GUIDE and the
+  website's install step still say "not code-signed" / "if Windows shows a warning"; change them
+  with the first signed release.
 - `TrayIcon` is WinForms' NotifyIcon (`UseWindowsForms`, with its global usings removed in the
   csproj so `Application`/`MessageBox` stay WPF's). Left click shows the launcher, the menu has
   Show, the update step and Quit. It is disposed on `Closed`, hidden first, or it lingers as a
@@ -1510,9 +1570,10 @@ Stop the scrolled grid from clipping through the All games header
   row of the page now and scrolls off the top like the others (theme 4.5; 4.4 slid it off and
   faded it), so the rule that used to separate it from the grid (theme 4.3) is gone. Corner
   radius is 10px.
-- `SyncBuiltIn` ignores a shipped folder whose id is a key of `Renamed`. Build output is never
-  cleaned, so `bin\Release\themes\polish` and `publish\themes\polish` are still next to the exe on
-  this PC, and without the guard the retired theme was reinstalled one line after being retired.
+- `SyncBuiltIn` ignores a shipped theme whose id is a key of `Renamed`. It was written when the
+  themes were copied next to the exe and build output is never cleaned (`bin\Release\themes\polish`
+  is still there on this PC): the retired theme was reinstalled one line after being retired. The
+  themes ship inside the exe now, so only a retired folder put back into the project could do it.
 
 ## Motion, and a theme's own options
 
