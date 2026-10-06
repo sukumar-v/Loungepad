@@ -7692,4 +7692,11 @@ paintButtons(document);
 // waiting for a message left the corner blank until a pad was plugged in.
 updateBattery(null);
 switchView("library");
-send({ cmd: "ready" });
+// The host answers "ready" with the whole state at once, and that answer is drawn with functions
+// from the scripts after this one (withActionIcons is actions.js's, renderOnboarding is
+// onboarding.js's). Asked for here, the state could land while one of them was still loading:
+// the handler threw half way and the first highlight stayed on the search box. Off disk the
+// scripts always won that race; served out of the exe they lost it. DOMContentLoaded comes after
+// every script on the page has run.
+if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", () => send({ cmd: "ready" }), { once: true });
+else send({ cmd: "ready" });
