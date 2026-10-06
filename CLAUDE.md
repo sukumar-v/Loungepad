@@ -464,10 +464,31 @@ Stop the scrolled grid from clipping through the All games header
   the CSS which it is, and everything that used to name `#gridScroll` as THE scroller (wheel routing,
   B's scroll to the top, `renderLibrary`'s kept position) goes through it. `revealOffset` brings a
   section's heading back with its first row (`reach`), or walking up onto Continue or All games
-  left the heading cut under the top edge. Loungepad's grid state slides the stack up by the hero
-  AND the dock, and the shelf is the view's full height in both states, so nothing resizes.
+  left the heading cut under the top edge.
+- **Loungepad's library is one page too** (`.tv-view` is the scroller; theme 4.5, the user's call,
+  Oct 6 2026: "treat the recents like any other row"). It used to be a fixed stack slid up by
+  `translateY` when `data-focus-region` became "grid", with the grid scrolling inside it -- and only
+  a D-pad step changed the region, so a wheel or the right stick scrolled the grid inside the 40px
+  peek while the recents sat still above it. The browsing look (art dimmed, title faded, shelf at
+  full opacity) now keys on `.tv-view.scrolled` (`watchScrolled`), so every way of scrolling gets
+  it. Three things make the page behave: the recents carry `scroll-margin-top: var(--view-h)`, which
+  `revealOffset` honours, so walking up onto ANY of them lands on the top of the page (the
+  first-item snap alone missed the rest of the row, and the Playing card is first while a game
+  runs); the end snaps count only drawn focusables and apply to the whole first row, and only when
+  it is in view at 0 (the hidden Playing card had been "the first" all along, and with nothing
+  played the first tile sits in the peek); and `revealSearchResults` scrolls the grid's top to
+  the top of the view when a search opens below the fold, with the shelf kept `min-height:
+  var(--view-h)` while searching so a short result list can get there. B also scrolls the page
+  home when the highlight is already on the recents but the stick moved the page.
+- **The first move down still jumps to the grid** (the user's call, the same day: keep the old
+  slide's landing, All games filling the view, for the initial scroll only). `gridJumpTarget`
+  answers the grid's top when the grid is under the fold at the top of the page (never in Shelf)
+  and the page is above it; `libraryNav` jumps on a step from outside the grid into it, the wheel
+  router and the stick loop on the first push down from scrollTop 0 (`fromRest`). Wheel-down and
+  stick input are held off while the jump glides (`gridJumpRunning`), or the animator would hand
+  over to them halfway. Scrolling back up is continuous, so the recents return as a row.
 - **Rows scrolled out of a list still have real rects.** In Loungepad they used to sit behind the
-  recents row, which parked over the top of the grid; it now slides off above with them. Holding Up, the scroll's glide trails the
+  recents row, which parked over the top of the grid; it is a row of the same page now. Holding Up, the scroll's glide trails the
   highlight; 22-40 px of lag (stage px) made a recents tile score nearer than the grid row above,
   so the highlight hopped to the recents for one step (the row slid down) and the next Up dived
   into a hidden row behind them (it slid back up). Only a fast run did it; spaced presses never
@@ -579,8 +600,9 @@ Stop the scrolled grid from clipping through the All games header
   the content box, so measuring the padding box read the continue row as 1.79:1 when it was 1.86:1;
   a 1.75:1 capsule then looked like a perfect fit and lost a strip off each side. That was the
   "the sides are cut off, not just the corners" report, and rounding was not the cause of it.
-- Every landscape box is 1.75:1, which is Steam's capsule exactly: `.cont-art` 300x172,
-  `.playing-art` 366 wide against the card's 210, Polish's tile `--tile-w / 1.745`. The grid tile
+- Every landscape box is 1.75:1, which is Steam's capsule exactly: `.cont-art` 300x172 (but see
+  below: Shelf's recents now widen to their picture), `.playing-art` 366 wide against the card's
+  210, Polish's tile `--tile-w / 1.745`. The grid tile
   is 174x261, which is 2:3 -- box art's own shape -- and nine of them plus eight 24px gaps is the
   same 1760 run eight 199px ones made. `GRID_COLS` and `.grid-item` have to move together.
 - **The critic score is Metacritic's or nothing** (the user's call, Sept 2026). Metacritic has no
@@ -821,6 +843,16 @@ Stop the scrolled grid from clipping through the All games header
   its title runs vertically down the left edge and is gone. Edge-detail heuristics do not separate
   the two cases reliably (measured: 0.79 vs 0.48 and 0.60 of centre std-dev, n=3). The bed is the
   answer; "Change tile art" in Manage is the escape hatch for a tile somebody dislikes.
+- **Where the box can take the picture's shape, it does, and there is no bed.** On a 1.75:1 box a
+  2.14:1 header leaves 16px of bed above and below, and blurred light art is a pale band with a hard
+  line where the sharp picture starts: "white bars on top and bottom" on Shelf's recents (the user's
+  report, Oct 6 2026; Denshattack!, Look Outside and Total Overdose, all SteamGridDB 920x430 or
+  460x215). A row can hold tiles of different widths where a grid cannot, so `.cont-art` is 172 tall
+  and `172 x clamp(1.745, --art-aspect, 2.2)` wide: 300 or 368. The carousel measures real positions
+  for it (`contOffset`, `contPerView(start)`, `contMaxScroll` walking starts) instead of index x
+  pitch, `.cont-meta` is `width: 0; min-width: 100%` so a title spans its own tile and never widens
+  it, and `applyArt` remembers each URL's natural size (`artSizes`) so a re-render draws the tile at
+  its final width at once. Loungepad's dock and grid are fixed columns and keep the bed.
 
 ## The detail page's rating marks
 
@@ -1383,8 +1415,9 @@ Stop the scrolled grid from clipping through the All games header
   restart on every repaint; a cached file that errors falls back to the stream once. Sound is on by
   default at 0.7 (`TRAILER_VOLUME`); "Trailer sound" off mutes.
 - The trailer options are look settings in the theme's bag (`LOOK_IDS.trailers` = "all" | "detail" |
-  "off", `LOOK_IDS.trailerSound`, default on), listed first under "<THEME> OPTIONS" for every theme.
-  A new look setting needs `LOOK_IDS`, its `look*()` reader, and a row; `RESERVED_IDS` follows.
+  "off", `LOOK_IDS.trailerSound`, default on), listed first under "<THEME> OPTIONS" for every theme,
+  with "Achievement progress" after them. A new look setting needs `LOOK_IDS`, its `look*()`
+  reader, and a row; `RESERVED_IDS` follows.
 - A "change the trailer" option (a link or a file, under Manage) was built and then removed at the
   user's request the same day, in favour of the gallery below. Do not bring it back unasked.
 
@@ -1454,9 +1487,10 @@ Stop the scrolled grid from clipping through the All games header
   moves an installed old folder to `theme-backups` and rewrites settings.json on the next start.
   Nothing else keys on the display name.
 - The recents row lost its frosted tray on purpose: the tray was what made the layout read as
-  somebody else's television. The tiles sit straight on the art with the scrim under them. In the
-  grid state the row slides off the top and fades with the title (theme 4.4), so the rule that
-  used to separate it from the grid (theme 4.3) is gone. Corner radius is 10px.
+  somebody else's television. The tiles sit straight on the art with the scrim under them. It is a
+  row of the page now and scrolls off the top like the others (theme 4.5; 4.4 slid it off and
+  faded it), so the rule that used to separate it from the grid (theme 4.3) is gone. Corner
+  radius is 10px.
 - `SyncBuiltIn` ignores a shipped folder whose id is a key of `Renamed`. Build output is never
   cleaned, so `bin\Release\themes\polish` and `publish\themes\polish` are still next to the exe on
   this PC, and without the guard the retired theme was reinstalled one line after being retired.
@@ -1503,11 +1537,6 @@ Stop the scrolled grid from clipping through the All games header
   scrollTop, like renderMenu, and so does `renderLibrary` now: a state push mid-browse (end of a
   scan or a metadata pass, a favourite toggled) used to drop the grid to the top and glide it back.
   **Any function that empties a scroller has to put scrollTop back before it returns.**
-- The dock "pulled down and back" in Polish could not be reproduced with the D-pad in the
-  windowed build (three and five rows, slow and fast, frames captured every 35 ms): the stack
-  slides once and settles. If it comes back, ask whether it is the right stick or the D-pad and
-  whether the grid was scrolled; `data-focus-region` on `#screen-library` is the only thing that
-  moves the dock, so log its changes first.
 - Accent, hints and the animation settings are per theme: the same bag as the theme's own options,
   under reserved ids (`LOOK_IDS`: accent, hide-hints, animations, animation-speed) that
   `themeSettingDefs` refuses. `AppSettings.AccentColor/HideLegend/AnimationsEnabled/AnimationSpeed`
@@ -1525,7 +1554,8 @@ Stop the scrolled grid from clipping through the All games header
   "Verifying changes" describes. The mock still starts on Classic.
 - Polish's grid is `repeat(var(--cols), 1fr)` with `--tile-w` derived from the count and the dock
   height derived from the tile, so the column-count option moves the hero with it. Its own
-  transitions multiply by `var(--motion, 1)`; the dock slide's base is the `--tv-slide` option.
+  transitions multiply by `var(--motion, 1)`. (The "Row slide" option, `--tv-slide`, went with
+  the slide in theme 4.5: the page moves on the app's scroll spring.)
 - Bumped Polish to 3.5 for this. Anything that changes a bundled theme has to bump it or nobody
   gets the change (see `SyncBuiltIn` above).
 
@@ -1852,7 +1882,13 @@ Stop the scrolled grid from clipping through the All games header
 - Rarity bands: ultra rare under 5%, rare under 10%, uncommon under 30% (SuccessStory's 30/10 with
   its ultra-rare step on). The `ach` sort in the filter menu sorts by the unlocked share.
 - Loungepad theme 4.2: `.tv-ach` on the focused tile, from the `achievements` / `achPercent`
-  template fields, which the app leaves false while "Show on tiles" is off.
+  template fields, which the app leaves false while the theme's "Achievement progress" is off.
+- **"Achievement progress" is per theme** (`LOOK_IDS.achievements`, "achievement-progress";
+  `lookAchievements`; the user's ask, Oct 6 2026, for both themes). It covers everything the
+  library draws of it: Shelf's tile chips (`achievementChip`), Loungepad's `.tv-ach` and its
+  "23/50 achievements" hero line (`achievementMeta`); a game's page and Stats always show it. It
+  was one switch under Stats → Achievements ("Show on tiles"), now gone; `AchievementsOnTiles`
+  in settings.json is only the fallback a theme with nothing set reads, like `AccentColor`.
 - The harness is a scratch console project referencing `bin\Debug\...\Loungepad.dll`: hash rules,
   thinning and summaries, the diff, the built-in readers, a session through `ActivityService`'s
   handlers by reflection (a real launch would go through `LibraryStore.Save` and rewrite the real
@@ -1946,6 +1982,11 @@ Stop the scrolled grid from clipping through the All games header
   Input read as input), and **the time since the last wake**: a wake by the power button or by
   Windows' own resume moves neither stamp, and without `_wokeAt` the idle timer read the hours
   asleep as hours idle and rested again on the very next tick. The harness found that one.
+- **The launcher starting is a wake** (`_wokeAt` is set in the constructor). Every input stamp
+  (`UserInputWatch`, `PadInputAgeMs`) starts at "never", and so did `_wokeAt`, so the first tick
+  read the idle time as forever: from 1.6.0 on, the log has `Rest: no input for 60 min` one to
+  four seconds after nearly every `starting` line (fixed Oct 6 2026). A fake-clock harness with no
+  input at all: awake at 2 s and at 58 min, warned at 59, resting at 60.
 - `SetSuspendState` blocks until the machine is back, so it runs on a worker (`Task.Run`) and its
   `true` arrives after the resume; a `false` within moments is a refusal. A sleep that is asked for
   but never followed by `PBT_APMSUSPEND` within 20 s is treated as refused too. After an automatic
