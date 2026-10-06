@@ -101,16 +101,17 @@ Works with Xbox, PlayStation, Switch and other controllers. A keyboard and mouse
 
 ## Install
 
-1. **[Download the latest release](https://github.com/sukumar-v/Loungepad/releases/latest)** and
-   unzip it into a folder under your user folder (not `Program Files`, so it can update itself).
-2. Run `Loungepad.exe`. The build isn't code-signed yet: if SmartScreen warns, choose
+1. **[Download `Loungepad.exe`](https://github.com/sukumar-v/Loungepad/releases/latest)** and move
+   it somewhere it can stay under your user folder, such as a folder in Documents (not
+   `Program Files`, so it can update itself).
+2. Run it. The build isn't code-signed yet: if SmartScreen warns, choose
    **More info → Run anyway**.
 3. A short setup, driven with the controller, asks which screen is the TV, signs in to your stores
    and picks the look. It finds your games while you answer.
 
-Nothing else to install: .NET is bundled, and Windows 11 already has the WebView2 runtime.
-Loungepad updates itself from this repository's releases. Settings and the library live in
-`%APPDATA%\Loungepad`; to uninstall, delete the folder you unzipped.
+It's one file, with nothing to unzip and nothing else to install: .NET is bundled, and Windows 11
+already has the WebView2 runtime. Loungepad updates itself from this repository's releases.
+Settings and the library live in `%APPDATA%\Loungepad`; to uninstall, delete `Loungepad.exe`.
 
 ## Controls
 

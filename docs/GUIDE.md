@@ -12,12 +12,13 @@ Everything Loungepad does, in detail. The [README](../README.md) is the short ve
 
 ## Install
 
-**[Download the latest release](https://github.com/sukumar-v/Loungepad/releases/latest)**, unzip it
-anywhere, and run `Loungepad.exe`.
+**[Download `Loungepad.exe`](https://github.com/sukumar-v/Loungepad/releases/latest)**, put it
+somewhere it can stay, and run it.
 
-Nothing else to install: the .NET runtime is bundled. Windows 11 already has the one thing that is
-not — the **Edge WebView2 Runtime** — and on Windows 10 the app will tell you where to get it.
-Keep `Loungepad.exe` and the `ui` folder together; the UI is loaded off disk at startup.
+It is one file. The .NET runtime, the interface, the bundled theme and the Vortex extension are all
+inside it, so there is nothing to unzip and nothing else to install. Windows 11 already has the one
+thing that is not bundled — the **Edge WebView2 Runtime** — and on Windows 10 the app will tell you
+where to get it.
 
 The build is not code-signed yet, so Windows SmartScreen will warn the first time you run it:
 choose **More info → Run anyway**.
@@ -30,8 +31,7 @@ Vortex is on the PC, it offers to bring Playnite's library over and to connect V
 answer, it is already scanning Steam, Epic, GOG, the Xbox app and every emulator and ROM folder it
 can find, and the left of the screen shows what it has found so far. Every answer is saved as it is
 given, **X** skips the rest, and **Settings → General → First-time setup** runs it again. Settings,
-library and cover art live in `%APPDATA%\Loungepad`; uninstalling is deleting the folder you
-unzipped.
+library and cover art live in `%APPDATA%\Loungepad`; uninstalling is deleting `Loungepad.exe`.
 
 `Loungepad.exe --windowed` opens a 1280×720 window instead, which is easier to poke at from a desk.
 
@@ -46,8 +46,10 @@ the background, and installs it the next time it starts. The **Loungepad** row a
 checks on demand and installs straight away (it restarts the launcher, so not while a game is
 running). Turn the toggle off and nothing is fetched until you ask.
 
-An update replaces the files in the folder you unzipped into, so that folder has to be one your
-account can write to — anywhere under your user folder is; `Program Files` is not.
+An update replaces `Loungepad.exe` where it is, so its folder has to be one your account can write
+to — anywhere under your user folder is; `Program Files` is not. Copies up to 1.6.3 came as a zip
+with `ui`, `themes` and `vortex-bridge` folders beside the exe; the first start after updating
+removes them, since everything in them is inside the exe now.
 
 ## No keyboard. No mouse.
 

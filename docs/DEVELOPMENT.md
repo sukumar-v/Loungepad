@@ -17,19 +17,25 @@ no focus guarding) instead of the full-screen TV mode.
 The UI can also be previewed in a plain browser (it self-mocks sample data when not hosted in
 WebView2): serve `Loungepad/ui/` with any static server and open `index.html`.
 
-To build the zip that goes on a release:
+To build what goes on a release:
 
 ```powershell
 .\tools\package.ps1            # or -Version 1.1.0 to stamp the tag you are about to push
 ```
 
-It publishes self-contained and single-file into `artifacts\`, checks that `ui\` came along,
-and writes `dist\Loungepad-v<version>-win-x64.zip` with its SHA-256.
+It publishes self-contained and single-file into `artifacts\`, checks that every file under `ui\`,
+`themes\` and `vortex-bridge\` was embedded (they ship inside the exe and are read back through
+`ShippedFiles`), signs the exe when `tools\signing.json` exists, and writes two files to
+`dist\v<version>\` with their SHA-256:
 
-The updater looks for the zip by that name's ending (`-win-x64.zip`) on the latest release of
-`sukumar-v/Loungepad`, and for a tag it can read as a version (`v1.5.0`). Attach the zip exactly
-as the script names it. A build from `dotnet build` never updates itself; only the single-file
-build this script makes does.
+- `Loungepad.exe`, what people download. The updater in this and later builds looks for an asset
+  of exactly that name on the latest release of `sukumar-v/Loungepad`, with a tag it can read as
+  a version (`v1.5.0`), and refuses an exe whose built version is not the tag's.
+- `Loungepad-v<version>-win-x64.zip`, only for installs up to 1.6.3, whose updater reads nothing
+  but a zip with `ui\index.html` in it. It holds the same exe.
+
+Attach both exactly as the script names them. A build from `dotnet build` never updates itself;
+only the single-file build this script makes does.
 
 `.\tools\make-icon.ps1` draws the app icon (`Loungepad\Loungepad.ico`, every size from 16 to
 256 px, and `loungepad-icon.png`) as shapes, so each size is drawn at its own resolution and stays
@@ -48,7 +54,7 @@ Loungepad/
   MainWindow.xaml(.cs)    Borderless, topmost, taskbar-less window; hosts WebView2 on the TV display
   UiBridge.cs             JSON message bridge: web UI <-> native services
   ui/                     The design-faithful UI (index.html, app.css, app.js), 1920x1080 stage
-                          scaled to the display; served via WebView2 virtual host loungepad.ui
+                          scaled to the display; embedded in the exe and served as loungepad.ui
   Services/
     DisplayService.cs     Monitor enumeration + primary-display switching (ChangeDisplaySettingsEx)
     GameLaunchService.cs  Launch orchestration, process tracking, window repositioning, playtime
@@ -67,8 +73,8 @@ Loungepad/
     VirtualKeyboardService.cs  Touch keyboard (TabTip) via ITipInvocation COM
     CursorService.cs      Optional system-wide pointer hiding while the D-pad drives
     StartupService.cs     HKCU Run key registration
-    UpdateService.cs      Checks GitHub releases, downloads, swaps the files in place, restarts
-    TrailerCache.cs       Keeps a copy of each trailer the page plays, capped, oldest out first
+    UpdateService.cs      Checks GitHub releases, downloads the exe, swaps it in place, restarts
+    ShippedFiles.cs       Reads ui/, themes/ and vortex-bridge/ back out of the exe, where they ship    TrailerCache.cs       Keeps a copy of each trailer the page plays, capped, oldest out first
     ActivityStore.cs      The play sessions: activity.json, plus one readings file per session
     ActivityService.cs    Records each sitting and samples the hardware while the game runs
     HardwareMonitor.cs    CPU, GPU and memory from Windows; frame rate, temperatures and power
