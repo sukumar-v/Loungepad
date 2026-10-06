@@ -71,6 +71,10 @@ $RECYCLE.BIN/
 # Packaging output
 dist/
 
+# Which Azure Artifact Signing account signs the release (not a secret, but it is the maintainer's;
+# without it package.ps1 builds unsigned). tools/signing.example.json shows the shape.
+/tools/signing.json
+
 # Wrangler's local state for the metadata proxy (build output, dev cache)
 .wrangler/
 

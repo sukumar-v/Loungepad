@@ -1,18 +1,26 @@
 <#
 .SYNOPSIS
-    Builds the distributable zip that gets attached to a GitHub release.
+    Builds what gets attached to a GitHub release: Loungepad.exe, and a zip for old updaters.
 
 .DESCRIPTION
-    Publishes Loungepad self-contained for win-x64 as a single file, so the download is one
-    exe plus the ui folder and nothing has to be installed first -- no .NET runtime, no
-    unpacking a folder of two hundred DLLs. The WebView2 runtime is the one thing that cannot
-    be bundled; Windows 11 ships it, and the app says so plainly if it is missing.
+    Publishes Loungepad self-contained for win-x64 as a single file, so the download is one exe
+    and nothing has to be installed or unpacked first -- no .NET runtime, no folder of two hundred
+    DLLs, and no ui folder: the page, the bundled themes and the Vortex extension are embedded
+    in the exe. The WebView2 runtime is the one thing that cannot be bundled; Windows 11 ships
+    it, and the app says so plainly if it is missing.
 
-    Output: dist\Loungepad-v<version>-win-x64.zip
+    Output, both to attach to the release under exactly these names:
+      dist\v<version>\Loungepad.exe                       what people download, and what later builds update from
+      dist\v<version>\Loungepad-v<version>-win-x64.zip    only for copies up to 1.6.3, whose updater
+                                                          reads nothing but a zip with ui\index.html in it
 
 .PARAMETER Version
     Overrides the version baked into the exe and the zip name. Defaults to <Version> in the
-    csproj. Pass the tag you are about to push, without the "v".
+    csproj. Pass the tag you are about to push, without the "v". The updater refuses an exe whose
+    built version is not the release's, so the two have to agree.
+
+.PARAMETER NoSign
+    Skips signing even when tools\signing.json exists, for a package that is only for testing.
 
 .EXAMPLE
     .\tools\package.ps1
@@ -21,23 +29,31 @@
 [CmdletBinding()]
 param(
     [string]$Version,
-    [string]$Runtime = 'win-x64'
+    [string]$Runtime = 'win-x64',
+    [switch]$NoSign
 )
 
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 $project = Join-Path $repo 'Loungepad\Loungepad.csproj'
-$staging = Join-Path $repo "artifacts\$Runtime"
-$dist = Join-Path $repo 'dist'
+$artifacts = Join-Path $repo "artifacts\$Runtime"
+$staging = Join-Path $artifacts 'publish'
+$zipStaging = Join-Path $artifacts 'zip'
+# The name the updater looks for (UpdateService.AssetName): no version in it, so
+# releases/latest/download/Loungepad.exe is always the newest.
+$assetName = if ($Runtime -eq 'win-x64') { 'Loungepad.exe' } else { "Loungepad-$($Runtime -replace '^win-', '').exe" }
 
 if (-not $Version) {
     $csproj = [xml](Get-Content $project)
     $Version = $csproj.Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
 }
 if (-not $Version) { throw 'No <Version> in the csproj and none passed with -Version.' }
+$dist = Join-Path $repo "dist\v$Version"
 
 # A stale staging folder would ship files that are no longer part of the build.
-if (Test-Path $staging) { Remove-Item $staging -Recurse -Force }
+foreach ($dir in $artifacts, $dist) {
+    if (Test-Path $dir) { Remove-Item $dir -Recurse -Force }
+}
 New-Item -ItemType Directory -Path $staging -Force | Out-Null
 New-Item -ItemType Directory -Path $dist -Force | Out-Null
 
@@ -55,39 +71,84 @@ dotnet publish $project `
     --nologo
 if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed ($LASTEXITCODE)" }
 
-# The UI is loaded off disk through a WebView2 virtual host mapping, so ui\ has to sit next to
-# the exe -- it is the one thing single-file publishing does not swallow. Fail loudly if the
-# csproj ever stops copying it, rather than shipping a zip that opens to a black screen.
-# themes\ is here for the same reason: ThemeService seeds the user's themes folder from the copy
-# next to the exe, so a zip without it installs a launcher whose theme list is empty.
-foreach ($required in 'Loungepad.exe', 'ui\index.html', 'ui\app.js', 'ui\app.css', 'ui\radial.js',
-                      'ui\player\player.html', 'ui\player\player.js',
-                      'themes\loungepad\theme.json', 'themes\loungepad\theme.css', 'themes\loungepad\theme.html') {
-    if (-not (Test-Path (Join-Path $staging $required))) { throw "Missing from the publish output: $required" }
-}
-
 # Nothing here is any use to someone running the app.
 Get-ChildItem $staging -Include *.pdb, *.xml -Recurse | Remove-Item -Force
 
-# Apache-2.0 section 4 wants the license and the NOTICE to travel with the distribution, not
-# just sit in the repo.
-foreach ($doc in "README.md", "LICENSE", "NOTICE", "CONTRIBUTING.md") {
-    $path = Join-Path $repo $doc
-    if (Test-Path $path) { Copy-Item $path $staging -Force }
+# The release is this one file, so anything else in the publish output is something the exe
+# would go without: a native DLL that stopped being bundled, or a folder the csproj copies again.
+$extra = Get-ChildItem $staging -Recurse -File | Where-Object { $_.Name -ne 'Loungepad.exe' }
+if ($extra) { throw "The publish output has files besides Loungepad.exe, which the release would not carry:`n  $($extra.FullName -join "`n  ")" }
+
+# The page, the themes and the Vortex extension are embedded resources (ShippedFiles). The exe
+# cannot be inspected from here -- the bundle is compressed -- so the assembly it was made from
+# is: every file under those folders has to be in it by name, or the release opens to a black
+# screen (no ui), lists no themes, or cannot connect Vortex.
+$assembly = Get-ChildItem (Join-Path $repo 'Loungepad\obj\Release') -Recurse -Filter Loungepad.dll |
+    Where-Object { $_.Directory.Name -eq $Runtime } | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+if (-not $assembly) { throw "Could not find the Release assembly for $Runtime under Loungepad\obj to check its resources." }
+$heap = [Text.Encoding]::GetEncoding(28591).GetString([IO.File]::ReadAllBytes($assembly.FullName))
+$source = Join-Path $repo 'Loungepad'
+$shipped = Get-ChildItem (Join-Path $source 'ui'), (Join-Path $source 'themes'), (Join-Path $source 'vortex-bridge') -Recurse -File
+foreach ($file in $shipped) {
+    $name = 'shipped\' + $file.FullName.Substring($source.Length + 1)
+    # Names in the metadata end in a NUL, so app.js cannot be found inside app.json.
+    if (-not $heap.Contains("$name$([char]0)")) { throw "Not embedded in the exe: $name" }
 }
-# The README links into docs\ for the long version of everything.
-$docs = Join-Path $repo "docs"
-if (Test-Path $docs) {
-    New-Item -ItemType Directory -Force (Join-Path $staging "docs") | Out-Null
-    Copy-Item (Join-Path $docs "*.md") (Join-Path $staging "docs") -Force
+Write-Host "  $($shipped.Count) shipped files embedded" -ForegroundColor Green
+
+# Azure Artifact Signing. tools\signing.json names the account (see signing.example.json) and is
+# kept out of the repository, so a contributor's build is simply unsigned; where it exists, a
+# failure to sign fails the build rather than shipping an unsigned exe. Loungepad.exe is the only
+# executable there is: the native DLLs are bundled inside it. The certificate lasts three days,
+# so the timestamp is what keeps the signature valid after that, and it is checked for below.
+$signingConfig = Join-Path $PSScriptRoot 'signing.json'
+if (-not $NoSign -and (Test-Path $signingConfig)) {
+    if (-not (Get-Module -ListAvailable ArtifactSigning)) {
+        throw 'Signing needs the ArtifactSigning module: Install-Module ArtifactSigning -Scope CurrentUser'
+    }
+    $cfg = Get-Content $signingConfig -Raw | ConvertFrom-Json
+    $exe = Join-Path $staging 'Loungepad.exe'
+    Write-Host "Signing Loungepad.exe ($($cfg.CodeSigningAccountName) / $($cfg.CertificateProfileName))..." -ForegroundColor Cyan
+    Invoke-ArtifactSigning `
+        -Endpoint $cfg.Endpoint `
+        -CodeSigningAccountName $cfg.CodeSigningAccountName `
+        -CertificateProfileName $cfg.CertificateProfileName `
+        -Files $exe `
+        -FileDigest SHA256 `
+        -TimestampRfc3161 'http://timestamp.acs.microsoft.com' `
+        -TimestampDigest SHA256 `
+        -Description 'Loungepad' `
+        -DescriptionUrl 'https://loungepad.app'
+
+    $sig = Get-AuthenticodeSignature $exe
+    if ($sig.Status -ne 'Valid') { throw "Loungepad.exe is not validly signed: $($sig.Status). $($sig.StatusMessage)" }
+    if (-not $sig.TimeStamperCertificate) { throw 'Loungepad.exe was signed without a timestamp; it would stop validating in three days.' }
+    Write-Host "  Signed: $($sig.SignerCertificate.Subject)" -ForegroundColor Green
+} elseif (-not $NoSign) {
+    Write-Host 'No tools\signing.json: Loungepad.exe is NOT signed.' -ForegroundColor Yellow
 }
 
+$exeOut = Join-Path $dist $assetName
+Copy-Item (Join-Path $staging 'Loungepad.exe') $exeOut
+
+# The zip is only for copies up to 1.6.3. Their updater takes the asset ending -win-x64.zip,
+# refuses one without Loungepad.exe and ui\index.html in it, and copies everything it holds over
+# the install -- so this one holds the same signed exe, the page's index.html to pass that check,
+# and the license and notices (Apache-2.0 section 4). The new exe never reads ui\, and removes
+# the old folders from beside itself on its first start (UpdateService.RemoveZipLeftovers).
+# Drop it once nobody can still be on 1.6.3 or older.
+New-Item -ItemType Directory -Path (Join-Path $zipStaging 'ui') -Force | Out-Null
+Copy-Item $exeOut (Join-Path $zipStaging 'Loungepad.exe')
+Copy-Item (Join-Path $source 'ui\index.html') (Join-Path $zipStaging 'ui\index.html')
+foreach ($doc in 'README.md', 'LICENSE', 'NOTICE') { Copy-Item (Join-Path $repo $doc) $zipStaging }
 $zip = Join-Path $dist "Loungepad-v$Version-$Runtime.zip"
-if (Test-Path $zip) { Remove-Item $zip -Force }
-Compress-Archive -Path (Join-Path $staging '*') -DestinationPath $zip -CompressionLevel Optimal
+Compress-Archive -Path (Join-Path $zipStaging '*') -DestinationPath $zip -CompressionLevel Optimal
 
-$size = '{0:N1} MB' -f ((Get-Item $zip).Length / 1MB)
 Write-Host ''
-Write-Host "  $zip  ($size)" -ForegroundColor Green
+foreach ($out in $exeOut, $zip) {
+    $size = '{0:N1} MB' -f ((Get-Item $out).Length / 1MB)
+    Write-Host "  $out  ($size)" -ForegroundColor Green
+    Write-Host "    SHA-256: $((Get-FileHash $out -Algorithm SHA256).Hash)"
+}
 Write-Host ''
-Write-Host 'SHA-256:' (Get-FileHash $zip -Algorithm SHA256).Hash
+Write-Host "Attach both to the v$Version release under exactly these names." -ForegroundColor Cyan
