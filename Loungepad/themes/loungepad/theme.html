@@ -1,21 +1,22 @@
 <!-- Loungepad — the launcher's own look.
 
-     Two states, one layout. At rest the focused game's art fills the screen (and its
-     trailer, once the highlight has rested on it) and the recents sit in a row near the
-     bottom, with the top of the grid just peeking under it. Move down into the grid and
-     the whole column slides up: the row goes off the top with the title, like the top of a
-     page scrolled away, and the grid takes the whole view.
+     One page. At the top of it the focused game's art fills the screen (and its trailer,
+     once the highlight has rested on it) and the recents sit in a row near the bottom,
+     with the top of the grid just peeking under it. The first move down -- the D-pad, the
+     stick or a wheel -- takes the whole page up until the grid fills the view, and the art
+     dims behind it; from there it scrolls like any page, and the recents come back as a row
+     on the way up.
 
-     There is no script here — a theme cannot run any. The state is entirely CSS,
-     hanging off data-focus-region, which the app writes on the screen to say which
-     region the highlight is in. See theme.css. -->
+     There is no script here — a theme cannot run any. The look is entirely CSS, hanging
+     off .scrolled, which the app puts on the page's scroller while it is away from the
+     top. See theme.css. -->
 
 <template data-template="screen-library">
   <div class="tv">
     <div class="tv-chrome" data-slot="topbar"></div>
 
-    <!-- The window the sliding column is seen through. Everything below the dock in the
-         resting state is clipped by this, which is what makes the peek a peek. -->
+    <!-- The page, and the library's only scroller. At the top of it everything below the
+         dock is under the fold, which is what makes the peek a peek. -->
     <div class="tv-view">
       <div class="tv-stack">
         <div class="tv-hero">

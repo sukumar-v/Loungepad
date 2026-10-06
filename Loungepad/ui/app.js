@@ -274,9 +274,10 @@ function ensureFocus(scope) {
   if (el) setFocusEl(el); else clearFocus(scope);
 }
 
-/** What scrolls the library: the grid itself, or in Shelf the page around it, which carries the
-    recents up off the screen with it (see .lib-body in app.css). Asked of the CSS rather than
-    known, since a theme decides; unlike scrollParentOf it answers whether or not it overflows. */
+/** What scrolls the library: the grid itself, or the page around it, which carries the recents up
+    off the screen with it (Shelf's .lib-body in app.css, the Loungepad theme's .tv-view). Asked of
+    the CSS rather than known, since a theme decides; unlike scrollParentOf it answers whether or
+    not it overflows. */
 function libraryScroller() {
   const grid = $("gridScroll");
   for (let p = grid; p && p.id !== "screen-library"; p = p.parentElement)
@@ -341,11 +342,20 @@ function revealOffset(sc, el, axis) {
   /* Nothing focusable above the first row means the space above it is not slack -- it is that
      row's section heading. Clearing REVEAL_MARGIN for the focus glow scrolled that heading off
      the top the moment you walked back up the list, which is why the first category in every
-     Settings tab kept vanishing. Snap to the end instead; the glow has its room there. */
+     Settings tab kept vanishing. Snap to the end instead; the glow has its room there -- when the
+     element is in view there at all. The Loungepad theme's page opens on a hero most of a screen
+     tall, and a first tile under it would be left in the peek. The ends are the first and last
+     that are drawn: the library's Playing card is in the DOM, hidden, whenever nothing is running,
+     and as "the first" it kept the rule from ever applying to the row under it. */
   const ends = sc.querySelectorAll(FOCUSABLE_SEL);
-  if (ends.length) {
-    if (ends[0] === el) return 0;
-    if (ends[ends.length - 1] === el) return total;
+  const drawn = (e) => e.getClientRects().length > 0;   // display:none anywhere up the tree: no box
+  let first = 0, last = ends.length - 1;
+  while (first <= last && !drawn(ends[first])) first++;
+  while (last >= first && !drawn(ends[last])) last--;
+  if (first <= last) {
+    // The whole first row, not only its first item: nothing is above any of it.
+    if (near <= offsetWithin(ends[first], sc, axis) + 1 && far + REVEAL_MARGIN <= size) return 0;
+    if (ends[last] === el) return total;
   }
 
   /* The same thing one level down, for a scroller holding several headed sections -- Shelf's
@@ -358,6 +368,12 @@ function revealOffset(sc, el, axis) {
     const lead = sec.querySelector(FOCUSABLE_SEL);
     if (lead && near <= offsetWithin(lead, sc, axis) + 1) reach = offsetWithin(sec, sc, axis);
   }
+
+  /* A theme can ask for more room before an element with CSS's own scroll-margin. The Loungepad
+     theme gives its recents a screen of it, so walking up onto them from the grid brings the hero
+     above back too -- the top of the page -- rather than parking the row against the top edge. */
+  const room = parseFloat(getComputedStyle(el)[axis === "x" ? "scrollMarginLeft" : "scrollMarginTop"]) || 0;
+  if (room > 0) reach = Math.min(reach, near - room);
 
   if (reach - REVEAL_MARGIN <= 0) return 0;
   if (far + REVEAL_MARGIN >= total) return total;
@@ -506,9 +522,9 @@ function navMove(dir, within) {
      does it fall back to the whole scope (which is what lets a theme put a
      sidebar to the left of a grid and have Right cross into it). */
   /* Rows scrolled out of a list are clipped, not gone: their rects are still real, and they sit
-     wherever the scroll put them -- in the Loungepad theme, above the grid where the recents row
-     also is once it has slid off (it used to park over the top of the grid, with the hidden rows
-     directly behind it). Two rules keep the engine from walking into them.
+     wherever the scroll put them -- once, in the Loungepad theme, directly behind a recents row
+     parked over the top of the grid (it has since become a row of the same page). Two rules keep
+     the engine from walking into them.
 
      A list is walked to its end before the highlight leaves it (samePlace, below). Holding Up
      through the grid, the scroll's glide trails the highlight by a few dozen pixels, and that lag
@@ -613,7 +629,7 @@ window.addEventListener("wheel", (e) => {
  * The right stick sends real wheel events, and a wheel goes to whatever is under the cursor. In
  * pad mode the cursor is hidden and could be anywhere -- over the Continue row, the top bar, the
  * backdrop -- and in Shelf the grid is only the bottom half of the screen, so most of the time
- * the stick scrolled nothing at all. The Loungepad theme got away with it because its grid fills
+ * the stick scrolled nothing at all. The Loungepad theme gets away with it because its page fills
  * the screen.
  *
  * So a vertical wheel that lands on nothing that can scroll that way is handed to the list the
@@ -639,8 +655,52 @@ function canScrollY(el, dy) {
   return dy > 0 ? el.scrollTop + el.clientHeight < el.scrollHeight - 1 : el.scrollTop > 0;
 }
 
+/*
+ * The jump to the grid. Where a library page opens on a screen of art with the grid under the fold
+ * -- the Loungepad theme, whose recents sit under the hero and whose grid is a peek below them --
+ * the first move down goes the whole way, and All games fills the view (the user's call, Oct 6
+ * 2026). Only that first move: from there the page scrolls like any other, and the recents come back
+ * as a row on the way up. The D-pad's step from the recents into the grid jumps; so does the first
+ * wheel or stick push from the top of the page. Shelf's grid starts on screen, so there is nothing
+ * to jump to and nothing changes there.
+ *
+ * Returns the scrollTop of the grid's top, or null for no jump: the grid is already on screen at the
+ * top of the page, or the page is already at or past it. `fromRest` asks for the page to be at its
+ * very top as well, which is what "the first move" is for a wheel and the stick.
+ */
+let gridJumpTo = null;
+
+function gridJumpTarget(sc, fromRest) {
+  const grid = $("gridScroll");
+  if (view !== "library" || !sc || !grid || sc === grid || sc !== libraryScroller()) return null;
+  const first = grid.querySelector(FOCUSABLE_SEL);
+  if (!first || offsetWithin(first, sc, "y") + first.offsetHeight + REVEAL_MARGIN <= sc.clientHeight) return null;
+  const top = offsetWithin(grid, sc, "y");
+  const at = scrollTarget(sc, "y");
+  if (fromRest ? at > 1 : at >= top - 1) return null;
+  return top;
+}
+
+function startGridJump(sc, to) {
+  animateScroll(sc, "y", to);
+  gridJumpTo = scrollTarget(sc, "y");   // clamped: a short library jumps to its end
+}
+
+/** The jump is still gliding. A wheel or the stick pushing on meanwhile would tear it in half
+    (the animator hands over to any scroll it did not make), so they wait for it. */
+function gridJumpRunning(sc) {
+  const a = sc && scrollAnims.get("y").get(sc);
+  return gridJumpTo !== null && !!a && a.running && a.target === gridJumpTo;
+}
+
 window.addEventListener("wheel", (e) => {
   if (Math.abs(e.deltaY) <= Math.abs(e.deltaX) || e.ctrlKey) return;
+  if (e.deltaY > 0 && !searchOpen && Nav.activeScope() === $("screen-library")) {
+    const page = libraryScroller();
+    if (gridJumpRunning(page)) { e.preventDefault(); return; }
+    const to = gridJumpTarget(page, true);
+    if (to !== null) { e.preventDefault(); startGridJump(page, to); return; }
+  }
   for (let p = e.target instanceof Element ? e.target : null; p; p = p.parentElement)
     if (canScrollY(p, e.deltaY)) return;          // already over something that will scroll
   const home = wheelHome();
@@ -703,7 +763,15 @@ function onStickScroll(notchesPerSec) {
 
     const el = stickScrollEl();
     if (el !== stickEl) { stickEl = el; stickPos = el ? el.scrollTop : 0; }
-    if (el) {
+    const jump = el && target > 0 && !gridJumpRunning(el) ? gridJumpTarget(el, true) : null;
+    if (jump !== null) {
+      // The first push down from the top of the page goes to the grid in one glide (see
+      // gridJumpTarget); held on, the stick carries on from there once it lands.
+      startGridJump(el, jump);
+      stickPos = el.scrollTop;
+    } else if (el && gridJumpRunning(el)) {
+      stickPos = el.scrollTop;
+    } else if (el) {
       // Something else moved it -- the D-pad's glide, a real wheel -- so carry on from there.
       if (Math.abs(el.scrollTop - stickPos) > 2) stickPos = el.scrollTop;
       stopScroll(el, "y");
@@ -766,8 +834,8 @@ function paintNav() {
      would be unusable. */
   const region = cur ? cur.closest("[data-region]") : null;
   // The search box sits in the top bar, but what it is ABOUT is the grid: while a search is being
-  // typed or is standing, say "grid" so a theme lays the results out in view. The Loungepad theme
-  // would otherwise slide back to its resting hero and leave the results as a peek under the row.
+  // typed or is standing, say "grid" so a theme can lay the results out in view. (The Loungepad
+  // theme's page is scrolled to them instead; see revealSearchResults.)
   if (cur && cur.id === "libSearch" && (searchOpen || F.search)) scope.dataset.focusRegion = "grid";
   else if (region) scope.dataset.focusRegion = region.dataset.region;
   else delete scope.dataset.focusRegion;
@@ -2859,7 +2927,16 @@ function updateLibraryFocus(noScroll) {
 
 /* ============================== library nav ============================== */
 
-function libraryNav(btn) { navMove(btn); }
+function libraryNav(btn) {
+  // A step from the recents (or the Playing card) into the grid lands with All games filling the
+  // view (gridJumpTarget). Asked before the step, whose own reveal moves the scroll target.
+  const grid = $("gridScroll"), page = libraryScroller();
+  const before = focusEl();
+  const jump = before && !grid.contains(before) ? gridJumpTarget(page, false) : null;
+  if (!navMove(btn)) return;
+  const now = focusEl();
+  if (jump !== null && now && grid.contains(now)) startGridJump(page, jump);
+}
 
 /* What A / Y do is read off the focused element, not inferred from which zone the
    highlight is in. That is the whole point: a theme can put a launchable tile
@@ -2909,20 +2986,22 @@ function libraryInput(btn) {
     // Settings lost its tab, so this is the way in. Menu is the pad's ☰ button; holding it is
     // still the keyboard toggle, and only a tap gets here.
     case "Menu": switchView("settings"); break;
-    // B walks back to how the library opened: the first press goes up to the recents (Shelf's
-    // page scrolls back to the top, the Loungepad theme slides them back down), the next one
-    // clears a standing search. Pressed
-    // repeatedly it always ends on the whole library with the highlight at the top.
+    // B walks back to how the library opened: the first press goes up to the recents (the page
+    // scrolls back to the top), the next one clears a standing search. Pressed repeatedly it
+    // always ends on the whole library with the highlight at the top.
     case "B": {
       const top = libraryTop();
       const cur = focusEl();
+      const page = libraryScroller();
       if (top && !atLibraryTop(cur)) {
         setFocusEl(top);
-        // The grid goes back to its first row too, or the peek under the recents would be
-        // showing wherever the highlight had got to. In Shelf this is the page going to the top.
-        const grid = libraryScroller();
-        if (grid && grid.scrollTop > 0) animateScroll(grid, "y", 0);
+        // The page goes back to the top too, or the grid under the recents would be showing
+        // wherever the highlight had got to. A theme whose grid scrolls on its own: its first row.
+        if (page && page.scrollTop > 0) animateScroll(page, "y", 0);
         afterFocusMove();
+      } else if (page && scrollTarget(page, "y") > 1) {
+        // Already on the recents, but the stick or a wheel has scrolled the page away from them.
+        animateScroll(page, "y", 0);
       } else if (F.search) {
         setSearch("");
         renderLibrary();
@@ -5909,6 +5988,7 @@ function openSearch() {
   setInputMode("pad");
   setFocusEl(box);
   paintNav();
+  revealSearchResults();
   const field = $("searchField");
   field.value = F.search;
   // The page only receives keystrokes once the HOST has put keyboard focus into the WebView --
@@ -5920,6 +6000,21 @@ function openSearch() {
   setTimeout(place, 80);
   setTimeout(place, 250);
   send({ cmd: "showKeyboard" });
+}
+
+/* A search is about the grid, so opening one brings the grid up when it is under the fold: at the
+   top of the Loungepad theme's page it is a peek below the recents, and the results would be
+   typed into a sliver. Its top goes to the top of the view (the theme keeps the page tall enough
+   while searching). Shelf's grid starts on screen, and a page already scrolled down into the
+   grid is left where it is; a grid that scrolls on its own needs nothing. */
+function revealSearchResults() {
+  const sc = libraryScroller(), grid = $("gridScroll");
+  if (!sc || sc === grid) return;
+  const first = grid.querySelector(FOCUSABLE_SEL) || grid;
+  const below = offsetWithin(first, sc, "y") + first.offsetHeight + REVEAL_MARGIN;
+  if (below <= scrollTarget(sc, "y") + sc.clientHeight) return;
+  watchScrolled(sc);
+  animateScroll(sc, "y", offsetWithin(grid, sc, "y"));
 }
 
 function closeSearch(keep) {

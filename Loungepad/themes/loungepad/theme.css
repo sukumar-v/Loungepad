@@ -2,39 +2,44 @@
    Loungepad — the launcher's own look
    ============================================================================
 
-   THE IDEA. The library has two states and slides between them:
+   THE IDEA. The library is one page, scrolled as a whole, and it has two looks:
 
-     resting   the focused game's art fills the screen unblurred -- and its trailer,
-               once the highlight has rested on it -- its title sits low on the left,
-               the recents sit in a row near the bottom, and the first row of the grid
-               peeks under it.
-     browsing  the row has gone up off the screen with the title, like the top of a
-               page scrolled away, and the grid owns the whole view. The row used to
-               park at the top, which left the grid three rows (the user's call,
-               Oct 1 2026); Up off the grid's first row brings it back.
+     resting   at the top of the page. The focused game's art fills the screen unblurred
+               -- and its trailer, once the highlight has rested on it -- its title sits
+               low on the left, the recents sit in a row near the bottom, and the first
+               row of the grid peeks under it.
+     browsing  anywhere below the top, however it got there: the art recedes to a wash,
+               the title fades, and the recents go up off the screen like any other row.
+               The first move down from the top -- the D-pad's step into the grid, a
+               wheel, the stick -- goes the whole way, so All games fills the view (the
+               app's gridJumpTarget); from there the page scrolls normally, and the
+               recents come back as a row on the way up. Walking up onto them with the
+               D-pad returns to the top of the page.
+
+   The page used to be a fixed stack slid up with translateY when the highlight reached
+   the grid, and the grid scrolled inside it. Only a D-pad step into the grid moved the
+   stack, so the wheel and the right stick scrolled the grid inside the 40px peek while
+   the recents sat still above it (the user's report, Oct 6 2026: the recents should be
+   treated like any other row). One scroller for all of it is what makes every way of
+   scrolling move the same page.
 
    The recents used to ride a frosted tray, and the tray is what made the whole screen
    read as somebody else's television. Gone: the tiles sit straight on the art, held
    by the scrim, and the row shows exactly as many games as the grid has columns, so
    there is nothing to scroll and no sliver of a next tile to explain.
 
-   HOW, WITH NO SCRIPT. A theme is markup and CSS; it cannot run anything. The
-   state comes from data-focus-region, which the app writes on the screen element
-   to name the region the highlight is in (see nav.js). Focus reaches the grid,
-   the attribute changes, and everything below keys off it.
-
-   WHY A TRANSFORM AND NOT A SCROLL. The column is a fixed-height stack moved with
-   translateY. Animating heights instead would resize .grid-scroll mid-transition,
-   and the app measures that scroller to keep the highlight in view -- it would be
-   doing its arithmetic against a box that is still moving. A transform changes no
-   layout at all, so the grid's own scrolling is identical in both states.
+   HOW, WITH NO SCRIPT. A theme is markup and CSS; it cannot run anything. The look
+   comes from .scrolled, which the app puts on the library's scroller -- .tv-view here --
+   while it is away from the top (watchScrolled in app.js). The app finds that scroller
+   by asking the CSS which ancestor of the grid has overflow (libraryScroller), so
+   .tv-view having it is the whole of the wiring. The highlight's region still arrives
+   as data-focus-region (see nav.js), and the shelf uses it for its peek.
 
    GEOMETRY. The stage is a fixed 1920x1080 scaled to the window, so these are real
    pixels and they are allowed to add up:
 
      chrome  96 + view 912 + legend 72                        = 1080
-     hero 640 + dock 232 + peek 40                            =  912   at rest
-     shelf 912                                                =  912   browsing
+     hero 640 + dock 232 + peek 40                            =  912   the top of the page
 
    Only --view-h, --dock-h and --peek are set; the hero is what is left over. That
    is what lets "Hide the button hints" work as one line: the view grows by the
@@ -42,9 +47,10 @@
 
    Six columns across the 1760px between the gutters: (1760 - 5x28) / 6 = 270.
 
-   OPTIONS. theme.json declares five, and they arrive as --tv-cols, --tv-peek and --tv-slide on
-   the root and as data-theme-labels / data-theme-dim-art on <html>. Every fallback below is the
-   option's default, so the theme reads the same with or without them.
+   OPTIONS. theme.json declares four, and they arrive as --tv-cols and --tv-peek on the root and
+   as data-theme-labels / data-theme-dim-art on <html>. Every fallback below is the option's
+   default, so the theme reads the same with or without them. "Row slide" went with the slide:
+   the page moves on the app's own scroll spring now, like every other list.
 
    TRAILERS. The app plays the focused game's trailer into #backdrop's <video> once the highlight
    has rested for three seconds (Settings → Appearance, under this theme's options). It is the
@@ -77,7 +83,6 @@
      a picture with its corners barely taken off reads as a picture. */
   --radius: 10px;
   --ease: cubic-bezier(0.22, 0.86, 0.24, 1);
-  --slide: calc(var(--tv-slide, 460ms) * var(--motion, 1));   /* the column's move, the one option about timing */
 
   height: 100%;
   display: flex;
@@ -131,7 +136,7 @@ body:has(#screen-library:is(.active, .closing, .under)) #backdrop::before {
 }
 body:has(#screen-library:is(.active, .closing, .under)) #backdrop.has-art::before { opacity: 1; }
 /* Browsing, the bed is all that is left of the art, so it comes up as the sharp layer goes. */
-body:not([data-view="detail"]):has(#screen-library:is(.active, .closing, .under)[data-focus-region="grid"]) #backdrop.has-art::before { opacity: 0.85; }
+body:not([data-view="detail"]):has(#screen-library:is(.active, .closing, .under) .tv-view.scrolled) #backdrop.has-art::before { opacity: 0.85; }
 
 body:has(#screen-library:is(.active, .closing, .under)) .bd {
   top: 0; left: 0; right: 0; bottom: auto;
@@ -172,18 +177,18 @@ body:has(#screen-library:is(.active, .closing, .under)) .bd.visible { opacity: 1
 /* Browsing: the art recedes to a wash so 20-odd tiles are not competing with it.
    Scaled up rather than just blurred -- the element stops at 58% and blur would
    otherwise bleed a soft edge along the sides and top. */
-body:not([data-view="detail"]):has(#screen-library:is(.active, .closing, .under)[data-focus-region="grid"]) .bd {
+body:not([data-view="detail"]):has(#screen-library:is(.active, .closing, .under) .tv-view.scrolled) .bd {
   filter: blur(28px) saturate(1.1) brightness(0.5);
   transform: scale(1.08);
 }
-body:not([data-view="detail"]):has(#screen-library:is(.active, .closing, .under)[data-focus-region="grid"]) .bd.visible { opacity: 0.8; }
+body:not([data-view="detail"]):has(#screen-library:is(.active, .closing, .under) .tv-view.scrolled) .bd.visible { opacity: 0.8; }
 /* "Dim the art while browsing" off: the picture stays close to itself once the highlight is in the
    grid -- softened a touch so the tiles still read against it, but neither darkened nor washed. */
-html[data-theme-dim-art="false"] body:not([data-view="detail"]):has(#screen-library:is(.active, .closing, .under)[data-focus-region="grid"]) .bd {
+html[data-theme-dim-art="false"] body:not([data-view="detail"]):has(#screen-library:is(.active, .closing, .under) .tv-view.scrolled) .bd {
   filter: blur(8px) saturate(1.1) brightness(0.82);
   transform: scale(1.04);
 }
-html[data-theme-dim-art="false"] body:not([data-view="detail"]):has(#screen-library:is(.active, .closing, .under)[data-focus-region="grid"]) .bd.visible { opacity: 1; }
+html[data-theme-dim-art="false"] body:not([data-view="detail"]):has(#screen-library:is(.active, .closing, .under) .tv-view.scrolled) .bd.visible { opacity: 1; }
 
 /* The trailer. The app fades it up over the still (see #backdrop video in app.css); at rest it
    is the screen, sharp and whole, under the same scrim that holds the title and the row. Shelf
@@ -198,13 +203,13 @@ body:has(#screen-library:is(.active, .closing, .under)) #backdrop :is(video, .tr
               filter calc(380ms * var(--motion, 1)) var(--ease);
 }
 body:has(#screen-library:is(.active, .closing, .under)) #backdrop :is(video, .trailer-yt).playing { opacity: 1; filter: none; }
-body:not([data-view="detail"]):has(#screen-library:is(.active, .closing, .under)[data-focus-region="grid"]) #backdrop :is(video, .trailer-yt).playing {
+body:not([data-view="detail"]):has(#screen-library:is(.active, .closing, .under) .tv-view.scrolled) #backdrop :is(video, .trailer-yt).playing {
   /* Darkened, never see-through: at less than full opacity the dimmed still underneath showed
      through the film and the two read as one blurred picture. */
   opacity: 1; filter: brightness(0.45) saturate(1.1);
 }
 /* "Dim the art while browsing" off: the film keeps most of its light, like the art. */
-html[data-theme-dim-art="false"] body:not([data-view="detail"]):has(#screen-library:is(.active, .closing, .under)[data-focus-region="grid"]) #backdrop :is(video, .trailer-yt).playing {
+html[data-theme-dim-art="false"] body:not([data-view="detail"]):has(#screen-library:is(.active, .closing, .under) .tv-view.scrolled) #backdrop :is(video, .trailer-yt).playing {
   opacity: 1; filter: brightness(0.8);
 }
 
@@ -227,13 +232,13 @@ body:has(#screen-library:is(.active, .closing, .under)) #backdrop::after {
     linear-gradient(0deg, color-mix(in srgb, var(--bg) 90%, transparent) 0, color-mix(in srgb, var(--bg) 80%, transparent) 22%, color-mix(in srgb, var(--bg) 55%, transparent) 32%, transparent 40%),
     radial-gradient(ellipse 46% 34% at 8% 66%, color-mix(in srgb, var(--bg) 72%, transparent) 0, color-mix(in srgb, var(--bg) 30%, transparent) 60%, transparent 100%);
 }
-body:not([data-view="detail"]):has(#screen-library:is(.active, .closing, .under)[data-focus-region="grid"]) #backdrop::after {
+body:not([data-view="detail"]):has(#screen-library:is(.active, .closing, .under) .tv-view.scrolled) #backdrop::after {
   background: linear-gradient(180deg,
     color-mix(in srgb, var(--bg) 90%, transparent),
     color-mix(in srgb, var(--bg) 82%, transparent));
 }
 /* With the art kept bright the scrim only has to hold the chrome and the tiles, not hide a picture. */
-html[data-theme-dim-art="false"] body:not([data-view="detail"]):has(#screen-library:is(.active, .closing, .under)[data-focus-region="grid"]) #backdrop::after {
+html[data-theme-dim-art="false"] body:not([data-view="detail"]):has(#screen-library:is(.active, .closing, .under) .tv-view.scrolled) #backdrop::after {
   background: linear-gradient(180deg,
     color-mix(in srgb, var(--bg) 46%, transparent),
     color-mix(in srgb, var(--bg) 58%, transparent));
@@ -250,26 +255,31 @@ html[data-theme-dim-art="false"] body:not([data-view="detail"]):has(#screen-libr
 .tv .topbar-right { gap: 22px; font-size: 17px; }
 .tv #titleCount, .tv .vsep { display: none; }
 
-/* -------------------------------------------------------------- the column --
-   .tv-view is the window; .tv-stack is the thing that slides. */
+/* ---------------------------------------------------------------- the page --
+   .tv-view is the page and the one scroller: the hero, the recents and the grid all move in
+   it, so a wheel, the right stick and the D-pad's reveal all scroll the same thing and the
+   recents go off the top like any other row. .tv-stack is only the column inside it.
+   Relative so revealOffset() can measure rows against it with offsetTop. */
 
-.tv-view { flex: 1; min-height: 0; position: relative; overflow: hidden; }
-
-.tv-stack {
-  position: absolute; left: 0; right: 0; top: 0;
-  transform: translateY(0);
-  transition: transform var(--slide) var(--ease);
-  will-change: transform;
+.tv-view {
+  flex: 1; min-height: 0; position: relative;
+  overflow-x: hidden; overflow-y: auto;
+  scrollbar-width: none;
 }
-/* Up by the hero AND the dock, which is the view less the peek: the shelf's top lands on the
-   view's top and the recents leave with the title. */
-#screen-library[data-focus-region="grid"] .tv-stack {
-  transform: translateY(calc((var(--hero-h) + var(--dock-h)) * -1));
+.tv-view::-webkit-scrollbar { display: none; }
+/* Rows scrolled under the top bar dissolve rather than end in a hard line, and the next row down
+   fades into the legend -- which is how you know to keep going. Only while scrolled, so at the top
+   of the page the recents' glow has its full room and the peek is left alone. 24px is short
+   enough to clear the focused tile, which revealFocus keeps 30px clear of the edge. */
+.tv-view.scrolled {
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 26px, #000 calc(100% - 24px), transparent);
+  mask-image: linear-gradient(180deg, transparent 0, #000 26px, #000 calc(100% - 24px), transparent);
 }
 
 /* ------------------------------------------------------------------- hero --
    Title, one line of meta, and the resume card if something is running. It fades
-   out on the way up rather than sliding away under the dock. */
+   once the page leaves the top, rather than carrying a bright title up over the
+   dimmed art. */
 
 .tv-hero {
   height: var(--hero-h);
@@ -277,7 +287,7 @@ html[data-theme-dim-art="false"] body:not([data-view="detail"]):has(#screen-libr
   gap: 26px; padding: 0 var(--gutter) 34px;
   transition: opacity calc(300ms * var(--motion, 1)) linear;
 }
-#screen-library[data-focus-region="grid"] .tv-hero { opacity: 0; }
+.tv-view.scrolled .tv-hero { opacity: 0; }
 
 .tv-hero-text { max-width: 1100px; }
 .focus-detail { display: flex; flex-direction: column; gap: 14px; }
@@ -311,21 +321,25 @@ html[data-theme-dim-art="false"] body:not([data-view="detail"]):has(#screen-libr
 }
 
 /* -------------------------------------------------------------------- row --
-   The recents, straight on the art. No tray: the tiles line up with the grid's gutter, the
-   scrim underneath holds them, and the same box in both states is what makes the slide read
-   as one layout moving rather than two screens swapping. The padding is what the tray used to
-   have, kept so the geometry at the top of this file still adds up. */
+   The recents, straight on the art. No tray: the tiles line up with the grid's gutter and the
+   scrim underneath holds them. The padding is what the tray used to have, kept so the geometry
+   at the top of this file still adds up.
+
+   A row like any other: scrolled, it goes up off the view with the page, neither faded nor held
+   (the user's call, Oct 6 2026). */
 
 .tv-dock {
   height: var(--dock-h);
   margin: 0 var(--gutter);
   padding: 22px 0;
-  transition: opacity calc(300ms * var(--motion, 1)) linear;
 }
-/* Browsing, it slides up out of the view with the hero, and fades as it goes like the hero does,
-   so it never runs into the top edge as a row cut in half. (It used to park there, with a rule
-   under it to tell it from the grid; there is nothing left to tell apart.) */
-#screen-library[data-focus-region="grid"] .tv-dock { opacity: 0; }
+/* With nothing played yet there is no row, and an empty band a row tall would push the first
+   tile under the fold, where the highlight starts. */
+.tv-dock:not(:has(.cont-item)) { display: none; }
+/* Walking up onto the recents goes back to the top of the page, hero and all, rather than parking
+   the row against the top edge over a dimmed picture: revealOffset in app.js keeps this much room
+   above an element it reveals, and a screen of it reaches the top of the page. */
+.tv-dock .cont-item { scroll-margin-top: var(--view-h); }
 
 .tv-dock .lib-section { gap: 0; }
 .tv-dock .section-head { display: none; }
@@ -340,15 +354,17 @@ html[data-theme-dim-art="false"] body:not([data-view="detail"]):has(#screen-libr
    dissolves the row wrappers so every tile is a direct child of the grid. */
 
 /* Held back while it is only a peek, so the sliver under the dock reads as the next thing
-   down rather than as a second row competing with the art. The view's full height, so browsing
-   it fills the view; at rest everything under the peek is clipped by .tv-view. One height in both
-   states, so the scroller is never resized under the app's reveal arithmetic. */
+   down rather than as a second row competing with the art. As tall as its rows: the page does
+   the scrolling. */
 .tv-shelf {
-  height: var(--view-h); padding: 0 var(--gutter);
+  padding: 0 var(--gutter);
   opacity: 0.5; transition: opacity calc(340ms * var(--motion, 1)) var(--ease);
 }
-#screen-library[data-focus-region="grid"] .tv-shelf { opacity: 1; }
-.tv-shelf .lib-section { gap: 0; height: 100%; }
+#screen-library[data-focus-region="grid"] .tv-shelf, .tv-view.scrolled .tv-shelf { opacity: 1; }
+/* While searching, the page is kept at least one view taller than the hero and the row, so the
+   app can scroll the results to the top of the view (revealSearchResults) however few there are. */
+#screen-library:has(#libSearch:is(.active, .has-query)) .tv-shelf { min-height: var(--view-h); }
+.tv-shelf .lib-section { gap: 0; }
 .tv-shelf .section-head { display: none; }
 
 .tv-shelf .grid-scroll {
@@ -359,18 +375,9 @@ html[data-theme-dim-art="false"] body:not([data-view="detail"]):has(#screen-libr
   /* Room for the focus lift, pulled back out so the columns still measure 1760. */
   padding: 20px 20px 26px;
   margin: 0 -20px;
-}
-/* Four rows fit at six across and the next one peeks, which is how you know to keep going. Fade
-   its cut edge rather than leave a hard line above the legend -- and redeclare the app's top
-   fade, because this rule would otherwise replace it. 24px is short enough to clear the focused
-   tile, which revealFocus keeps 30px clear of the edge. */
-.tv-shelf .grid-scroll {
-  -webkit-mask-image: linear-gradient(180deg, #000 calc(100% - 24px), transparent);
-  mask-image: linear-gradient(180deg, #000 calc(100% - 24px), transparent);
-}
-.tv-shelf .grid-scroll.scrolled {
-  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 26px, #000 calc(100% - 24px), transparent);
-  mask-image: linear-gradient(180deg, transparent 0, #000 26px, #000 calc(100% - 24px), transparent);
+  /* Not a scroller: the page is. The app's own top fade is the page's here. */
+  flex: 0 0 auto; overflow: visible;
+  -webkit-mask-image: none; mask-image: none;
 }
 .tv-shelf .grid-row { display: contents; }
 .tv-shelf .empty-note { grid-column: 1 / -1; }
@@ -382,8 +389,8 @@ html[data-theme-dim-art="false"] body:not([data-view="detail"]):has(#screen-libr
 
 /* ------------------------------------------------------------------- tiles --
    One shape for both the row and the grid, so that nothing
-   about a tile says which row it is in, so the dock reads as part of the grid
-   when it lands on top of it.
+   about a tile says which row it is in, and the recents read as the first
+   row of the page rather than as a different kind of thing.
 
    The app adds .grid-item / .cont-item to whatever the template returns, and both
    carry sizes and a focus ring from app.css. Reset them here rather than fight
@@ -521,7 +528,7 @@ html[data-theme-labels="true"] .tv-tile.focused .tv-name { opacity: 1; }
    The library's tiles fade out under it (app.css), the column fades in, and the picture behind
    both never changes. The resting scrim comes off, because the page has shades of its own, and
    the grid's dimming is held off while the page is up (the :not([data-view="detail"]) on those
-   rules) -- the highlight is still in the grid underneath, but nothing is browsing. */
+   rules) -- the library underneath is still scrolled, but nothing is browsing. */
 #screen-detail { --trailer-surface: backdrop; background: transparent; }
 #screen-detail .detail-art { display: none; }
 body[data-view="detail"]:has(#screen-library.under) #backdrop::after { background: none; }

@@ -1,7 +1,7 @@
 {
   "name": "Loungepad",
   "author": "Loungepad",
-  "version": "4.4",
+  "version": "4.5",
   "description": "Full-bleed art, recents in a row, the grid on the way down",
   "tokens": {
     "--bg": "#05070B",
@@ -45,19 +45,9 @@
     {
       "id": "dim-art",
       "name": "Dim the art while browsing",
-      "hint": "The backdrop blurs and darkens once the highlight is in the grid, so the tiles stand out. Off keeps it bright",
+      "hint": "The backdrop blurs and darkens once you scroll down into the grid, so the tiles stand out. Off keeps it bright",
       "type": "toggle",
       "default": true
-    },
-    {
-      "id": "slide",
-      "name": "Row slide",
-      "hint": "How quickly the column moves between the art and the grid. Scaled by the animation speed like everything else",
-      "type": "select",
-      "options": ["Snappy", "Smooth", "Slow"],
-      "default": "Smooth",
-      "token": "--tv-slide",
-      "values": { "Snappy": "300ms", "Smooth": "460ms", "Slow": "700ms" }
     }
   ]
 }
