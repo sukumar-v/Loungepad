@@ -324,6 +324,20 @@ img { border: 0; }
 .lp-end-h { margin: 40px auto 0; max-width: 980px; font-size: clamp(40px, 6vw, 92px); line-height: .98; font-weight: 700; letter-spacing: -.04em; text-wrap: balance; }
 .lp-end p { margin: 24px auto 0; max-width: 560px; font-size: clamp(17px, 1.5vw, 21px); line-height: 1.55; color: rgba(242,245,250,.74); }
 .lp-end-ctas { margin-top: 40px; display: flex; flex-wrap: wrap; justify-content: center; gap: 14px; }
+.lp-end p.lp-end-tip { margin-top: 64px; max-width: 600px; font-size: 15px; line-height: 1.65; color: rgba(242,245,250,.6); text-wrap: pretty; }
+.lp-end-tip strong { color: rgba(242,245,250,.86); font-weight: 600; }
+.lp-end-tip a { color: rgba(242,245,250,.86); text-decoration: underline; text-decoration-color: rgba(242,245,250,.3); text-underline-offset: 3px; }
+
+/* ---- The feedback page: the form on a light card, since Tally draws dark text ---- */
+.lp-fb { padding-bottom: 120px; }
+.lp-fb-main { max-width: 760px; margin: 56px auto 0; }
+.lp-fb-main .lp-h2 { font-size: clamp(34px, 4.6vw, 56px); }
+.lp-fb-lede { margin: 20px 0 0; font-size: clamp(17px, 1.5vw, 20px); line-height: 1.55; color: rgba(242,245,250,.74); }
+.lp-fb-card { margin-top: 40px; padding: 28px 32px 20px; border-radius: 20px; background: #F7F7F5; box-shadow: 0 30px 80px -30px rgba(0,0,0,.8); }
+.lp-fb-card iframe { display: block; width: 100%; border: 0; color-scheme: light; }
+.lp-fb-more { margin: 32px 0 0; font-size: 15px; line-height: 1.65; color: rgba(242,245,250,.6); }
+.lp-fb-more a { color: rgba(242,245,250,.86); text-decoration: underline; text-decoration-color: rgba(242,245,250,.3); text-underline-offset: 3px; }
+@media (max-width: 760px) { .lp-fb-card { padding: 20px 16px 12px; border-radius: 16px; } }
 
 .lp-footer { padding: 40px clamp(20px, 5vw, 72px) 44px; border-top: 1px solid rgba(255,255,255,.07); }
 .lp-footer-row { max-width: 1296px; margin: 0 auto; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 22px 48px; }

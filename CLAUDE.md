@@ -805,6 +805,15 @@ Stop the scrolled grid from clipping through the All games header
   B paths run for real; section screenshots stitched into contact sheets with sharp. Lighthouse
   (desktop, local server) 99/100/100/100; the text-compression and bfcache audits it lists are
   the local server's no-cache headers, not the site.
+- **`/feedback` is `feedback.html`, a Tally form** (`tally.so/r/WOvqlL`, the user's; Oct 6 2026)
+  embedded on a light card, because Tally draws dark text. Tally's own snippet is inline script,
+  which the CSP refuses, so `feedback.js` is that snippet as a file; `embed.js` sizes the frame
+  (iframe-resizer). `tally.so` is in the ONE site-wide policy as `script-src` and `frame-src`: two
+  `_headers` rules setting the CSP are joined into two policies, so a looser rule for one path
+  cannot work. The README, the footer, Discord and the issue chooser all link to `/feedback`, so a
+  new poll is a new form id in one place. The pane cannot see into the cross-origin frame and a
+  full-page headless capture leaves it blank below the fold; check it with a meta-tag CSP copy of
+  the page and a viewport screenshot scrolled to the form's end.
 
 ## The old names
 
