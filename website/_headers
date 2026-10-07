@@ -1,13 +1,14 @@
-# Cloudflare static-asset headers. The site is static and loads nothing but itself, Google Fonts
-# and, on /feedback only, Tally's form. Tally is in the one policy for every page rather than a
-# looser one for /feedback: two rules setting the same header are joined with a comma, which is
-# two policies, and a page has to pass both -- so a second rule can only ever tighten.
+# Cloudflare static-asset headers. The site is static and loads nothing but itself, Google Fonts,
+# Cloudflare's Web Analytics beacon (injected at the edge on every page) and, on /feedback only,
+# Tally's form. Tally is in the one policy for every page rather than a looser one for /feedback:
+# two rules setting the same header are joined with a comma, which is two policies, and a page
+# has to pass both -- so a second rule can only ever tighten.
 /*
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY
   Referrer-Policy: strict-origin-when-cross-origin
   Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
-  Content-Security-Policy: default-src 'self'; script-src 'self' https://tally.so; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-src https://tally.so; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'
+  Content-Security-Policy: default-src 'self'; script-src 'self' https://tally.so https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://cloudflareinsights.com; frame-src https://tally.so; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'
 
 # Screenshots and icons change rarely and are named by what they show, not by a hash, so a week.
 /img/*
