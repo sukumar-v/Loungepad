@@ -811,6 +811,13 @@ Stop the scrolled grid from clipping through the All games header
   nothing claims it either: the "Also runs on Windows 10" pill went with the "Windows 11" one.
   Technical notes that are about Windows 11 itself (the shell reading Xbox pads, build numbers)
   stay as they are.
+- **Cloudflare Web Analytics is on for the zone** and injects its beacon into every page at the
+  edge; the CSP refused it from the day the site went up, so nothing was counted before Oct 6 2026.
+  The script is `static.cloudflareinsights.com` (allowed in `script-src`); the reports go to the
+  site's own `/cdn-cgi/rum` (204), so `connect-src 'self'` already covers them. **This PC's
+  ProtonVPN (NetShield) answers NXDOMAIN for `static.cloudflareinsights.com`**, the 1.1.1.1 lookup
+  included, which reads as the site being broken: resolve it over DoH and start Chrome with
+  `--host-resolver-rules=MAP static.cloudflareinsights.com <ip>` to check the beacon.
 - **`/feedback` is `feedback.html`, a Tally form** (`tally.so/r/WOvqlL`, the user's; Oct 6 2026)
   embedded on a light card, because Tally draws dark text. Tally's own snippet is inline script,
   which the CSP refuses, so `feedback.js` is that snippet as a file; `embed.js` sizes the frame
