@@ -4,7 +4,8 @@ using Loungepad.Services;
 namespace Loungepad;
 
 /// <summary>
-/// The notification-area icon: a way back to the launcher, the update, and a way out.
+/// The notification-area icon: a way back to the launcher (or out of its way), the update, and a
+/// way out.
 ///
 /// The window has no taskbar button (ShowInTaskbar=false, so a game never has one beside it), and
 /// while a game is running the launcher is hidden rather than minimized. Before this there was no
@@ -20,11 +21,20 @@ public sealed class TrayIcon : IDisposable
     private readonly ContextMenuStrip _menu;
     private readonly ToolStripMenuItem _update;
 
-    public TrayIcon(Action show, Action update, Action quit)
+    public TrayIcon(Action show, Action hide, Func<bool> shown, Action update, Action quit)
     {
         _menu = new ContextMenuStrip();
-        var showItem = new ToolStripMenuItem("Show Loungepad", null, (_, _) => show());
+        // Show or Minimize, whichever the launcher is not doing as the menu opens, and the press
+        // does what the item said even if the pad moved the launcher in between. Minimize, as in
+        // the library's legend: "Hide" is what a game's menu does to a game.
+        bool hideOnPress = false;
+        var showItem = new ToolStripMenuItem("Show Loungepad", null, (_, _) => { if (hideOnPress) hide(); else show(); });
         showItem.Font = new System.Drawing.Font(showItem.Font, System.Drawing.FontStyle.Bold);
+        _menu.Opening += (_, _) =>
+        {
+            hideOnPress = shown();
+            showItem.Text = hideOnPress ? "Minimize Loungepad" : "Show Loungepad";
+        };
         _update = new ToolStripMenuItem("Check for updates", null, (_, _) => update());
         _menu.Items.AddRange(new ToolStripItem[]
         {
@@ -46,6 +56,10 @@ public sealed class TrayIcon : IDisposable
         // menu is on the right button.
         _icon.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) show(); };
     }
+
+    /// <summary>While the menu is up the launcher must not take the foreground back (KeepFocus): that
+    /// shuts the menu under the pointer choosing from it.</summary>
+    public bool MenuOpen => _menu.Visible;
 
     /// <summary>The update item says what pressing it will do.</summary>
     public void SetUpdate(UpdateStatus s)

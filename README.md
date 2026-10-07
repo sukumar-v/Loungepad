@@ -127,7 +127,8 @@ Settings and the library live in `%APPDATA%\Loungepad`; to uninstall, delete `Lo
 | Menu | Tab | Settings |
 | LB | `` ` `` | Stats |
 | Xbox button, tap | | Power Wheel |
-| Xbox button, hold | | Show or hide Loungepad; the in-game menu while a game runs |
+| Xbox button, hold | | Show or minimize Loungepad; the in-game menu while a game runs |
+| | H | Minimize Loungepad; click the tray icon to bring it back |
 
 PlayStation and Switch pads use the buttons in the same places, and the hints on screen show them.
 

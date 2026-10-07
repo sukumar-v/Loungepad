@@ -140,7 +140,7 @@ const BTN_NAMES = {
   playstation: { A: "Cross", B: "Circle", X: "Square", Y: "Triangle", LB: "L1", RB: "R1", LT: "L2", RT: "R2", View: "Create", Menu: "Options", LS: "L3", RS: "R3", Guide: "the PS button" },
   switch: { A: "B", B: "A", X: "Y", Y: "X", LB: "L", RB: "R", LT: "ZL", RT: "ZR", View: "−", Menu: "+", LS: "the left stick", RS: "the right stick", Guide: "Home" },
   generic: { A: "the bottom face button", B: "the right face button", X: "the left face button", Y: "the top face button", LB: "L1", RB: "R1", LT: "L2", RT: "R2", View: "Select", Menu: "Start", LS: "L3", RS: "R3", Guide: "Home" },
-  keyboard: { A: "Enter", B: "Esc", X: "X", Y: "Y", LB: "[", RB: "]", LT: "LT", RT: "RT", View: "/", Menu: "M", LS: "LS", RS: "RS", Guide: "Guide" },
+  keyboard: { A: "Enter", B: "Esc", X: "X", Y: "Y", LB: "[", RB: "]", LT: "LT", RT: "RT", View: "/", Menu: "M", LS: "LS", RS: "RS", Guide: "Guide", Hide: "H" },
 };
 
 /* settings.json spells two of them the XInput way. */
@@ -292,6 +292,8 @@ const BUTTON_ART = {
     LB: () => keycap("["), RB: () => keycap("]"), LT: () => keycap("LT"), RT: () => keycap("RT"),
     LS: () => keycap("LS"), RS: () => keycap("RS"),
     View: () => keycap("/"), Menu: () => keycap("M"), Guide: () => keycap("Guide"),
+    // Not a pad button: the keyboard's Minimize Loungepad (a pad holds the menu combo).
+    Hide: () => keycap("H"),
   },
 };
 

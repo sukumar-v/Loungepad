@@ -1343,6 +1343,21 @@ function legendItem(btn, label, kb) {
 
 const LIBRARY_LEGEND = [["A", "Launch"], ["X", "Filter"], ["Y", "Options"], ["View", "Search"], ["LB", "Stats"], ["Menu", "Settings"]];
 
+/* Minimize Loungepad, last in the library's bar: H on a keyboard, the menu combo on a pad (held in
+   tap-and-hold, tapped in double-tap; Settings → Controller). Not "Hide", which is what a game's
+   menu does to a game. Both are drawn and the CSS shows the one for what is in hand, so a family
+   change still only repaints slots. A pad has no entry while the combo is Off, or while a game
+   runs, when the same hold brings up the in-game menu instead. */
+function minimizeLegendItem() {
+  const s = S.settings || {};
+  const combo = s.minimizeCombo && s.minimizeCombo !== "Off" && !S.gameRunning ? s.minimizeCombo : null;
+  const hold = s.menuComboMode !== "DoubleTap";
+  const pad = combo
+    ? `<span class="pad-part">${hold ? `<span class="legend-hold">Hold</span>` : ""}${comboHtml(combo)}</span>` : "";
+  return `<div class="legend-item${combo ? "" : " kb-only"}" data-press="Hide">` +
+    `<span class="kb-part">${slot("Hide")}</span>${pad}<span>Minimize Loungepad</span></div>`;
+}
+
 /* The keyboard on the library, with nothing over it (the user's call, Oct 1 2026): Enter launches, X
    filters, Ctrl opens a game's options, / searches, Tab opens Settings and ` opens Stats -- the keys
    the legend names, rather than Y, M and [, which all still work. Esc is Back here as it is on every
@@ -1364,7 +1379,7 @@ function renderLibraryLegend() {
   if (!el) return;
   const items = [...LIBRARY_LEGEND];
   if (F.search) items.splice(1, 0, ["B", atLibraryTop(focusEl(document.getElementById("screen-library"))) ? "Clear search" : "Back"]);
-  const html = foot(...items.map(([b, label]) => [b, label, LIBRARY_KEYCAPS[b]]));
+  const html = foot(...items.map(([b, label]) => [b, label, LIBRARY_KEYCAPS[b]])) + minimizeLegendItem();
   if (el.__html !== html) { el.innerHTML = html; el.__html = html; }
 }
 
@@ -1490,6 +1505,7 @@ let captureState = null;                 // { app, action, onDone, timer, note }
 let keyPick = null;                      // { onDone, mods: Set }
 let overlayTargetProcess = "";           // the exe behind the window a menu opened over; "" for none
 let overlayTargetIsGame = false;         // that window is the running game's (the wheel's Close spoke)
+let overlayOverLauncher = false;         // opened over Loungepad itself: the Close spoke exits Loungepad
 // The sheets and the screen activity.js draws. Declared here rather than there for the same
 // reason as the three above: app.js reads them while it boots.
 let achState = null;                     // { gameId, idx, filter, sort, set, head, reveal, from }
@@ -3735,7 +3751,7 @@ function allSettingsRows() {
     () => s.switchPrimaryOnLaunch, v => set(() => s.switchPrimaryOnLaunch = v)));
   rows.push(toggleRow("Reposition game windows", "If a game still opens on another monitor, nudge its window onto the TV",
     () => s.repositionGameWindow, v => set(() => s.repositionGameWindow = v)));
-  rows.push(toggleRow("Keep launcher focused", "Pull focus back if the desktop steals it while no game is running",
+  rows.push(toggleRow("Keep launcher focused", "Pull focus back if the desktop steals it while no game is running. Off, Alt+Tab and a click on another app bring that app in front",
     () => s.keepFocus, v => set(() => s.keepFocus = v)));
 
   rows.push({ section: "GAMEPAD", cat: "input" });
@@ -6358,6 +6374,9 @@ function handleInput(btn, src) {
   // Only a direction hands control back to the pad. A face button must never re-arm a
   // highlight the pointer has cleared, so A over empty space does nothing.
   if (DIRECTIONS.has(btn)) setInputMode("pad");
+  // H, or Minimize Loungepad in the library's legend: Loungepad out of the way from any screen, as
+  // the menu combo's hold does it from a pad. Whatever was open is still there when it comes back.
+  if (btn === "Hide" && !captureState && !keyPick) { send({ cmd: "hideLauncher" }); return; }
   if (mediaView) { mediaViewInput(btn); return; }
   if (confirmState) { confirmInput(btn); return; }
   if (captureState) { captureInput(btn); return; }
@@ -6397,12 +6416,13 @@ handleInput = function (btn, src) { routeInput(btn, src); publishClaims(); };
 /*
  * The keyboard, as a pad. What each key stands for is what the legend draws for it (see
  * BUTTON_ART.keyboard), so the two have to move together: Enter is A, Esc is B, the letters are
- * the letters, the brackets are the shoulders, "/" opens search and M opens Settings.
+ * the letters, the brackets are the shoulders, "/" opens search, M opens Settings and H minimizes
+ * Loungepad (no pad button: see "Hide" in handleInput).
  */
 const KEYMAP = {
   ArrowUp: "Up", ArrowDown: "Down", ArrowLeft: "Left", ArrowRight: "Right",
   Enter: "A", Space: "A", Escape: "B", Backspace: "B",
-  KeyY: "Y", KeyX: "X", KeyM: "Menu",
+  KeyY: "Y", KeyX: "X", KeyM: "Menu", KeyH: "Hide",
   BracketLeft: "LB", BracketRight: "RB",
   Slash: "View",
 };
@@ -6410,7 +6430,7 @@ const KEYMAP = {
 const KEYMAP_BY_KEY = {
   ArrowUp: "Up", ArrowDown: "Down", ArrowLeft: "Left", ArrowRight: "Right",
   Enter: "A", " ": "A", Escape: "B", Backspace: "B",
-  y: "Y", Y: "Y", x: "X", X: "X", m: "Menu", M: "Menu",
+  y: "Y", Y: "Y", x: "X", X: "X", m: "Menu", M: "Menu", h: "Hide", H: "Hide",
   "[": "LB", "]": "RB", "/": "View",
 };
 
@@ -6619,6 +6639,7 @@ function handleHostMessage(m) {
       overlayTargetTitle = m.targetTitle || "";
       overlayTargetProcess = m.targetProcess || "";
       overlayTargetIsGame = !!m.targetIsGame;
+      overlayOverLauncher = !!m.overLauncher;
       setOverlayShot(m.shot);
       setOverlayMode(true);
       hostWindows = m.windows || [];
@@ -7393,6 +7414,10 @@ function mockHandle(msg) {
     toast("(preview) power " + msg.action);
   } else if (msg.cmd === "closeOverlay" || msg.cmd === "goHome") {
     /* host-side window juggling; nothing to do in the browser preview */
+  } else if (msg.cmd === "hideLauncher") {
+    toast("(preview) would minimize Loungepad");
+  } else if (msg.cmd === "exitApp") {
+    toast("(preview) would exit Loungepad");
   } else if (msg.cmd === "resumeGame") {
     // Back to the game thaws it, as on the host.
     if (mockRest.paused) { mockRest.paused = false; mockGamePush(); }

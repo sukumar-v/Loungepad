@@ -463,6 +463,13 @@ body.no-legend .legend { display: none; }
 .legend-item > span { font-size: 22px; color: color-mix(in srgb, var(--ink) 80%, transparent); }
 /* A legend entry is a button a mouse can press: see the delegated click in app.js. */
 .legend-item[data-press] { cursor: pointer; }
+/* Minimize Loungepad (minimizeLegendItem): H for a keyboard, the menu combo for a pad, and only the
+   one for what is in hand. An entry with no pad part is the keyboard's alone. */
+.legend-item .kb-part, .legend-item .pad-part { display: inline-flex; align-items: center; gap: 10px; }
+body:not([data-input="keyboard"]) .legend-item .kb-part,
+body[data-input="keyboard"] .legend-item .pad-part,
+body:not([data-input="keyboard"]) .legend-item.kb-only { display: none; }
+.legend-hold { color: color-mix(in srgb, var(--ink) 55%, transparent); }
 
 /* ---- button glyphs ----
    Every hint is drawn as the button itself -- see btnIcon in app.js: a green A on an Xbox pad, a

@@ -36,7 +36,9 @@ library and cover art live in `%APPDATA%\Loungepad`; uninstalling is deleting `L
 `Loungepad.exe --windowed` opens a 1280×720 window instead, which is easier to poke at from a desk.
 
 While it runs, Loungepad has an icon in the notification area (the `^` by the clock, until you
-pin it): click it to bring the launcher back, or right-click to check for updates or quit.
+pin it): click it to bring the launcher back, or right-click to show or minimize it, check for
+updates or quit. To quit from the couch, open the Power Wheel over Loungepad: its top spoke is
+**Exit Loungepad**.
 
 ### Updates
 
@@ -107,7 +109,9 @@ a menu remote:
   right-click, and pinch to zoom.
 - **A keyboard and mouse work too.** Arrows move, Enter selects, Esc goes back, X and Y are
   themselves and `/` searches; on the library, Tab opens Settings, `` ` `` opens Stats and Ctrl
-  opens a game's options. The mouse hovers and clicks anywhere; a right
+  opens a game's options. **H** minimizes Loungepad from any screen, and the tray icon brings it
+  back. With **Settings → General → Keep launcher focused** off, Alt+Tab or a click on another
+  app brings that app in front of Loungepad. The mouse hovers and clicks anywhere; a right
   click on a game opens its menu and a right click anywhere else goes back, a click on the dimmed
   screen closes a menu, and the hint bar is itself clickable.
 

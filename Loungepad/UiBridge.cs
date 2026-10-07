@@ -662,6 +662,12 @@ public class UiBridge
                 _window.GoHome();
                 break;
 
+            // H, or the library hint bar's Minimize Loungepad: the keyboard's and the mouse's way
+            // off the screen.
+            case "hideLauncher":
+                _window.HideLauncher();
+                break;
+
             case "closeGame":
             {
                 // Land on the library first. Asked from the in-game menu, the launcher is a
@@ -2605,7 +2611,7 @@ public class UiBridge
         _ => "Done"
     };
 
-    public void PushOverlay(string mode, string targetTitle, string? shot, string targetProcess, bool targetIsGame) =>
+    public void PushOverlay(string mode, string targetTitle, string? shot, string targetProcess, bool targetIsGame, bool overLauncher) =>
         Push(new
         {
             type = "overlay",
@@ -2617,6 +2623,9 @@ public class UiBridge
             // That window is the running game's: the Power Wheel's Close spoke then says "Close
             // game" and goes through closeGame, which thaws a paused game before asking it.
             targetIsGame,
+            // Opened over Loungepad itself: the Close spoke is "Exit Loungepad". The target title
+            // is still the last window it acted on, which is not what is behind the menu now.
+            overLauncher,
             shot,
             windows = _windows.ListWindows(),
             displays = _displays.GetDisplays(),

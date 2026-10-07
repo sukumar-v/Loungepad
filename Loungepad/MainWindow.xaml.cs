@@ -166,7 +166,7 @@ public partial class MainWindow : Window
         // is focused otherwise and keydown never fires -- which is why a keyboard used to do
         // nothing in the launcher at all. WebView2 only takes focus through the control's own
         // Focus(), never through a Win32 SetFocus on its render window.
-        Activated += (_, _) => FocusPageIfShown();
+        Activated += (_, _) => { BackOnTop(); FocusPageIfShown(); };
         // The keyboard is a second top-level window, and WPF shuts down on the last one closing,
         // so leaving it open would keep the process alive with no UI.
         Closed += (_, _) =>
@@ -182,7 +182,8 @@ public partial class MainWindow : Window
 
         try
         {
-            _tray = new TrayIcon(show: Unpark, update: UpdateFromTray, quit: ExitApp);
+            _tray = new TrayIcon(show: Unpark, hide: HideLauncher, shown: () => !_parked && IsVisible,
+                update: UpdateFromTray, quit: ExitApp);
             _tray.SetUpdate(_updates.Status);
         }
         catch (Exception ex) { Log.Info($"No tray icon: {ex.Message}"); }
@@ -865,6 +866,23 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
+    /// Put Loungepad away without a pad: H on the keyboard, Minimize Loungepad in the library's hint
+    /// bar, and the tray menu. The combo's hold does this from a pad, but a keyboard and mouse had
+    /// no way off the screen at all -- the window is topmost on the TV and KeepFocus takes the
+    /// foreground back from anything else. A menu up over another window goes with it, as it does
+    /// on the combo; a game running behind the launcher is what is left in front.
+    /// </summary>
+    public void HideLauncher()
+    {
+        if (_overlayActive)
+        {
+            _bridge?.PushDismiss();
+            CloseOverlay(true);
+        }
+        if (!_parked) Park();
+    }
+
+    /// <summary>
     /// Bring the launcher forward showing one of the overlay menus. The window the user was on is
     /// captured first, because showing ourselves steals the foreground and the radial menu's
     /// actions all apply to that window.
@@ -886,7 +904,8 @@ public partial class MainWindow : Window
         // painted -- otherwise the launcher flashes up before the overlay appears.
         _bridge?.PushOverlay(mode, _windows.TitleOf(_overlayTarget), shot,
             _overlayTargetLive ? ActionService.ExeOf(_overlayTarget) : "",
-            _overlayTargetLive && _launcher.OwnsWindow(_overlayTarget));
+            _overlayTargetLive && _launcher.OwnsWindow(_overlayTarget),
+            overLauncher: !_overlayTargetLive);
         await Task.Delay(90);
 
         _overlayActive = true;
@@ -1111,9 +1130,20 @@ public partial class MainWindow : Window
 
     private async void OnDeactivated(object? sender, EventArgs e)
     {
-        if (_windowed || _suppressRefocus || !_settings.Settings.KeepFocus || _launcher.GameRunning) return;
-        if (_parked) return;
+        if (_windowed || _suppressRefocus || _parked) return;
+        if (!_settings.Settings.KeepFocus || _launcher.GameRunning)
+        {
+            // Nothing will take the focus back, so nothing should keep the screen either. A beat
+            // first: the window being activated may not be the foreground one yet.
+            await Task.Delay(50);
+            if (!IsActive && !_parked && !_suppressRefocus && !_overlayActive) StepBehindForeground();
+            return;
+        }
         await Task.Delay(350);
+        // The tray's menu takes the foreground to open. Taking it back would shut the menu before
+        // anything on it could be chosen, Minimize Loungepad included; once it closes, the launcher
+        // is wherever the choice left it.
+        while (_tray?.MenuOpen == true) await Task.Delay(150);
         if (_suppressRefocus || _launcher.GameRunning || _parked) return;
 
         // Don't fight the virtual keyboard for focus
@@ -1124,6 +1154,41 @@ public partial class MainWindow : Window
 
         Activate();
         NativeMethods.SetForegroundWindow(_hwnd);
+    }
+
+    /// <summary>
+    /// The launcher was left for another window and will not take the focus back (KeepFocus off,
+    /// or a game running): step behind that window. It is topmost on the TV, so with KeepFocus
+    /// off Alt+Tab did activate the app that was picked -- focused, and drawn underneath
+    /// Loungepad, which read as Alt+Tab doing nothing. Just below the new window, because plain
+    /// NOTOPMOST puts a window above every other normal one, the one just picked included. Not
+    /// behind the shell (a click on the desktop or the taskbar) or a window of ours (the tray's
+    /// menu): there it only stops being topmost and stays on screen.
+    /// </summary>
+    private void StepBehindForeground()
+    {
+        var fg = NativeMethods.GetForegroundWindow();
+        if (fg == _hwnd) return;
+        NativeMethods.GetWindowThreadProcessId(fg, out var pid);
+        if (fg != IntPtr.Zero && pid != (uint)Environment.ProcessId && !IsShellWindow(fg))
+            NativeMethods.SetWindowPos(_hwnd, fg, 0, 0, 0, 0,
+                NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE);
+        // Below a normal window it has lost topmost already, and WPF's NOTOPMOST is then a no-op.
+        Topmost = false;
+    }
+
+    private static bool IsShellWindow(IntPtr hwnd)
+    {
+        var cls = new System.Text.StringBuilder(64);
+        NativeMethods.GetClassName(hwnd, cls, cls.Capacity);
+        return cls.ToString() is "Progman" or "WorkerW" or "Shell_TrayWnd" or "Shell_SecondaryTrayWnd";
+    }
+
+    /// <summary>In front again (a click on it, the tray, the combo): back on top of the TV.</summary>
+    private void BackOnTop()
+    {
+        if (_windowed || _parked || _suppressRefocus || Topmost) return;
+        PositionOnTargetDisplay();
     }
 
     public void ExitApp() => Close();

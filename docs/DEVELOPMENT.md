@@ -84,7 +84,7 @@ Loungepad/
     AchievementProviders.cs  Steam, Xbox, Epic, GOG and RetroAchievements, each asked by its own id
     RetroHash.cs          The hash RetroAchievements identifies a ROM by (header rules per system)
     Storage.cs            JSON persistence in %APPDATA%\Loungepad (settings, library, log, covers)
-  TrayIcon.cs             The notification-area icon: show, update, quit
+  TrayIcon.cs             The notification-area icon: show or minimize, update, quit
   Interop/NativeMethods.cs   All P/Invoke declarations
   Interop/HidNative.cs       Raw Input and hid.dll, for the HID gamepad reader
 ```
@@ -265,7 +265,10 @@ Loungepad/
   `[` and `]` are the shoulders, `/` opens search and M opens Settings. On the library itself the
   keys follow its hint bar: Enter launches, X filters, **Ctrl** opens a game's options, `/`
   searches, **Tab** opens Settings and **`` ` ``** opens Stats; Esc is Back there as everywhere
-  (Y, M and `[` still work). With the mouse, hovering
+  (Y, M and `[` still work). **H** minimizes Loungepad from any screen (`hideLauncher` →
+  `MainWindow.HideLauncher`); the library's hint bar ends with Minimize Loungepad, drawn as H for
+  a keyboard and as the menu combo for a pad.
+  With the mouse, hovering
   highlights and clicking selects; a right click on a game opens its options and a right click
   elsewhere is Back; clicking the dimmed screen around a menu closes it; the arrows on a settings
   row step its value; and every entry in a hint bar can be clicked to press that button.

@@ -105,11 +105,16 @@ function radialLabel(it) {
   // Opened over the running game, the window behind the menu IS the game, and the spoke should
   // say so: "Close window" over a game reads as something milder than it is.
   if (it.id === "close" && overlayTargetIsGame) return "Close game";
+  // Opened over Loungepad, Loungepad is the window behind it. Quitting it was only at the end of
+  // Settings → General, which is a long way to go for someone who starts it for one evening of
+  // play over Moonlight (a user's report, Oct 7 2026).
+  if (it.id === "close" && overlayOverLauncher) return "Exit Loungepad";
   return it.label;
 }
 function radialDesc(it) {
   if (it.id === "mouseInGame") return mouseInGameDesc();
   if (it.id === "close" && overlayTargetIsGame) return "Ask the game to quit and come back to the library";
+  if (it.id === "close" && overlayOverLauncher) return "Close Loungepad. Start it again whenever you want it back";
   return it.desc || "";
 }
 function mouseInGameDesc() {
@@ -154,9 +159,11 @@ function renderRadial() {
   $("radialSelName").textContent = radialLabel(sel);
   $("radialDesc").textContent = radialDesc(sel);
   // Close is the only spoke that acts on the window behind the menu, so that is the only one
-  // that needs to name it.
+  // that needs to name it. Over Loungepad the label already does, and the title the host sends
+  // is the last window the wheel acted on, not this one.
   $("radialTarget").textContent =
-    sel.id === "close" ? (overlayTargetTitle ? overlayTargetTitle.toUpperCase() : "NO WINDOW") : "";
+    sel.id !== "close" || overlayOverLauncher ? ""
+    : overlayTargetTitle ? overlayTargetTitle.toUpperCase() : "NO WINDOW";
   $("radialFoot").innerHTML = foot(["A", "Select"], ["B", "Close"]);
 }
 
@@ -175,6 +182,9 @@ function radialActivate() {
         setOverlayMode(false);
         switchView("library");
         send({ cmd: "closeGame" });
+      } else if (overlayOverLauncher) {
+        // No confirm, like Exit in Settings: the spoke is never where the highlight starts.
+        send({ cmd: "exitApp" });
       } else {
         send({ cmd: "windowAction", action: "close" });
         closeRadial(false);

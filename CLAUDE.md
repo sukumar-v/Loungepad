@@ -906,8 +906,30 @@ Stop the scrolled grid from clipping through the All games header
   reputation; the website's step 03 ("If Windows shows a warning") stays for the same reason.
 - `TrayIcon` is WinForms' NotifyIcon (`UseWindowsForms`, with its global usings removed in the
   csproj so `Application`/`MessageBox` stay WPF's). Left click shows the launcher, the menu has
-  Show, the update step and Quit. It is disposed on `Closed`, hidden first, or it lingers as a
-  ghost icon until the pointer passes over it.
+  Show or Minimize (whichever it is not doing as the menu opens), the update step and Quit. It is
+  disposed on `Closed`, hidden first, or it lingers as a ghost icon until the pointer passes over it.
+- **"Minimize Loungepad", never "Hide"** (the user's call, Oct 7 2026): Hide is what a game's menu
+  does to a game. H on any screen, the library legend's last entry and the tray all go to
+  `MainWindow.HideLauncher`, which dismisses a host overlay the way the combo does and parks. The
+  legend entry (`minimizeLegendItem`) carries both drawings, H for a keyboard and the menu combo
+  for a pad ("Hold" in front in tap-and-hold), and the CSS shows the one for `body[data-input]`.
+  A pad gets no entry while the combo is Off or a game runs (the hold is then the in-game menu).
+  KeepFocus's refocus waits while the tray menu is open (`TrayIcon.MenuOpen`): the menu takes the
+  foreground to open, and taking it back 350 ms later would shut it before anything could be
+  chosen. Reasoned, not seen: no clicks in tests.
+- **The Power Wheel over Loungepad itself has Exit Loungepad as its Close spoke** (a Moonlight
+  user's report via the user, Oct 7 2026: quitting was only at the end of Settings → General).
+  `PushOverlay` carries `overLauncher` (`!_overlayTargetLive`) because the target title is NOT
+  cleared when the launcher is in front -- it still names the last window acted on. No confirm,
+  like Settings' Exit: the spoke is never where the highlight starts (`RADIAL_HOME`).
+- **Topmost has to let go when nothing will take the focus back.** With KeepFocus off (or a game
+  running) Alt+Tab did activate the chosen app, but the launcher stayed `HWND_TOPMOST` over it,
+  which read as "Keep launcher focused off does nothing" (Oct 7 2026). `StepBehindForeground`
+  puts the launcher just below the new foreground window -- plain NOTOPMOST would put it above
+  every normal window, the one just picked included -- and `BackOnTop` restores topmost on
+  `Activated`. Skipped for the shell's own windows and ours (the tray menu), under a host overlay,
+  and in `--windowed`, so it was not checked in the windowed build: it needs a fullscreen run with
+  KeepFocus off.
 - `System.Drawing.Icon.ToBitmap` in Windows PowerShell (.NET Framework) cannot read PNG-compressed
   icon frames and returns noise, for the old icon as much as the new one. Check an .ico with WPF's
   `IconBitmapDecoder` (WIC), which is what the shell and the window use.
