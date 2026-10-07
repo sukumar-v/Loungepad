@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <a href="https://loungepad.app">loungepad.app</a>
+  <a href="https://loungepad.app">loungepad.app</a> · <a href="https://loungepad.app/#trailer">▶ Watch the trailer</a>
   <br><br>
   <a href="https://github.com/sukumar-v/Loungepad/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/sukumar-v/Loungepad?label=latest&color=F0A253"></a>
   <img alt="Total downloads" src="https://img.shields.io/github/downloads/sukumar-v/Loungepad/total?color=1F1F24">
