@@ -33,6 +33,8 @@ room. It puts every game you own in one library and makes the controller a compl
 so you never walk to the desk for the mouse. And it's still a PC: emulators, mods and every Windows
 app are a button away.
 
+https://github.com/user-attachments/assets/0aa19943-f788-4f97-ac93-ffba33159b6f
+
 ## Every game you own, in one library
 
 - **Steam, Epic, GOG, the Xbox app and PC Game Pass**, plus your emulators and ROMs, side by side.
