@@ -4,7 +4,7 @@
 
 ## Build & run
 
-Requirements: **.NET 8 SDK**, **WebView2 Runtime** (preinstalled on Windows 11).
+Requirements: **.NET 8 SDK**, **WebView2 Runtime** (Windows already has it).
 
 ```bash
 dotnet build Loungepad.sln

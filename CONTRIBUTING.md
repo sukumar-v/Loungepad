@@ -15,7 +15,7 @@ adding `SendInput` or virtual-HID paths aimed at the lock screen will be decline
 
 ## Building
 
-Requirements: **.NET 8 SDK** and the **WebView2 Runtime** (preinstalled on Windows 11).
+Requirements: **.NET 8 SDK** and the **WebView2 Runtime** (Windows already has it).
 
 ```bash
 dotnet build Loungepad.sln

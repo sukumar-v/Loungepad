@@ -56,7 +56,7 @@ in body copy, or names of tools like Vortex or RivaTuner.
 ## The page, top to bottom
 
 1. **Header** — logo + "loungepad", nav links (Features, Controllers, Get started), Download button.
-2. **Hero** — centred: headline, one sentence, Download for Windows + Star on GitHub, "Free, for Windows 11".
+2. **Hero** — centred: headline, one sentence, Download for Windows + Star on GitHub, "Free, for Windows".
    One soft accent glow behind it, nothing else.
 3. **TV on a stand** — a TV with a thin bezel and a small accent power light, showing six real
    screenshots that crossfade every 7 seconds (paused while hovered, or once a visitor picks one).

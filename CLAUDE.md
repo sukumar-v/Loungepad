@@ -805,6 +805,12 @@ Stop the scrolled grid from clipping through the All games header
   B paths run for real; section screenshots stitched into contact sheets with sharp. Lighthouse
   (desktop, local server) 99/100/100/100; the text-compression and bfcache audits it lists are
   the local server's no-cache headers, not the site.
+- **The copy says "your Windows PC", never Windows 11** (the user's call, Oct 6 2026): the site, the
+  README, the docs, the repo description, the trailer's `TAGLINE` and end card, and the share images
+  cut from its poster (`website/img/og.jpg`, GitHub's social preview). Windows 10 is untested, so
+  nothing claims it either: the "Also runs on Windows 10" pill went with the "Windows 11" one.
+  Technical notes that are about Windows 11 itself (the shell reading Xbox pads, build numbers)
+  stay as they are.
 - **`/feedback` is `feedback.html`, a Tally form** (`tally.so/r/WOvqlL`, the user's; Oct 6 2026)
   embedded on a light card, because Tally draws dark text. Tally's own snippet is inline script,
   which the CSP refuses, so `feedback.js` is that snippet as a file; `embed.js` sizes the frame

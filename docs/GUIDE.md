@@ -16,9 +16,9 @@ Everything Loungepad does, in detail. The [README](../README.md) is the short ve
 somewhere it can stay, and run it.
 
 It is one file. The .NET runtime, the interface, the bundled theme and the Vortex extension are all
-inside it, so there is nothing to unzip and nothing else to install. Windows 11 already has the one
-thing that is not bundled — the **Edge WebView2 Runtime** — and on Windows 10 the app will tell you
-where to get it.
+inside it, so there is nothing to unzip and nothing else to install. Windows already has the one
+thing that is not bundled — the **Edge WebView2 Runtime** — and if yours does not, the app will
+tell you where to get it.
 
 Releases are code-signed. Windows SmartScreen can still warn about a new release it has not seen
 many downloads of yet; if it does, choose **More info → Run anyway**.

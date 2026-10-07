@@ -6,7 +6,7 @@
 </h1>
 
 <p align="center">
-  <b>Turn a Windows 11 PC into a console.</b><br>
+  <b>Turn your Windows PC into a console.</b><br>
   Your games and your whole desktop, driven from the couch with just a controller.
 </p>
 
@@ -23,7 +23,7 @@
   <a href="https://github.com/sukumar-v/Loungepad/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/sukumar-v/Loungepad?label=latest&color=F0A253"></a>
   <img alt="Total downloads" src="https://img.shields.io/github/downloads/sukumar-v/Loungepad/total?color=1F1F24">
   <a href="LICENSE"><img alt="License: Apache 2.0" src="https://img.shields.io/badge/license-Apache--2.0-1F1F24"></a>
-  <img alt="Platform: Windows 11" src="https://img.shields.io/badge/platform-Windows%2011-1F1F24">
+  <img alt="Platform: Windows" src="https://img.shields.io/badge/platform-Windows-1F1F24">
 </p>
 
 ![Loungepad's library](assets/screens/library.jpg)
@@ -109,7 +109,7 @@ Works with Xbox, PlayStation, Switch and other controllers. A keyboard and mouse
 3. A short setup, driven with the controller, asks which screen is the TV, signs in to your stores
    and picks the look. It finds your games while you answer.
 
-It's one file, with nothing to unzip and nothing else to install: .NET is bundled, and Windows 11
+It's one file, with nothing to unzip and nothing else to install: .NET is bundled, and Windows
 already has the WebView2 runtime. Loungepad updates itself from this repository's releases.
 Settings and the library live in `%APPDATA%\Loungepad`; to uninstall, delete `Loungepad.exe`.
 
@@ -156,7 +156,7 @@ rates thousands more, whatever cause you care about.
 
 ## Build
 
-Needs the **.NET 8 SDK** and the **WebView2 runtime** (preinstalled on Windows 11).
+Needs the **.NET 8 SDK** and the **WebView2 runtime** (Windows already has it).
 
 ```bash
 dotnet build Loungepad.sln
