@@ -1,0 +1,17 @@
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the idea. Search first: if someone has posted it already, an upvote on theirs
+        counts for more than a second post.
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like Loungepad to do?
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: When would you use it?
+      description: What you were doing when you missed it. This matters more than how it should work.

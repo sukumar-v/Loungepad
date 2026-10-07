@@ -1,0 +1,45 @@
+name: Report a problem
+description: Something in Loungepad doesn't work the way it should.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: How can it be made to happen again?
+      placeholder: |
+        1. Open a game's page
+        2. Press Y
+        3. ...
+  - type: input
+    id: version
+    attributes:
+      label: Loungepad version
+      description: Settings → General → Updates shows it.
+      placeholder: "1.7.0"
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: Windows 11 24H2
+  - type: input
+    id: controller
+    attributes:
+      label: Controller
+      description: Which pad, and whether it's on a cable, Bluetooth or a wireless adapter.
+      placeholder: DualSense on Bluetooth
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: |
+        Attach `%APPDATA%\Loungepad\loungepad.log` (paste that path into File Explorer's address
+        bar), or paste the lines from around the time it happened.

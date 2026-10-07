@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Suggest a feature
+    url: https://github.com/sukumar-v/Loungepad/discussions/categories/ideas
+    about: Post an idea in Discussions, or upvote one that's already there.
+  - name: Ask a question
+    url: https://github.com/sukumar-v/Loungepad/discussions/categories/q-a
+    about: Help with setting up or using Loungepad.
+  - name: Chat on Discord
+    url: https://discord.gg/a6gngxS9b4
+    about: Get help, share your setup, and vote in polls.
+  - name: Quick feedback
+    url: https://loungepad.app/feedback
+    about: A one-minute form. Rate Loungepad and pick what it should do next.
