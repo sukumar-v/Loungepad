@@ -5347,6 +5347,15 @@ function manageItems() {
       },
     });
   } else {
+    // A game added by hand is named after its .exe, so several launched through one program (a
+    // modpack launcher with a different instance in each one's arguments) all read the same.
+    if (g.manual) items.push({
+      label: "Rename", icon: "edit", sub: "It's named after its .exe until you give it a name",
+      action: () => {
+        closeManage();
+        openInput("GAME TITLE", g.title, v => { if (v && v !== g.title) send({ cmd: "setTitle", id: g.id, title: v }); });
+      },
+    });
     items.push({
       label: "Set launch arguments", icon: "terminal", sub: g.args || "e.g. --launcher-skip",
       action: () => {
