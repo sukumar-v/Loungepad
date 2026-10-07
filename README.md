@@ -136,6 +136,24 @@ PlayStation and Switch pads use the buttons in the same places, and the hints on
 - **[Themes](docs/THEMES.md):** how to write your own.
 - **[Development](docs/DEVELOPMENT.md):** building, packaging and how it works inside.
 
+## Questions, ideas and problems
+
+- **[Tell us what to build next](https://loungepad.app/feedback):** a one-minute form. Rate
+  Loungepad, tick the features you want most, and say anything else. No account needed.
+- **[Discord](https://discord.gg/a6gngxS9b4):** get help, share your couch setup, and vote in
+  polls.
+- **[Discussions](https://github.com/sukumar-v/Loungepad/discussions):** ask a question, show off
+  your setup, or post an idea. Upvote the ideas you want most.
+- **[Report a problem](https://github.com/sukumar-v/Loungepad/issues/new/choose)** if something
+  doesn't work the way it should.
+
+## Want to leave a tip?
+
+Loungepad is free, and it will stay free. If you'd like to say thanks, give to a good cause
+instead: [GiveWell](https://www.givewell.org/charities/top-charities) recommends the charities
+that do the most good for each dollar, and [Charity Navigator](https://www.charitynavigator.org/)
+rates thousands more, whatever cause you care about.
+
 ## Build
 
 Needs the **.NET 8 SDK** and the **WebView2 runtime** (preinstalled on Windows 11).
@@ -149,8 +167,9 @@ Packaging a release is in [Development](docs/DEVELOPMENT.md).
 
 ## Contributing
 
-Bug reports and small fixes are welcome; open an issue first for anything larger. Build steps,
-the conventions this repo follows, and what is deliberately out of scope are in
+Bug reports and small fixes are welcome; open an issue first for anything larger, and post feature
+ideas in [Discussions](https://github.com/sukumar-v/Loungepad/discussions/categories/ideas).
+Build steps, the conventions this repo follows, and what is deliberately out of scope are in
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
