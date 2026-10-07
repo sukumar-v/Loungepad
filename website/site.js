@@ -40,10 +40,12 @@
   var wheel = $('wheel');
   var spokes = all('.lp-wheel-spoke', wheel);
   var viewer = $('viewer');
+  var film = $('film');
+  var filmVideo = $('filmVideo');
 
   var S = {
     input: 'mouse', fam: 'xbox', famLocked: false, padFam: null, padName: null,
-    accent: '#F0A253', shot: 0, hold: false, reduce: false, viewer: null, wheel: false, spoke: 0
+    accent: '#F0A253', shot: 0, hold: false, reduce: false, viewer: null, wheel: false, spoke: 0, film: false
   };
   var attract = true;
   var cycleTimer = null;
@@ -97,7 +99,7 @@
   function startCycle() {
     clearInterval(cycleTimer);
     cycleTimer = setInterval(function () {
-      if (!attract || S.reduce || S.hold || S.viewer != null || S.wheel) return;
+      if (!attract || S.reduce || S.hold || S.viewer != null || S.wheel || S.film) return;
       if (document.hidden) return;
       setShot((S.shot + 1) % shots.length);
     }, 7000);
@@ -187,7 +189,7 @@
     }, 40);
   }
   function showOverlay(el) { el.hidden = false; page.inert = true; }
-  function hideOverlay(el) { el.hidden = true; if (!S.wheel && S.viewer == null) page.inert = false; }
+  function hideOverlay(el) { el.hidden = true; if (!S.wheel && S.viewer == null && !S.film) page.inert = false; }
 
   function renderViewer() {
     var i = S.viewer;
@@ -231,6 +233,33 @@
     renderViewer();
   }
 
+  // The trailer. Asked to play with sound; a browser that refuses that (a controller press is not
+  // always a user gesture) gets it muted rather than not at all, and the controls unmute it.
+  function playFilm() {
+    var p = filmVideo.play();
+    if (p && p.catch) p.catch(function () { filmVideo.muted = true; filmVideo.play().catch(function () {}); });
+  }
+  function openFilm() {
+    remember();
+    S.film = true;
+    S.hold = true;
+    showOverlay(film);
+    setTimeout(function () { filmVideo.focus({ preventScroll: true }); }, 40);
+    playFilm();
+    renderDots();
+  }
+  function closeFilm() {
+    filmVideo.pause();
+    // Opened from a #trailer link: drop the hash, so the same link opens it again.
+    if (location.hash === '#trailer' && history.replaceState) history.replaceState(null, '', location.pathname + location.search);
+    S.film = false;
+    S.hold = false;
+    hideOverlay(film);
+    restore();
+    renderDots();
+    startCycle();
+  }
+
   function setSpoke(i) {
     S.spoke = i;
     spokes.forEach(function (sp, k) { sp.classList.toggle('on', k === i); });
@@ -240,6 +269,7 @@
   function openWheel() {
     remember();
     if (S.viewer != null) { S.viewer = null; viewer.hidden = true; }
+    if (S.film) { filmVideo.pause(); S.film = false; film.hidden = true; }
     S.wheel = true;
     setSpoke(0);
     showOverlay(wheel);
@@ -270,10 +300,13 @@
       if (el.classList.contains('lp-wheel-spoke')) leaveWheel();
       return;
     }
+    // The film plays and pauses on A; a scripted click on a video does neither.
+    if (el === filmVideo) { if (filmVideo.paused) playFilm(); else filmVideo.pause(); return; }
     if (el.click) el.click();
   }
   function back() {
     if (S.wheel) closeWheel();
+    else if (S.film) closeFilm();
     else if (S.viewer != null) closeViewer();
   }
   function focusEl(el) {
@@ -283,13 +316,18 @@
   // Spatial navigation, the way the launcher moves its highlight: nearest neighbour in the direction pressed.
   function nav(dir) {
     if (S.viewer != null && (dir === 'left' || dir === 'right')) { step(dir === 'left' ? -1 : 1); return; }
+    // On the film, left and right skip, like a TV remote.
+    if (S.film && document.activeElement === filmVideo && (dir === 'left' || dir === 'right')) {
+      filmVideo.currentTime = Math.max(0, filmVideo.currentTime + (dir === 'left' ? -5 : 5));
+      return;
+    }
     // On the TV, left and right change the screen, like the D-pad drawn under it.
     var ae = document.activeElement;
     if (!S.wheel && S.viewer == null && ae && ae.hasAttribute && ae.hasAttribute('data-tv') && (dir === 'left' || dir === 'right')) {
       stepShot(dir === 'left' ? -1 : 1);
       return;
     }
-    var scope = S.wheel ? wheel : S.viewer != null ? viewer : page;
+    var scope = S.wheel ? wheel : S.film ? film : S.viewer != null ? viewer : page;
     var els = all('[data-nav]', scope).filter(function (el) {
       var r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0;
     });
@@ -457,6 +495,8 @@
     });
   });
   $('viewerBack').addEventListener('click', closeViewer);
+  $('filmBtn').addEventListener('click', openFilm);
+  $('filmBack').addEventListener('click', closeFilm);
   $('viewerPrev').addEventListener('click', function () { step(-1); });
   $('viewerNext').addEventListener('click', function () { step(1); });
   document.addEventListener('keydown', onKey);
@@ -473,6 +513,9 @@
   window.LPGlyph.paint(S.fam);
   setShot(0);
   startCycle();
+  // loungepad.app/#trailer opens the film: the README links to it.
+  if (location.hash === '#trailer') openFilm();
+  window.addEventListener('hashchange', function () { if (location.hash === '#trailer' && !S.film) openFilm(); });
   if (navigator.getGamepads) {
     var loop = function () { try { pollPads(); } catch (e) {} requestAnimationFrame(loop); };
     requestAnimationFrame(loop);

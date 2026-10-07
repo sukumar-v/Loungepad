@@ -77,6 +77,7 @@
 <a href="https://github.com/sukumar-v/Loungepad/releases/latest" target="_blank" rel="noopener" data-nav class="lp-btn lp-btn-fill lp-btn-lg lp-f lp-btn-primary"><span data-glyph data-btn="X" data-size="30" data-drawn="xbox|X|30|" style="height:30px" aria-hidden="true"><span class="gd" style="width:30px;height:30px;background:#3C7CD3;box-shadow:none;color:#FFFFFF;font-size:16px">X</span></span><span>Download for Windows</span></a>
 <a href="https://github.com/sukumar-v/Loungepad" target="_blank" rel="noopener" data-nav class="lp-btn lp-btn-ghost lp-f lp-ghost"><span data-glyph data-btn="Y" data-size="30" data-drawn="xbox|Y|30|" style="height:30px" aria-hidden="true"><span class="gd" style="width:30px;height:30px;background:#E2B128;box-shadow:none;color:#101012;font-size:16px">Y</span></span><span>Star on GitHub</span></a>
 </div>
+<button type="button" id="filmBtn" data-nav class="lp-film-btn lp-f"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.6-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"></path></svg>Watch the trailer<span class="lp-film-len">1:10</span></button>
 <p class="lp-free">Free, for Windows</p>
 </div>
 
@@ -445,6 +446,21 @@
 <div class="lp-viewer-caption">
 <h3 id="viewerTitle"></h3>
 <p id="viewerBody"></p>
+</div>
+</div>
+
+<!-- ============ The trailer: on request only, so nothing downloads until it is asked for ============ -->
+<div id="film" data-scope="film" class="lp-viewer" role="dialog" aria-modal="true" aria-label="Loungepad trailer" hidden>
+<div class="lp-viewer-top">
+<span class="lp-viewer-kicker">Trailer</span>
+<span class="lp-viewer-pos">1:10</span>
+<span class="lp-grow"></span>
+<button type="button" id="filmBack" data-nav class="lp-hint lp-viewer-back"><span data-glyph data-btn="B" data-size="26" data-drawn="xbox|B|26|" style="height:26px" aria-hidden="true"><span class="gd" style="width:26px;height:26px;background:#D3433C;box-shadow:none;color:#FFFFFF;font-size:14px">B</span></span>Back</button>
+</div>
+<div class="lp-film-stage">
+<video id="filmVideo" data-nav controls playsinline preload="none" poster="video/loungepad-trailer.jpg" aria-label="Loungepad trailer, 1 minute 10 seconds">
+<source src="video/loungepad-trailer.mp4" type="video/mp4">
+</video>
 </div>
 </div>
 

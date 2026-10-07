@@ -15,3 +15,6 @@
   Cache-Control: public, max-age=604800
 /favicon.ico
   Cache-Control: public, max-age=604800
+# The trailer: about 19 MB, fetched only when somebody presses play (preload="none").
+/video/*
+  Cache-Control: public, max-age=604800

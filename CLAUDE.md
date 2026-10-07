@@ -818,6 +818,16 @@ Stop the scrolled grid from clipping through the All games header
   ProtonVPN (NetShield) answers NXDOMAIN for `static.cloudflareinsights.com`**, the 1.1.1.1 lookup
   included, which reads as the site being broken: resolve it over DoH and start Chrome with
   `--host-resolver-rules=MAP static.cloudflareinsights.com <ip>` to check the beacon.
+- **The trailer is self-hosted** (`website/video/loungepad-trailer.mp4` + `.jpg` poster, Oct 7 2026):
+  "Watch the trailer" under the hero's buttons opens `#film`, which is the viewer's frame around a
+  `<video preload="none">`, so nothing is fetched until play. It is a fourth overlay state
+  (`S.film`) and has to be named wherever the others are: `hideOverlay`, the cycle's guard, `back`,
+  `nav`'s scope, `openWheel`. A on the video plays/pauses (a scripted `click()` on a video does
+  neither), Left/Right skip 5 s, B/Esc close and pause. `play()` can be refused for a pad press
+  (not a user gesture), so it falls back to muted. Workers static assets cap a file at 25 MiB; the
+  web encode is 1080p30 from `trailer/out/loungepad-trailer-1080p.mp4`. Every re-encode committed
+  adds its size to the repo's history, so re-encode only when the trailer changes. Checked with a
+  puppeteer-core harness and a stubbed DualSense (18 checks).
 - **`/feedback` is `feedback.html`, a Tally form** (`tally.so/r/WOvqlL`, the user's; Oct 6 2026)
   embedded on a light card, because Tally draws dark text. Tally's own snippet is inline script,
   which the CSP refuses, so `feedback.js` is that snippet as a file; `embed.js` sizes the frame
