@@ -831,16 +831,39 @@ Stop the scrolled grid from clipping through the All games header
   ProtonVPN (NetShield) answers NXDOMAIN for `static.cloudflareinsights.com`**, the 1.1.1.1 lookup
   included, which reads as the site being broken: resolve it over DoH and start Chrome with
   `--host-resolver-rules=MAP static.cloudflareinsights.com <ip>` to check the beacon.
-- **The trailer is self-hosted** (`website/video/loungepad-trailer.mp4` + `.jpg` poster, Oct 7 2026):
-  "Watch the trailer" under the hero's buttons opens `#film`, which is the viewer's frame around a
-  `<video preload="none">`, so nothing is fetched until play. It is a fourth overlay state
-  (`S.film`) and has to be named wherever the others are: `hideOverlay`, the cycle's guard, `back`,
-  `nav`'s scope, `openWheel`. A on the video plays/pauses (a scripted `click()` on a video does
-  neither), Left/Right skip 5 s, B/Esc close and pause. `play()` can be refused for a pad press
-  (not a user gesture), so it falls back to muted. Workers static assets cap a file at 25 MiB; the
-  web encode is 1080p30 from `trailer/out/loungepad-trailer-1080p.mp4`. Every re-encode committed
-  adds its size to the repo's history, so re-encode only when the trailer changes. Checked with a
-  puppeteer-core harness and a stubbed DualSense (18 checks).
+- **The trailer is on R2, not in the site** (Oct 7 2026): the film is
+  `https://media.loungepad.app/loungepad-trailer.mp4` (bucket `loungepad-media`, 1080p30 from
+  `trailer/out/loungepad-trailer-1080p.mp4`, kept locally as `artifacts/loungepad-trailer-web.mp4`);
+  only the `.jpg` poster is in `website/video/`. Two reasons it cannot be a site file: `.gitignore`
+  keeps every `*.mp4` out of git, so **every push's Workers Build redeploys the site without it**
+  (a `wrangler deploy` from this folder put it up and the next push took it down again within
+  minutes), and Workers static assets ignore `Range` (a range request answers 200 with the whole
+  file), so the film could not be scrubbed -- skipping restarted it from 0. `media-src` in the CSP
+  names the bucket's domain. "Watch the trailer" under the hero's buttons opens `#film`, the
+  viewer's frame around a `<video preload="none">`, so nothing is fetched until play; it is a
+  fourth overlay state (`S.film`) and has to be named wherever the others are: `hideOverlay`, the
+  cycle's guard, `back`, `nav`'s scope, `openWheel`. A on the video plays/pauses (a scripted
+  `click()` on a video does neither), Left/Right skip 5 s, B/Esc close and pause, `/#trailer`
+  opens it (the README links there). `play()` can be refused for a pad press or a fresh visit, so
+  it falls back to muted. Checked with a puppeteer-core harness and a stubbed DualSense (21 checks),
+  and on Oct 8 2026 against the bucket itself: plays, a seek to 0:45 is one 206 range request, no
+  CSP violation. The bucket's custom domain was added with `wrangler r2 bucket domain add`, which
+  needs the zone id (`dbdf24653a1b53aed225f39e02db9d1e` for loungepad.app). **To replace the film**,
+  upload under a NEW name and change the `<source>`: the object is served `max-age=604800`, so a
+  new cut under the old name can take a week to reach a visitor. `npx wrangler r2 object put
+  loungepad-media/<name>.mp4 --file <mp4> --content-type video/mp4 --cache-control "public,
+  max-age=604800" --remote`.
+- **`wrangler dev` in `website/` never settles**: it watches the assets folder, writes `.wrangler/`
+  into it, sees the change and reloads, forever. To check the site under its real CSP, serve the
+  folder with a few lines of Node that send `_headers`' `/*` block (the launch.json server sends
+  none of it).
+- **The README's video is a GitHub upload** (`github.com/user-attachments/assets/0aa19943-…`, the
+  under-10 MB 720p encode). That raw link answers 404 to anyone signed out, which looks broken and
+  is not: GitHub renders it for visitors through a signed `private-user-images` link, which streams.
+- **A direct `wrangler deploy` from `website/` is undone by the next push** (Workers Builds deploys
+  whatever git has). Only use it for something that is also committed. Run it with
+  `npm_config_os=win32` (the user-level `.npmrc` says linux). `.wrangler` is in `.assetsignore`
+  because the first direct deploy published wrangler's own temp file from inside the folder.
 - **`/feedback` is `feedback.html`, a Tally form** (`tally.so/r/WOvqlL`, the user's; Oct 6 2026)
   embedded on a light card, because Tally draws dark text. Tally's own snippet is inline script,
   which the CSP refuses, so `feedback.js` is that snippet as a file; `embed.js` sizes the frame

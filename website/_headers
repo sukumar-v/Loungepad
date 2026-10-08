@@ -8,13 +8,14 @@
   X-Frame-Options: DENY
   Referrer-Policy: strict-origin-when-cross-origin
   Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
-  Content-Security-Policy: default-src 'self'; script-src 'self' https://tally.so https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://cloudflareinsights.com; frame-src https://tally.so; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'
+  Content-Security-Policy: default-src 'self'; script-src 'self' https://tally.so https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://cloudflareinsights.com; media-src 'self' https://media.loungepad.app; frame-src https://tally.so; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'
 
 # Screenshots and icons change rarely and are named by what they show, not by a hash, so a week.
 /img/*
   Cache-Control: public, max-age=604800
 /favicon.ico
   Cache-Control: public, max-age=604800
-# The trailer: about 19 MB, fetched only when somebody presses play (preload="none").
+# The trailer's poster. The film itself is on media.loungepad.app (an R2 bucket): it is kept out of
+# git, and Workers static assets ignore Range, so a film served from here could not be scrubbed.
 /video/*
   Cache-Control: public, max-age=604800

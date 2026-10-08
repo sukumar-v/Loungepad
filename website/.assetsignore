@@ -5,3 +5,5 @@ README.md
 wrangler.toml
 .assetsignore
 node_modules
+# Wrangler's own working folder: a deploy run from here writes it inside the assets directory.
+.wrangler
