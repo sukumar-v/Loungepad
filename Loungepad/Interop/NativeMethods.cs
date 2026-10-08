@@ -194,6 +194,19 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     public static extern bool SetCursorPos(int x, int y);
 
+    // ---- A monitor's scaling ----
+
+    public const uint MONITOR_DEFAULTTONEAREST = 2;
+    public const int MDT_EFFECTIVE_DPI = 0;
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr MonitorFromPoint(POINT pt, uint dwFlags);
+
+    /// <summary>The DPI Windows scales that monitor to (96 = 100%). The process is per-monitor
+    /// aware (app.manifest), so this is the monitor's own number, not the system's.</summary>
+    [DllImport("shcore.dll")]
+    public static extern int GetDpiForMonitor(IntPtr hmonitor, int dpiType, out uint dpiX, out uint dpiY);
+
     // ---- System cursor replacement (optional system-wide pointer hiding) ----
 
     public const uint OCR_NORMAL = 32512;

@@ -1902,6 +1902,14 @@ Stop the scrolled grid from clipping through the All games header
   block and a real number pad (two-row + and Enter) to its right, Ctrl/Win/Alt on its bottom row
   taking room from Space. Every block on is 20 columns; `FitToDisplay` shrinks the keys to 96% of
   the display's width and 70% of its height.
+- **The keyboard's sizes are DIPs, so the display is read in DIPs too** (Oct 8 2026). `DisplayInfo`
+  is real pixels (`dmPelsHeight`) and a key used to be 5.8% of THAT, drawn as DIPs that Windows
+  then multiplied by the display's scaling: at 150% the board was half as big again as at 100%,
+  and at 300% (a 4K television's usual setting) every size setting ran into `FitToDisplay`'s 70%
+  and the slider did nothing. `SizeKeys` and `FitToDisplay` now divide the display by
+  `DisplayScale` (`GetDpiForMonitor` on the monitor under its middle; replaceable for the harness)
+  and `FitToDisplay` measures `Root` in DIPs rather than the window rect in pixels, so it no longer
+  depends on which monitor the window was on before `Place` moved it. Nothing changes at 100%.
 - **Navigation is by position, not index.** Up/Down go to the key under the column centre the
   highlight is keeping (`_wantX`, sticky); a row with nothing within half a key of it is stepped
   over (the navigation block's empty row, the space above the number pad) -- except the bar, which

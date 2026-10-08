@@ -56,6 +56,9 @@ public partial class KeyboardWindow : Window
     /// </summary>
     public static Action<KeyStroke> Output = Deliver;
     public static Func<TargetState> Probe = ProbeForeground;
+    /// <summary>How far Windows scales a display: 1 at 100%, 1.5 at 150%. Replaceable so a harness
+    /// can ask about a display it does not have.</summary>
+    public static Func<DisplayInfo, double> DisplayScale = ScaleOf;
 
     private KeyboardOptions _options = new(Suggestions: true, FunctionKeys: false, NavKeys: false, Numpad: false, Modifiers: false);
     private KeyboardLayout _layout = KeyboardLayout.Keys(new(true, false, false, false, false), symbols: false);
@@ -71,6 +74,8 @@ public partial class KeyboardWindow : Window
 
     private double _keySize = 64, _gap = 6, _scale = 1;
     private DisplayInfo? _display;
+    /// <summary>The display's <see cref="DisplayScale"/>, read when the keyboard is shown on it.</summary>
+    private double _displayScale = 1;
     private TextBlock? _barNote, _sizeValue;
 
     // ---- suggestions ----
@@ -277,8 +282,10 @@ public partial class KeyboardWindow : Window
     public void ShowOn(DisplayInfo display, double scale, KeyboardOptions options)
     {
         bool fresh = !IsVisible;
-        bool rescaled = Math.Abs(scale - _scale) > 0.001 || display != _display;
+        double displayScale = DisplayScale(display);
+        bool rescaled = Math.Abs(scale - _scale) > 0.001 || display != _display || Math.Abs(displayScale - _displayScale) > 0.001;
         _display = display;
+        _displayScale = displayScale;
         _scale = scale;
         _options = options;
         if (fresh)
@@ -307,26 +314,35 @@ public partial class KeyboardWindow : Window
         RefreshSuggestions();
     }
 
+    /// <summary>
+    /// A key is a fixed share of the display's height, times the size setting. The share is of the
+    /// display in device-independent pixels -- what every size here is measured in, and what
+    /// Windows multiplies by the display's scaling -- not of its real pixels: taken from those, a
+    /// display at 150% got a keyboard half as big again as the same display at 100%, and one at
+    /// 300% (a 4K television's usual setting) got one that only ever stopped at FitToDisplay's
+    /// limit, whatever the size was set to.
+    /// </summary>
     private void SizeKeys()
     {
         if (_display is not { } d) return;
-        _keySize = Math.Round(Math.Clamp(d.Height * 0.058 * _scale, 28, 150));
+        _keySize = Math.Round(Math.Clamp(d.Height / _displayScale * 0.058 * _scale, 28, 150));
         _gap = Math.Round(Math.Max(2, _keySize * 0.10));
     }
 
     /// <summary>
     /// Shrink the keys until the board fits. Every block switched on adds width -- all of them
     /// make it twenty columns -- and at a large size that runs off the side of the screen.
+    /// Measured in device-independent pixels against the display's size in the same, so it does
+    /// not matter which monitor the window happens to be on before it is placed.
     /// </summary>
     private void FitToDisplay()
     {
         if (_display is not { } d) return;
         for (int pass = 0; pass < 3; pass++)
         {
-            GetWindowRect(Handle, out var r);
-            double w = r.Right - r.Left, h = r.Bottom - r.Top;
+            double w = Root.ActualWidth, h = Root.ActualHeight;
             if (w <= 0 || h <= 0) return;
-            double f = Math.Min(d.Width * 0.96 / w, d.Height * 0.7 / h);
+            double f = Math.Min(d.Width / _displayScale * 0.96 / w, d.Height / _displayScale * 0.7 / h);
             if (f >= 1 || _keySize <= 24) return;
             _keySize = Math.Max(24, Math.Floor(_keySize * f));
             _gap = Math.Round(Math.Max(2, _keySize * 0.10));
@@ -1080,6 +1096,19 @@ public partial class KeyboardWindow : Window
         if (thread == 0 || !GetGUIThreadInfo(thread, ref info)) return new TargetState(fg, IntPtr.Zero, 0, 0);
         return new TargetState(info.hwndFocus != IntPtr.Zero ? info.hwndFocus : fg,
             info.hwndCaret, info.rcCaret.Left, info.rcCaret.Top);
+    }
+
+    /// <summary>The scaling of the monitor under the middle of the display: 1 if it cannot be read.</summary>
+    private static double ScaleOf(DisplayInfo d)
+    {
+        try
+        {
+            var monitor = MonitorFromPoint(new POINT { X = d.X + d.Width / 2, Y = d.Y + d.Height / 2 }, MONITOR_DEFAULTTONEAREST);
+            if (monitor != IntPtr.Zero && GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, out var dpi, out _) == 0 && dpi > 0)
+                return dpi / 96.0;
+        }
+        catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException) { }
+        return 1;
     }
 
     private static void Deliver(KeyStroke s)
