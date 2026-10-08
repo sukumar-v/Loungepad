@@ -541,7 +541,7 @@ public class GameLaunchService
             var hwnd = FindGameWindow();
             if (hwnd != IntPtr.Zero)
             {
-                ForceForeground(hwnd);
+                WindowService.ForceForeground(hwnd);
                 var got = NativeMethods.GetForegroundWindow() == hwnd;
                 Log.Info($"Brought {game.Title}'s window to the front" + (got ? "" : " (refused; the game keeps whatever focus it has)"));
                 return;
@@ -570,31 +570,6 @@ public class GameLaunchService
             return false;
         }, IntPtr.Zero);
         return found;
-    }
-
-    /// <summary>
-    /// SetForegroundWindow for a window that is not ours, in the form Windows grants: the same
-    /// input-queue join MainWindow.TakeForeground uses for the launcher, because this process is
-    /// no more entitled to hand the foreground to a game than to take it for itself.
-    /// </summary>
-    private static void ForceForeground(IntPtr hwnd)
-    {
-        if (NativeMethods.IsIconic(hwnd)) NativeMethods.ShowWindow(hwnd, NativeMethods.SW_RESTORE);
-        if (NativeMethods.SetForegroundWindow(hwnd) && NativeMethods.GetForegroundWindow() == hwnd) return;
-
-        var fg = NativeMethods.GetForegroundWindow();
-        var fgThread = fg == IntPtr.Zero ? 0 : NativeMethods.GetWindowThreadProcessId(fg, out _);
-        var ours = NativeMethods.GetCurrentThreadId();
-        var attached = fgThread != 0 && fgThread != ours && NativeMethods.AttachThreadInput(ours, fgThread, true);
-        try
-        {
-            NativeMethods.BringWindowToTop(hwnd);
-            NativeMethods.SetForegroundWindow(hwnd);
-        }
-        finally
-        {
-            if (attached) NativeMethods.AttachThreadInput(ours, fgThread, false);
-        }
     }
 
     /// <summary>

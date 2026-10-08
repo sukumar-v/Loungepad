@@ -966,6 +966,24 @@ Stop the scrolled grid from clipping through the All games header
   `Activated`. Skipped for the shell's own windows and ours (the tray menu), under a host overlay,
   and in `--windowed`, so it was not checked in the windowed build: it needs a fullscreen run with
   KeepFocus off.
+- **A Power Wheel shortcut or Switch window parks the launcher** (Oct 8 2026; a handheld user's
+  report: the Volume Mixer opened behind Loungepad). Opened over Loungepad itself,
+  `_overlayWasMinimized` is false, so `CloseOverlay` left the launcher up: topmost over the new
+  window, and with KeepFocus on it took the foreground back 350 ms later. `MainWindow.OpenShortcut`
+  runs the shortcut, `AllowSetForegroundWindow`s the started process while the launcher is still
+  the foreground process, parks, waits up to 8 s for the program's window
+  (`WindowService.WaitForShortcutWindow`: a new one, or after 1.5 s an existing single-instance one
+  -- never an old Explorer window, since Explorer always opens another), moves it to the TV and
+  `ForceForeground`s it (the input-queue join, moved here from `GameLaunchService`, which now calls
+  it). `SwitchTo` gives the picked window the foreground first, then parks. Lock still parks
+  nothing. **This bug cannot be seen in `--windowed`**, which turns topmost and KeepFocus off.
+  Checked with a full-screen Debug build driven only through CDP (`openRadial`,
+  `openRadialSub('shortcuts')`, the item's own `action()`; no keys, no clicks) and Win32 reads of
+  the foreground and of `WindowFromPoint` at the new window's centre: before, the launcher was
+  drawn over the mixer, Display Settings, Explorer and a switched-to window in every sample to
+  3 s; after, the launcher was hidden and each window was in front. Task Manager was left out: it
+  auto-elevates, and a test cannot close it again. Explorer pre-creates a hidden CabinetWClass
+  window, so a test that only closes handles that did not exist before leaves the new one open.
 - `System.Drawing.Icon.ToBitmap` in Windows PowerShell (.NET Framework) cannot read PNG-compressed
   icon frames and returns noise, for the old icon as much as the new one. Check an .ico with WPF's
   `IconBitmapDecoder` (WIC), which is what the shell and the window use.

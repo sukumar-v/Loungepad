@@ -423,10 +423,7 @@ public class UiBridge
                         // Switching to a window brings it to the TV with it — the point of picking
                         // one from the couch is to look at it. A window already there is left
                         // alone rather than being re-centred for no reason.
-                        if (_settings.Settings.TvDeviceName is { } tv && _windows.DisplayOf(h) != tv)
-                            _windows.MoveToDisplay(h, tv);
-                        _windows.Focus(h);
-                        _window.CloseOverlay(false);
+                        _window.SwitchTo(h);
                         break;
                 }
                 Push(new { type = "toast", message = ActionToast(act) });
@@ -439,8 +436,7 @@ public class UiBridge
                     // Sleep sits in the shortcuts list but is rest mode's: the game is frozen and
                     // the pad parked first, so the machine comes back the way it went.
                     if (sid == "sleepPc") { _ = _window.Rest.Sleep("the Power Wheel"); break; }
-                    _windows.RunShortcut(sid);
-                    _window.CloseOverlay(false);
+                    _ = _window.OpenShortcut(sid);
                 }
                 break;
 

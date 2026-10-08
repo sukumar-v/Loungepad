@@ -929,6 +929,63 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// A Power Wheel shortcut: the program started, Loungepad out of the way, and the program's
+    /// window in front -- on the TV, when one is set.
+    ///
+    /// Opened over Loungepad itself, the close above leaves the launcher where it was: topmost on
+    /// the TV with the new window drawn underneath it, and KeepFocus taking the foreground back
+    /// 350 ms later, so the mixer opened behind the launcher and had to be switched to by hand (a
+    /// handheld user's report, Oct 8 2026). It parks now, as it does when a game starts, and for
+    /// the same reason as there the program is handed the foreground twice: allowed to take it
+    /// while the launcher is still the foreground process -- once it is hidden, Windows refuses a
+    /// program the foreground for having been started by it -- and brought forward through the
+    /// input-queue join once its window is up.
+    /// </summary>
+    public async Task OpenShortcut(string id)
+    {
+        var before = WindowService.VisibleWindows();
+        if (!_windows.RunShortcut(id, out var started))
+        {
+            CloseOverlay(false);
+            _bridge?.PushToast("That shortcut could not be opened");
+            return;
+        }
+        using (started)
+        {
+            try { if (started is not null) NativeMethods.AllowSetForegroundWindow((uint)started.Id); }
+            catch (Exception ex) { Log.Info($"Radial: {id}: AllowSetForegroundWindow failed: {ex.Message}"); }
+        }
+        CloseOverlay(false);
+        if (!WindowService.OpensWindow(id)) return;
+        Park();
+
+        var hwnd = await _windows.WaitForShortcutWindow(id, before, TimeSpan.FromSeconds(8), () => _parked);
+        if (!_parked) return;   // brought back meanwhile: the launcher is what was asked for now
+        if (hwnd == IntPtr.Zero)
+        {
+            Log.Info($"Radial: {id} put up no window to bring forward");
+            return;
+        }
+        if (_settings.Settings.TvDeviceName is { } tv && _windows.DisplayOf(hwnd) != tv) _windows.MoveToDisplay(hwnd, tv);
+        if (NativeMethods.GetForegroundWindow() != hwnd) WindowService.ForceForeground(hwnd);
+        Log.Info($"Radial: {id} brought forward" + (NativeMethods.GetForegroundWindow() == hwnd ? "" : ", but Windows kept the foreground elsewhere"));
+    }
+
+    /// <summary>
+    /// The Power Wheel's Switch window: that window on the TV and in front, and Loungepad out of its
+    /// way. Over the launcher itself it used to stay up on top of the window just picked, and
+    /// KeepFocus took the foreground back, exactly as with the shortcuts. The window is given the
+    /// foreground before the launcher hides, while that is still the launcher's to give.
+    /// </summary>
+    public void SwitchTo(IntPtr hwnd)
+    {
+        if (_settings.Settings.TvDeviceName is { } tv && _windows.DisplayOf(hwnd) != tv) _windows.MoveToDisplay(hwnd, tv);
+        WindowService.ForceForeground(hwnd);
+        CloseOverlay(false);
+        Park();
+    }
+
 
     // ---- built-in on-screen keyboard ----
 

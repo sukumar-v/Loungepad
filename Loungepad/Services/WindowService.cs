@@ -202,22 +202,136 @@ public class WindowService
         Log.Info($"Radial: centred cursor on {d.DeviceName}");
     }
 
-    public void RunShortcut(string id)
+    /// <summary>
+    /// Start one of the Power Wheel's shortcuts. False when it could not be started.
+    /// <paramref name="started"/> is the process when a program was started directly (Task
+    /// Manager, Explorer, the mixer), so the caller can hand it the foreground; the Settings pages
+    /// are URIs and have none.
+    /// </summary>
+    public bool RunShortcut(string id, out Process? started)
     {
+        started = null;
         try
         {
             switch (id)
             {
-                case "taskManager": Start("taskmgr.exe"); break;
-                case "explorer": Start("explorer.exe"); break;
-                case "settings": Start("ms-settings:"); break;
-                case "displaySettings": Start("ms-settings:display"); break;
-                case "volume": Start("sndvol.exe"); break;
+                case "taskManager": started = Start("taskmgr.exe"); break;
+                case "explorer": started = Start("explorer.exe"); break;
+                case "settings": started = Start("ms-settings:"); break;
+                case "displaySettings": started = Start("ms-settings:display"); break;
+                case "volume": started = Start("sndvol.exe"); break;
                 case "lock": Process.Start("rundll32.exe", "user32.dll,LockWorkStation"); break;
-                default: Log.Info($"Radial: unknown shortcut {id}"); break;
+                default: Log.Info($"Radial: unknown shortcut {id}"); return false;
             }
+            return true;
         }
-        catch (Exception ex) { Log.Info($"Radial shortcut {id} failed: {ex.Message}"); }
+        catch (Exception ex)
+        {
+            Log.Info($"Radial shortcut {id} failed: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>Whether a shortcut puts up a window to bring forward. Lock hands the session to
+    /// the lock screen instead.</summary>
+    public static bool OpensWindow(string id) =>
+        id is "taskManager" or "explorer" or "settings" or "displaySettings" or "volume";
+
+    /// <summary>
+    /// Whether a window is the program a shortcut opens, by the program behind it -- ExeOf looks
+    /// inside a Store app's frame. Settings' frame belongs to ApplicationFrameHost until the app
+    /// inside has attached, so a frame that has only just appeared counts as Settings. Explorer's
+    /// own desktop and taskbar are explorer.exe as well, hence the window class.
+    /// </summary>
+    private static bool IsShortcutWindow(string id, IntPtr hwnd, bool fresh)
+    {
+        var exe = ActionService.ExeOf(hwnd);
+        switch (id)
+        {
+            case "taskManager": return exe == "taskmgr";
+            case "volume": return exe == "sndvol";
+            case "settings":
+            case "displaySettings": return exe == "systemsettings" || (fresh && exe == "applicationframehost");
+            case "explorer":
+                var cls = new StringBuilder(64);
+                NativeMethods.GetClassName(hwnd, cls, cls.Capacity);
+                return exe == "explorer" && cls.ToString() == "CabinetWClass";
+            default: return false;
+        }
+    }
+
+    /// <summary>Every visible top-level window right now, for telling a shortcut's new window apart.</summary>
+    public static HashSet<IntPtr> VisibleWindows()
+    {
+        var set = new HashSet<IntPtr>();
+        NativeMethods.EnumWindows((hwnd, _) =>
+        {
+            if (NativeMethods.IsWindowVisible(hwnd)) set.Add(hwnd);
+            return true;
+        }, IntPtr.Zero);
+        return set;
+    }
+
+    /// <summary>
+    /// The window a shortcut opened, once it is up: a new one of its program's, or, after a moment,
+    /// one already open that the second start brought forward instead -- Task Manager, Settings and
+    /// the mixer keep a single window, while Explorer always opens another, so for Explorer only a
+    /// new one will do. Zero when nothing turns up in <paramref name="timeout"/>, or as soon as
+    /// <paramref name="wanted"/> says the window is no longer wanted (Loungepad was brought back).
+    /// </summary>
+    public async Task<IntPtr> WaitForShortcutWindow(string id, HashSet<IntPtr> before, TimeSpan timeout, Func<bool> wanted)
+    {
+        bool single = id != "explorer";
+        var start = DateTime.UtcNow;
+        while (DateTime.UtcNow - start < timeout && wanted())
+        {
+            await Task.Delay(150);
+            // Brought itself forward, as a program started by the foreground process may.
+            var fg = NativeMethods.GetForegroundWindow();
+            if (fg != IntPtr.Zero && fg != _ownWindow && (single || !before.Contains(fg))
+                && IsShortcutWindow(id, fg, fresh: !before.Contains(fg)))
+                return fg;
+
+            IntPtr fresh = IntPtr.Zero, existing = IntPtr.Zero;
+            NativeMethods.EnumWindows((hwnd, _) =>
+            {
+                if (hwnd == _ownWindow || !NativeMethods.IsWindowVisible(hwnd) || !IsAltTabWindow(hwnd)) return true;
+                bool isNew = !before.Contains(hwnd);
+                if (!IsShortcutWindow(id, hwnd, isNew)) return true;
+                if (isNew) { fresh = hwnd; return false; }
+                if (existing == IntPtr.Zero) existing = hwnd;   // the top one: EnumWindows goes in z-order
+                return true;
+            }, IntPtr.Zero);
+            if (fresh != IntPtr.Zero) return fresh;
+            if (single && existing != IntPtr.Zero && DateTime.UtcNow - start > TimeSpan.FromSeconds(1.5)) return existing;
+        }
+        return IntPtr.Zero;
+    }
+
+    /// <summary>
+    /// SetForegroundWindow for a window that is not ours, in the form Windows grants: the same
+    /// input-queue join MainWindow.TakeForeground uses for the launcher, because this process is
+    /// no more entitled to hand the foreground to another program's window than to take it for
+    /// itself once the launcher is hidden. Restores a minimized window first.
+    /// </summary>
+    public static void ForceForeground(IntPtr hwnd)
+    {
+        if (NativeMethods.IsIconic(hwnd)) NativeMethods.ShowWindow(hwnd, NativeMethods.SW_RESTORE);
+        if (NativeMethods.SetForegroundWindow(hwnd) && NativeMethods.GetForegroundWindow() == hwnd) return;
+
+        var fg = NativeMethods.GetForegroundWindow();
+        var fgThread = fg == IntPtr.Zero ? 0 : NativeMethods.GetWindowThreadProcessId(fg, out _);
+        var ours = NativeMethods.GetCurrentThreadId();
+        var attached = fgThread != 0 && fgThread != ours && NativeMethods.AttachThreadInput(ours, fgThread, true);
+        try
+        {
+            NativeMethods.BringWindowToTop(hwnd);
+            NativeMethods.SetForegroundWindow(hwnd);
+        }
+        finally
+        {
+            if (attached) NativeMethods.AttachThreadInput(ours, fgThread, false);
+        }
     }
 
     /// <summary>
@@ -469,6 +583,6 @@ public class WindowService
             NativeMethods.PostMessage(NativeMethods.HWND_BROADCAST, NativeMethods.WM_SYSCOMMAND, new IntPtr(NativeMethods.SC_MONITORPOWER), new IntPtr(state));
     }
 
-    private static void Start(string target) =>
+    private static Process? Start(string target) =>
         Process.Start(new ProcessStartInfo(target) { UseShellExecute = true });
 }
