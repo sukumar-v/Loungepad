@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Version>1.8.0</Version>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\Loungepad\Interop\NativeMethods.cs" Link="NativeMethods.cs" />
+    <Compile Include="..\Loungepad\Interop\HidNative.cs" Link="HidNative.cs" />
+    <Compile Include="..\Loungepad\Services\HidGamepadReader.cs" Link="HidGamepadReader.cs" />
+    <Compile Include="..\Loungepad\Services\StickPointer.cs" Link="StickPointer.cs" />
+  </ItemGroup>
+</Project>

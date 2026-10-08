@@ -4058,6 +4058,7 @@ function allSettingsRows() {
   restWakeRows(wake).forEach(r => rows.push(r));
 
   rows.push({ section: "STARTUP & LOCK SCREEN", cat: "general" });
+  rows.push(...secureInputRows());
   rows.push(toggleRow("Launch Loungepad at login", "Registers a startup entry so the launcher is ready after wake or reboot",
     () => s.launchOnStartup, v => set(() => s.launchOnStartup = v)));
   rows.push({
@@ -4512,6 +4513,43 @@ function updateRow() {
     unsupported: [u.message || "This copy cannot update itself", "Unavailable", idle],
   }[u.state] || ["Checks GitHub for a newer release", "Check now", check];
   return { name: u.current ? `Loungepad ${u.current}` : "Loungepad", hint, type: "action", label, action };
+}
+
+function askSecureInputInstall() {
+  if (S.secureInput?.busy) return;
+  askConfirm({
+    title: "Install Loungepad input service?",
+    body: "Download and install the signed Loungepad input service on this PC? It runs in the background so your controller and selected keyboard work on UAC and Windows sign-in screens, even when Loungepad is closed. Windows will ask for administrator approval. Turning this setting off keeps the service installed; you can uninstall it here later.",
+    yesLabel: "Install and enable", icon: "download", danger: false,
+    onYes: () => send({ cmd: "setSecureInput", enabled: true, installConfirmed: true }),
+  });
+}
+
+function secureInputRows() {
+  const service = S.secureInput || {};
+  const status = service.busy ? service.state + (service.progress == null ? "" : ` (${service.progress}%)`)
+    : service.error || service.state || "Checking installation";
+  const rows = [toggleRow("Controller on UAC and sign-in screens",
+    "For this PC, even before login. Uses your selected keyboard. " + (service.installed
+      ? "Turning off keeps the input service installed. " : "Turning on offers to download and install the input service. ") + "Status: " + status,
+    () => !!service.enabled, enabled => {
+      if (service.busy) return;
+      if (enabled && !service.installed) askSecureInputInstall();
+      else send({ cmd: "setSecureInput", enabled });
+    })];
+  if (service.installed) rows.push({
+    name: "Uninstall Loungepad input service", type: "action", label: service.busy ? "Please wait" : "Uninstall", danger: true,
+    hint: "Removes the background service, its files and machine input settings. Loungepad and your library stay installed. Windows asks for administrator approval",
+    action: () => {
+      if (service.busy) return;
+      askConfirm({ title: "Uninstall Loungepad input service?",
+        body: "Controller input on UAC and sign-in screens will stop. The service, its files and machine input settings will be removed. Loungepad and your library will remain installed. You can reinstall the service by turning the setting on again.",
+        yesLabel: "Uninstall", icon: "trash", danger: true,
+        onYes: () => send({ cmd: "uninstallSecureInput", confirmed: true }),
+      });
+    },
+  });
+  return rows;
 }
 
 function toggleRow(name, hint, get, setV) {
@@ -6534,6 +6572,13 @@ let lastBatteryMsg = null;
 
 function handleHostMessage(m) {
   switch (m.type) {
+    case "secureInputInstallRequired":
+      askSecureInputInstall();
+      break;
+    case "secureInput":
+      S.secureInput = m.status;
+      if (view === "settings") renderSettings();
+      break;
     case "state": {
       const firstState = S.settings === null;
       const wasEmpty = S.games.length === 0;
@@ -6546,6 +6591,7 @@ function handleHostMessage(m) {
         if (!S.collections.some(c => c.id === id)) F.collections.delete(id);
 
       S.settings = m.settings;
+      S.secureInput = m.secureInput || S.secureInput;
       S.displays = m.displays || [];
       // Keep whatever the last themes push carried if this state has none, so a state
       // refresh cannot blank the list between watcher events.

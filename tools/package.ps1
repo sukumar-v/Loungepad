@@ -28,9 +28,12 @@
 #>
 [CmdletBinding()]
 param(
+    [ValidatePattern('^\d+\.\d+\.\d+$')]
     [string]$Version,
+    [ValidateSet('win-x64', 'win-arm64', 'win-x86')]
     [string]$Runtime = 'win-x64',
-    [switch]$NoSign
+    [switch]$NoSign,
+    [switch]$NoRestore
 )
 
 $ErrorActionPreference = 'Stop'
@@ -52,12 +55,21 @@ $dist = Join-Path $repo "dist\v$Version"
 
 # A stale staging folder would ship files that are no longer part of the build.
 foreach ($dir in $artifacts, $dist) {
-    if (Test-Path $dir) { Remove-Item $dir -Recurse -Force }
+    $resolved = [IO.Path]::GetFullPath($dir)
+    if (!$resolved.StartsWith([IO.Path]::GetFullPath($repo).TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Packaging path escaped the repository.' }
+    if (Test-Path -LiteralPath $resolved) {
+        foreach ($item in @((Get-Item -LiteralPath $resolved)) + @(Get-ChildItem -LiteralPath $resolved -Recurse -Force)) {
+            if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Refusing redirected packaging path: $($item.FullName)" }
+        }
+        Remove-Item -LiteralPath $resolved -Recurse -Force
+    }
 }
 New-Item -ItemType Directory -Path $staging -Force | Out-Null
 New-Item -ItemType Directory -Path $dist -Force | Out-Null
 
 Write-Host "Publishing Loungepad $Version ($Runtime, self-contained)..." -ForegroundColor Cyan
+$restoreArgs = @()
+if ($NoRestore) { $restoreArgs += '--no-restore' }
 dotnet publish $project `
     -c Release `
     -r $Runtime `
@@ -68,7 +80,7 @@ dotnet publish $project `
     -p:DebugType=none `
     -p:Version=$Version `
     -o $staging `
-    --nologo
+    --nologo @restoreArgs
 if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed ($LASTEXITCODE)" }
 
 # Nothing here is any use to someone running the app.
@@ -93,6 +105,9 @@ foreach ($file in $shipped) {
     $name = 'shipped\' + $file.FullName.Substring($source.Length + 1)
     # Names in the metadata end in a NUL, so app.js cannot be found inside app.json.
     if (-not $heap.Contains("$name$([char]0)")) { throw "Not embedded in the exe: $name" }
+}
+foreach ($setup in 'install-input-service.ps1', 'uninstall-input-service.ps1') {
+    if (-not $heap.Contains("shipped\setup\$setup$([char]0)")) { throw "Input service setup was not embedded: $setup" }
 }
 Write-Host "  $($shipped.Count) shipped files embedded" -ForegroundColor Green
 

@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Loungepad.Interop;
 using Loungepad.Models;
+using Loungepad.Input;
 
 namespace Loungepad.Services;
 
@@ -29,6 +30,7 @@ internal class GamepadService : IDisposable
     private readonly Func<bool> _isLauncherForeground;
     private readonly Func<bool> _isGameFocused;
     private readonly HidGamepadReader? _hid;
+    public ServiceInputClient? ServiceInput;
     private Thread? _thread;
     private volatile bool _running;
 
@@ -166,10 +168,10 @@ internal class GamepadService : IDisposable
     /// usually detected before the WebView exists, and that first push has nowhere to go.</summary>
     public BatteryState CurrentBattery { get; private set; }
 
-    private const double MaxSpeedPxPerSec = 1400;
-    private const double MaxScrollNotchesPerSec = 18;
+    // The stick's speed, curve and scroll rate live in StickPointer, shared with the input agent,
+    // so a push is the same push on the desktop, over a UAC prompt and on the sign-in screen.
     private const int RepeatDelayMs = 380, RepeatIntervalMs = 115;
-    private const byte TriggerThreshold = 40;  // analog triggers count as "pressed" past this
+    private const byte TriggerThreshold = StickPointer.TriggerThreshold;  // analog triggers count as "pressed" past this
     /// <summary>A pad that has been quiet this long is "picked up again" on its next input.</summary>
     private const int PadQuietMs = 1500;
     /// <summary>
@@ -197,7 +199,11 @@ internal class GamepadService : IDisposable
         _thread.Start();
     }
 
-    public void Dispose() => _running = false;
+    public void Dispose()
+    {
+        _running = false;
+        if (_thread != Thread.CurrentThread) _thread?.Join(1500);
+    }
 
     // Mirrors the web UI's own input mode. The two MUST start out agreeing: when this said
     // "pointer" while the UI booted in "pad", the first stick movement was a no-op here, no
@@ -224,7 +230,8 @@ internal class GamepadService : IDisposable
     private void PollLoop()
     {
         ushort prevButtons = 0;
-        double fracX = 0, fracY = 0, scrollAccum = 0, hScrollAccum = 0;
+        double scrollAccum = 0, hScrollAccum = 0;
+        var mover = new StickPointer.Mover();   // the stick as a pointer, when this process moves it
         var repeat = new Dictionary<ushort, long>();      // button -> next repeat time (ms)
         long toggleDownAt = -1;
         bool toggleFired = false, leftDown = false, rightDown = false;
@@ -233,11 +240,12 @@ internal class GamepadService : IDisposable
         bool ltLatched = false;
         bool prevTrigger = false;                          // trigger edge, used only while suspended
         var sw = Stopwatch.StartNew();
-        long lastTick = sw.ElapsedMilliseconds;
+        double lastTick = sw.Elapsed.TotalMilliseconds;
         long nextBatteryPoll = 0, nextStickPush = 0;
         CurrentBattery = new BatteryState(false, -1, false, -99);   // impossible, so the first read always pushes
         int missCount = 0;
         bool xinputMissing = false;
+        bool awaitNeutral = false;
         // Which pad is driving, and where each one last registered a movement (see StickNoise).
         bool activeIsHid = false;
         var anchorX = default(NativeMethods.XINPUT_GAMEPAD);
@@ -278,17 +286,31 @@ internal class GamepadService : IDisposable
             Clicking = () => TouchClick?.Invoke(),
         };
 
+        using var cadence = new Loungepad.Input.InputCadence();
         while (_running)
         {
-            Thread.Sleep(8);
+            cadence.Wait();
+            if (!InputDesktopAccess.Available())
+            {
+                prevButtons = 0; repeat.Clear(); combo.Reset();
+                leftDown = rightDown = false; toggleDownAt = -1;
+                touch.Reset(); awaitNeutral = true;
+                Thread.Sleep(100);
+                continue;
+            }
             long now = sw.ElapsedMilliseconds;
-            double dt = Math.Min((now - lastTick) / 1000.0, 0.1);
-            lastTick = now;
+            // dt from the fine clock: in whole milliseconds an 8 ms cadence read as 8 or 9, and
+            // the pointer's speed wobbled by an eighth from one tick to the next.
+            double nowFine = sw.Elapsed.TotalMilliseconds;
+            double dt = Math.Min((nowFine - lastTick) / 1000.0, 0.1);
+            lastTick = nowFine;
             double uiScroll = 0;    // set by the right stick while the launcher is in front
 
             NativeMethods.XINPUT_STATE xs = default;
+            var remote = ServiceInput?.Snapshot();
             int rc = 1;
-            if (!xinputMissing)
+            if (remote is not null) { xs = remote.Xbox; rc = remote.XInputPresent ? 0 : 1; }
+            else if (!xinputMissing)
             {
                 try { rc = NativeMethods.XInputGetStateAny(0, out xs); }
                 catch (DllNotFoundException)
@@ -299,7 +321,7 @@ internal class GamepadService : IDisposable
                 }
             }
             bool xOk = rc == 0;
-            var hid = _hid?.Snapshot() ?? default;
+            var hid = remote?.Hid ?? _hid?.Snapshot() ?? default;
             bool hOk = hid.Present;
 
             if (!xOk && !hOk)
@@ -344,6 +366,12 @@ internal class GamepadService : IDisposable
             if (!activeIsHid && !xOk) activeIsHid = true;
 
             var state = activeIsHid ? new NativeMethods.XINPUT_STATE { Gamepad = hid.Pad } : xs;
+            if (awaitNeutral)
+            {
+                if (!NeutralInputGate.Neutral(state.Gamepad) || hid.TouchClick || hid.TouchFingers > 0)
+                { prevButtons = state.Gamepad.wButtons; continue; }
+                awaitNeutral = false; prevButtons = 0;
+            }
             // Announce on input -- and once at the start when the only pad attached is a HID one,
             // or the legend would show Xbox letters to somebody holding a DualSense until they
             // pressed something.
@@ -726,27 +754,24 @@ internal class GamepadService : IDisposable
                 // scroll axes by the same factor, so the pad keeps feeling like one device.
                 double boost = ComboPressed(state.Gamepad, s.BoostButton) ? Math.Clamp(s.BoostMultiplier, 1.0, 5.0) : 1.0;
 
-                double nx = state.Gamepad.sThumbLX / 32767.0;
-                double ny = state.Gamepad.sThumbLY / 32767.0;
-                double mag = Math.Sqrt(nx * nx + ny * ny);
-                if (mag > s.Deadzone)
+                // ---- the pointer ----
+                // With the input service connected the agent moves it: from this same reading, in
+                // its own 8 ms loop, with the one formula it also uses over a UAC prompt and on the
+                // sign-in screen (StickPointer). The stick then feels the same on every desktop,
+                // and no movement is a trip through the pipe -- which is what made it slow and
+                // uneven here: a tick read the pointer before the last move had arrived, aimed
+                // from that stale place and threw the move away. All this process sends is the
+                // policy, "the stick is a mouse right now", which is what everything above decides
+                // (SetPointerPolicy). Without the service the pointer is moved from here as before.
+                bool agentPointer = remote?.PointerOwner == true;
+                var (vx, vy) = StickPointer.Velocity(state.Gamepad.sThumbLX, state.Gamepad.sThumbLY, s.Deadzone, s.Sensitivity, s.AccelExponent, boost);
+                if (vx != 0 || vy != 0) SetInputMode("pointer");   // Moving the stick brings the pointer back.
+                if (agentPointer) mover.Reset();
+                else
                 {
-                    // rescale so movement starts at zero right past the deadzone, then apply accel curve
-                    double t = Math.Min((mag - s.Deadzone) / (1 - s.Deadzone), 1.0);
-                    double speed = MaxSpeedPxPerSec * s.Sensitivity * Math.Pow(t, s.AccelExponent) * boost;
-                    fracX += nx / mag * speed * dt;
-                    fracY += -ny / mag * speed * dt;
-                    int dx = (int)fracX, dy = (int)fracY;
-                    fracX -= dx; fracY -= dy;
-                    if (dx != 0 || dy != 0)
-                    {
-                        // Moving the stick brings the pointer back.
-                        SetInputMode("pointer");
-                        NativeMethods.GetCursorPos(out var p);
-                        NativeMethods.MoveCursorTo(p.X + dx, p.Y + dy);
-                    }
+                    var (dx, dy) = mover.Step(state.Gamepad.sThumbLX, state.Gamepad.sThumbLY, dt, s.Deadzone, s.Sensitivity, s.AccelExponent, boost);
+                    if (dx != 0 || dy != 0) NativeMethods.MoveCursorBy(dx, dy);
                 }
-                else { fracX = 0; fracY = 0; }
 
                 // Right stick -> scroll wheel, vertical or horizontal. Accumulated per elapsed
                 // time exactly like the cursor above: the old "emit while (now % 96 < 12)" gate
@@ -754,6 +779,7 @@ internal class GamepadService : IDisposable
                 // plus jitter whole cycles emitted nothing and the scroll stuttered.
                 double ry = state.Gamepad.sThumbRY / 32767.0;
                 double rx = state.Gamepad.sThumbRX / 32767.0;
+                bool agentWheel = false;
                 // Whichever axis is pushed further wins, so a diagonal nudge never scrolls both ways.
                 if (Math.Abs(ry) >= Math.Abs(rx))
                 {
@@ -768,13 +794,16 @@ internal class GamepadService : IDisposable
                         scrollAccum = 0;
                         uiScroll = StickSpeed(ry, s.Deadzone, boost);
                     }
+                    else if (agentPointer) { scrollAccum = 0; agentWheel = true; }
                     else scrollAccum = StickScroll(ry, s.Deadzone, dt, boost, scrollAccum, n => SendWheel(n * 120));
                 }
                 else
                 {
                     scrollAccum = 0;
-                    hScrollAccum = StickScroll(rx, s.Deadzone, dt, boost, hScrollAccum, n => SendHWheel(n * 120));
+                    if (agentPointer) { hScrollAccum = 0; agentWheel = true; }
+                    else hScrollAccum = StickScroll(rx, s.Deadzone, dt, boost, hScrollAccum, n => SendHWheel(n * 120));
                 }
+                ServiceInput?.SetPointerPolicy(agentPointer, agentWheel);
 
                 // ---- touchpad ----
                 // A DualSense or DualShock 4 as a precision touchpad: pointer, clicks, taps,
@@ -789,6 +818,9 @@ internal class GamepadService : IDisposable
 
             prevButtons = buttons;
         }
+        touch.Reset();
+        if (leftDown) SendClick(NativeMethods.MOUSEEVENTF_LEFTUP);
+        if (rightDown) SendClick(NativeMethods.MOUSEEVENTF_RIGHTUP);
     }
 
     private static readonly (ushort mask, string name)[] NavButtons =
@@ -850,28 +882,10 @@ internal class GamepadService : IDisposable
     /// elapsed time and emits whole notches. Returns the carried-over remainder.
     /// </summary>
     /// <summary>The same curve as StickScroll, as a speed in notches per second (up positive) rather than whole notches.</summary>
-    private static double StickSpeed(double axis, double deadzone, double boost)
-    {
-        double mag = Math.Abs(axis);
-        if (mag <= deadzone) return 0;
-        double t = Math.Min((mag - deadzone) / (1 - deadzone), 1.0);
-        return Math.Sign(axis) * MaxScrollNotchesPerSec * Math.Pow(t, 1.5) * boost;
-    }
+    private static double StickSpeed(double axis, double deadzone, double boost) => StickPointer.ScrollRate(axis, deadzone, boost);
 
-    private static double StickScroll(double axis, double deadzone, double dt, double boost, double accum, Action<int> emit)
-    {
-        double mag = Math.Abs(axis);
-        if (mag <= deadzone) return 0;
-        double t = Math.Min((mag - deadzone) / (1 - deadzone), 1.0);
-        accum += Math.Sign(axis) * MaxScrollNotchesPerSec * Math.Pow(t, 1.5) * boost * dt;
-        int notches = (int)accum;
-        if (notches != 0)
-        {
-            accum -= notches;
-            emit(notches);
-        }
-        return accum;
-    }
+    private static double StickScroll(double axis, double deadzone, double dt, double boost, double accum, Action<int> emit) =>
+        StickPointer.Scroll(axis, deadzone, dt, boost, accum, emit);
 
     /// <summary>
     /// Is the whole combo held? Handles face/shoulder/stick buttons, the analog triggers, and the

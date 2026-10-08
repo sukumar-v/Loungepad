@@ -387,10 +387,8 @@ internal sealed class TouchpadGestures
     public Action<NativeMethods.INPUT[]> Output = inputs =>
         NativeMethods.SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<NativeMethods.INPUT>());
 
-    /// <summary>Moves the pointer by a relative amount; replaceable for the same reason as Output.</summary>
-    public Action<int, int> MoveCursor = (dx, dy) =>
-    {
-        NativeMethods.GetCursorPos(out var p);
-        NativeMethods.MoveCursorTo(p.X + dx, p.Y + dy);
-    };
+    /// <summary>Moves the pointer by a relative amount; replaceable for the same reason as Output.
+    /// Through MoveCursorBy, which knows when the last move is still on its way through the
+    /// input service's pipe and does not aim from a position that move is about to change.</summary>
+    public Action<int, int> MoveCursor = NativeMethods.MoveCursorBy;
 }

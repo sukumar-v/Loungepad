@@ -9,9 +9,9 @@ pad drive Windows itself. Bug fixes and small improvements are welcome as a stra
 For anything larger — a new platform scanner, a new overlay, a whole settings section — please open
 an issue first so the shape can be agreed before you spend a weekend on it.
 
-One thing is permanently out of scope: **input injection at the Windows lock screen / Secure
-Desktop**. That is an OS restriction rather than a bug, it is handled outside this app, and patches
-adding `SendInput` or virtual-HID paths aimed at the lock screen will be declined.
+Secure-desktop input belongs to the optional signed LocalSystem service and its console-session
+agent. See [architecture and installation](docs/SECURE-INPUT.md). Changes there require testing
+signed installs on UAC and login screens; a browser preview cannot verify them.
 
 ## Building
 

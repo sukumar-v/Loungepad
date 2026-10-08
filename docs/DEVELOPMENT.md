@@ -37,6 +37,14 @@ It publishes self-contained and single-file into `artifacts\`, checks that every
 Attach both exactly as the script names them. A build from `dotnet build` never updates itself;
 only the single-file build this script makes does.
 
+The optional controller service is packaged separately with
+`.\tools\package-input-service.ps1` (or the same `-Version` override used for the launcher).
+Attach `dist\Loungepad.InputService-v<version>-x64.zip` to that release too. Keep its name out
+of the `-win-x64.zip` suffix used by old launcher updaters. The normal auto-updater installs
+the launcher only. General settings handles first-time service download and installation after
+confirmation and administrator approval. Subsequent service updates use the signed package's
+administrator installer. See [secure input setup and release checks](SECURE-INPUT.md).
+
 `.\tools\make-icon.ps1` draws the app icon (`Loungepad\Loungepad.ico`, every size from 16 to
 256 px, and `loungepad-icon.png`) as shapes, so each size is drawn at its own resolution and stays
 legible in the tray. The README's header lockup (`assets\loungepad-logo-dark.png` and
@@ -348,8 +356,8 @@ behaviour and screen structure. Things that could not map 1:1 to local desktop r
 
 ## Explicitly out of scope
 
-No input injection at the Windows lock screen / Secure Desktop (OS restriction; handled outside
-this app). The in-app wake guide recommends automatic sign-in for a couch-only setup.
+The ordinary launcher does not inject into the Windows lock screen / Secure Desktop. Optional
+support lives in the signed SYSTEM service and console-session agent; see [SECURE-INPUT.md](SECURE-INPUT.md).
 
 Making a controller wake a *sleeping* PC when its driver does not offer it. That is a bus-level
 wake the device has to ask for; the app arms every device that can be armed and says which cannot.

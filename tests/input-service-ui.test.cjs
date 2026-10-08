@@ -1,0 +1,50 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const path = require('node:path');
+const source = fs.readFileSync(path.join(__dirname, '../Loungepad/ui/app.js'), 'utf8');
+const start = source.indexOf('function askSecureInputInstall()');
+const end = source.indexOf('/* A row with a fixed set of values', start);
+assert(start >= 0 && end > start);
+let prompt = null;
+const sent = [];
+const context = vm.createContext({ S: {}, send: message => sent.push(message), askConfirm: state => prompt = state });
+vm.runInContext(source.slice(start, end), context);
+const rows = state => { context.S.secureInput = state; prompt = null; sent.length = 0; return context.secureInputRows(); };
+
+let items = rows({ installed: false, enabled: false });
+assert.equal(items.length, 1, 'uninstall is absent when not installed');
+items[0].action();
+assert.equal(sent.length, 0, 'enabling an absent service does not install before confirmation');
+assert.equal(prompt.yesLabel, 'Install and enable');
+assert.equal(prompt.danger, false);
+prompt.onYes();
+assert.deepEqual(JSON.parse(JSON.stringify(sent[0])), { cmd: 'setSecureInput', enabled: true, installConfirmed: true });
+
+items = rows({ installed: true, enabled: true });
+assert.equal(items.length, 2, 'uninstall is visible for an installed service');
+items[0].action();
+assert.equal(prompt, null, 'disabling does not prompt for installation');
+assert.deepEqual(JSON.parse(JSON.stringify(sent[0])), { cmd: 'setSecureInput', enabled: false });
+assert(!sent.some(m => m.cmd === 'uninstallSecureInput'), 'disable keeps the service installed');
+
+items = rows({ installed: true, enabled: false });
+items[0].action();
+assert.equal(prompt, null, 're-enabling does not reinstall');
+assert.deepEqual(JSON.parse(JSON.stringify(sent[0])), { cmd: 'setSecureInput', enabled: true });
+sent.length = 0;
+items[1].action();
+assert.equal(sent.length, 0, 'uninstall requires confirmation');
+assert.equal(prompt.danger, true);
+prompt.onYes();
+assert.deepEqual(JSON.parse(JSON.stringify(sent[0])), { cmd: 'uninstallSecureInput', confirmed: true });
+
+items = rows({ installed: true, enabled: false, busy: true, state: 'Downloading input service', progress: 42 });
+items[0].action(); items[0].adjust(); items[1].action();
+assert.equal(sent.length, 0, 'busy operations cannot be duplicated');
+assert.equal(prompt, null);
+assert(items[0].hint.includes('42%'), 'download progress is visible');
+const inputSection = source.slice(source.indexOf('section: "GAMEPAD"'), source.indexOf('section: "KEYBOARD"'));
+assert(!inputSection.includes('rows.push(...secureInputRows())'));
+assert.match(source, /section: "STARTUP & LOCK SCREEN", cat: "general"[^\n]*\n\s*rows.push\(\.\.\.secureInputRows\(\)\)/);
+console.log('PASS: input-service install confirmation, disable, reinstall, uninstall, busy/progress and General settings placement');

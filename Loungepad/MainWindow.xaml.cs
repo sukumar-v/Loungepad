@@ -20,6 +20,8 @@ public partial class MainWindow : Window
     private readonly GamepadService _gamepad;
     private readonly ActionService _actions;
     private readonly HidGamepadReader _hid = new();
+    private readonly ServiceInputClient _serviceInput = new();
+    private bool _inputClosing;
     /// <summary>When the keyboard and mouse were last pressed, scrolled or really moved, for rest
     /// mode's idle timer and its wake. See UserInputWatch for why GetLastInputInfo could not do it.</summary>
     private readonly UserInputWatch _input = new();
@@ -55,6 +57,7 @@ public partial class MainWindow : Window
         // their own dark wash instead, which at the opacity they use looks near enough the same.
 
         _settings.Load();
+        InputLog.Sink = Log.Info;
         _library.Load();
 
         _keyboard = new VirtualKeyboardService(_settings);
@@ -70,6 +73,19 @@ public partial class MainWindow : Window
             isLauncherForeground: () => _overlayActive || NativeMethods.GetForegroundWindow() == _hwnd,
             isGameFocused: () => !_overlayActive && _launcher.IsGameForeground(),
             hid: _hid);
+        _gamepad.ServiceInput = _serviceInput;
+        _serviceInput.ConnectionChanged += connected => Dispatcher.BeginInvoke(() =>
+        {
+            if (_inputClosing) return;
+            if (connected) _hid.Dispose();
+            else if (_hwnd != IntPtr.Zero)
+            {
+                _hid.Dispose();
+                _hid.Register(_hwnd);
+                if (_gamepad.Suspended) _hid.SetQuiet(true);
+            }
+        });
+        _serviceInput.StatusChanged += () => Dispatcher.BeginInvoke(() => _bridge?.PushSecureInput());
         _actions = new ActionService(() => _library.Emulators);
         _actions.Load();
         _gamepad.Actions = _actions;
@@ -171,13 +187,14 @@ public partial class MainWindow : Window
         // so leaving it open would keep the process alive with no UI.
         Closed += (_, _) =>
         {
+            _inputClosing = true;
             _restTimer.Stop();
             // Never leave a game frozen behind an exiting launcher: nothing else could thaw it.
             _launcher.Resume();
             _hid.SetQuiet(false);
             if (_displayStateNotification != IntPtr.Zero) NativeMethods.UnregisterPowerSettingNotification(_displayStateNotification);
             if (_hwnd != IntPtr.Zero) NativeMethods.WTSUnRegisterSessionNotification(_hwnd);
-            _kb?.Close(); _bridge?.Shutdown(); _gamepad.Dispose(); _cursor.Dispose(); _tray?.Dispose(); _updates.Dispose();
+            _kb?.Close(); _bridge?.Shutdown(); _gamepad.Dispose(); _serviceInput.Dispose(); _hid.Dispose(); _cursor.Dispose(); _tray?.Dispose(); _updates.Dispose();
         };
 
         try
@@ -238,6 +255,7 @@ public partial class MainWindow : Window
         var displayState = NativeMethods.GUID_CONSOLE_DISPLAY_STATE;
         _displayStateNotification = NativeMethods.RegisterPowerSettingNotification(_hwnd, ref displayState, NativeMethods.DEVICE_NOTIFY_WINDOW_HANDLE);
         _gamepad.Start();
+        _serviceInput.Start(_settings.Settings);
     }
 
     private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
@@ -1009,6 +1027,7 @@ public partial class MainWindow : Window
             {
                 options.WriteTo(_settings.Settings);
                 _settings.Save();
+                _serviceInput.UpdateProfile(_settings.Settings);
                 _bridge?.PushKeyboardOptions();
             };
             // The size steps beside the gear: the same number as Settings → Keyboard → Keyboard size.
@@ -1016,6 +1035,7 @@ public partial class MainWindow : Window
             {
                 _settings.Settings.KeyboardScale = scale;
                 _settings.Save();
+                _serviceInput.UpdateProfile(_settings.Settings);
                 _bridge?.PushKeyboardOptions();
             };
         }
@@ -1032,6 +1052,7 @@ public partial class MainWindow : Window
     /// <summary>Re-apply the keyboard settings while it is up, so the size slider is live.</summary>
     public void RefreshBuiltinKeyboard()
     {
+        _serviceInput.UpdateProfile(_settings.Settings);
         if (_kb is { IsVisible: true }) ShowBuiltinKeyboard();
     }
 
@@ -1105,6 +1126,9 @@ public partial class MainWindow : Window
     public IntPtr OverlayTarget => _overlayTarget;
 
     internal ActionService Actions => _actions;
+    internal InputServiceUiStatus SecureInputStatus => _serviceInput.UiStatus;
+    internal Task SetSecureInput(bool enabled, bool installConfirmed) => _serviceInput.SetEnabled(enabled, _settings.Settings, installConfirmed);
+    internal Task UninstallSecureInput() => _serviceInput.Uninstall();
 
     /// <summary>
     /// An action chosen on the wheel: put the launcher away, hand the foreground back to the

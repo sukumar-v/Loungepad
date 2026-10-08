@@ -49,6 +49,7 @@ public readonly record struct TargetState(IntPtr Focus, IntPtr CaretWindow, int 
 /// </summary>
 public partial class KeyboardWindow : Window
 {
+    private readonly bool _secureInput;
     /// <summary>
     /// Everything the keyboard types goes through here, and where the app in front has its caret
     /// comes from <see cref="Probe"/>. Both replaceable, so a harness can drive the whole keyboard
@@ -110,8 +111,11 @@ public partial class KeyboardWindow : Window
     /// changed nothing. At 16 a letter is still about two thirds the height of Windows' own text.</summary>
     private const double MinKeySize = 16;
 
-    public KeyboardWindow()
+    public KeyboardWindow() : this(false) { }
+
+    public KeyboardWindow(bool secureInput)
     {
+        _secureInput = secureInput;
         InitializeComponent();
         SourceInitialized += OnSourceInitialized;
         Root.MouseMove += OnRootMouseMove;
@@ -293,7 +297,7 @@ public partial class KeyboardWindow : Window
         _display = display;
         _displayScale = displayScale;
         _scale = scale;
-        _options = options;
+        _options = _secureInput ? options with { Suggestions = false } : options;
         if (fresh)
         {
             // A new keyboard starts on its keys, with nothing latched and nothing known about the
@@ -939,6 +943,13 @@ public partial class KeyboardWindow : Window
             return;
         }
 
+        if (_secureInput)
+        {
+            Output(KeyStroke.Chars(c.ToString()));
+            _shift = false;
+            Typed();
+            return;
+        }
         if (_text.PunctuationSwap(c) is { } swapped)
         {
             Output(KeyStroke.Tap(VK_BACK));
@@ -978,6 +989,7 @@ public partial class KeyboardWindow : Window
     /// <summary>After anything went to the app: re-arm the caret check, ask for suggestions, repaint.</summary>
     private void Typed()
     {
+        if (_secureInput) { _text.Reset(); Paint(); return; }
         _settle.Stop();
         _settle.Start();
         RefreshSuggestions();
@@ -1003,7 +1015,7 @@ public partial class KeyboardWindow : Window
         if (_mods.Count > 0) { TapKey(VK_SPACE, extended: false, takesShift: false); return; }
         CheckTarget();
         Output(KeyStroke.Chars(" "));
-        _text.Typed(" ");
+        if (!_secureInput) _text.Typed(" ");
         Typed();
     }
 
@@ -1081,6 +1093,7 @@ public partial class KeyboardWindow : Window
     /// </summary>
     private void RefreshSuggestions()
     {
+        if (_secureInput) { _suggestions = Array.Empty<string>(); return; }
         int seq = ++_suggestSeq;
         var word = _text.CurrentWord;
         // A word with a digit in it is a code, a time or a gamertag -- nothing to finish.
@@ -1112,6 +1125,7 @@ public partial class KeyboardWindow : Window
     /// </summary>
     private void CheckTarget()
     {
+        if (_secureInput) return;
         var now = Probe();
         bool moved = now.Focus != _target.Focus
             || (_targetSettled && now.CaretWindow != IntPtr.Zero
@@ -1185,6 +1199,7 @@ public partial class KeyboardWindow : Window
 
     private void SetOption(KeyboardOption option, bool on)
     {
+        if (_secureInput && option == KeyboardOption.Suggestions) return;
         _options = _options.With(option, on);
         OptionsChanged?.Invoke(_options);
         Relayout();

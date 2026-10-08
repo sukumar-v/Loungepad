@@ -2288,3 +2288,53 @@ Stop the scrolled grid from clipping through the All games header
   wake their PC. A pad that cannot wake a sleeping PC would send them to the desk for the mouse,
   which is the one thing the launcher exists to prevent. The page's fallback for a settings file
   without the key, the mock's defaults and the harness's sleep case all say -1 / set it explicitly.
+
+## Controller input on UAC and the sign-in screen: the input service (1.8.0)
+
+- **The feature is on the branch `secure-desktop-input`** (Oct 8 2026), off main at 75c1660; main has
+  none of it. `docs/INPUT-SERVICE-HANDOFF.md` is the running log and `docs/SECURE-INPUT.md` the design;
+  read both first. Three projects: `Loungepad.Input` (shared, compiles NativeMethods, HidNative,
+  HidGamepadReader and StickPointer from the launcher's tree by source -- the launcher `Compile Remove`s
+  them and references the library), `Loungepad.Service` (LocalSystem, session 0, starts the agent in
+  the console session) and `Loungepad.InputAgent` (SYSTEM with uiAccess, one worker process per
+  desktop). `tests\Loungepad.Input.Tests` is the suite (64 checks) plus opt-in probes;
+  `node --test tests\input-service-ui.test.cjs` is the page's.
+- **The agent moves the pointer on every desktop, from one formula** (`StickPointer`; the user's
+  report of Oct 8 2026: "very jittery, slow on the main desktop and fast on the admin prompts"). It
+  used to be two: the launcher curved the deflection and moved along the stick's direction, the agent
+  curved each axis (41% faster on a diagonal). And on Default every move went `GetCursorPos` + dx
+  through the pipe as an absolute target, so a tick that read the pointer before the last move had
+  landed aimed from a stale base and threw that move away -- slow and uneven for as long as a round
+  trip took, on the one desktop that used the pipe. Now the launcher sends only its policy for the
+  tick (`MovePointer`, `ScrollWheel` on the request, from the mouse branch's `SetPointerPolicy`, read
+  as off once 50 ms old so every `continue` path stops the agent unnamed) and the worker's own 8 ms
+  tick moves the pointer from a fresh capture (`SecureMapper.MovePointer`; touch travel left
+  undrained for the reply). Buttons, keyboard, combos, bindings and the touchpad stay the launcher's.
+- **Protocol fields are optional so the two sides update apart.** The reply's `PointerOwner` is the
+  agent claiming the pointer; an older agent never sends it and the launcher moves the pointer through
+  the pipe as before; an older launcher never asks. A version bump instead would have put the old
+  worker's background mapper and the new launcher's local mapper on the pointer at once. The settings
+  row says the installed service is older while a connected agent does not claim the pointer.
+- **Anything that moves the pointer by a delta goes through `NativeMethods.MoveCursorBy`**: it aims
+  from where the last move was heading while the pointer still sits where it was seen before that
+  move went out (within 100 ms), and keeps the aim inside the virtual screen -- an aim run off the
+  edge by a push would have held the pointer there until the stick brought it all the way back.
+  `TouchpadGestures.MoveCursor` is this; the touchpad still crosses the pipe.
+- **The navigation hook (`GamepadNavigationFilter`, WH_KEYBOARD_LL dropping VK 0xC3-0xDA) is on a
+  thread of its own.** A low-level hook runs on its installing thread within `LowLevelHooksTimeout`,
+  and the worker's dispatcher is what shows the secure keyboard. `--navigation-hook-stall-probe`
+  (opt-in: it injects VK 0xDA, an inert gamepad key, a few times) showed on 26200 that a hook on a
+  thread blocked 1.5 s survived but missed the keys sent during the stall -- Windows navigation
+  would have acted on those -- while the filter on its own thread caught 6 of 6.
+- **To check the installed worker's hook without a pad**: read `SuppressedNavigationEvents` out of
+  `HKLM\SOFTWARE\Loungepad\Input`'s `AgentHealth`, `SendInput` one VK 0xDA down/up with something
+  inert in front, wait for the next heartbeat (1 s), read again: a live hook counts 2 (checked Oct 8
+  2026 on worker 131320, 0 → 2). XInputUWPFix is the same hook, which is the evidence that Windows'
+  controller-to-VK events pass through the chain at all. The counter is not proof of behaviour.
+- **Packaging needs the dist launcher closed** (`package.ps1` deletes `dist\v1.8.0`, which it runs
+  from) and the two scripts sequential (`package-input-service.ps1`, then `package.ps1`; both sign).
+  The service install needs UAC -- `install-input-service.ps1 -SourcePath <package>` in an admin
+  PowerShell keeps the enabled flag and profile -- and the in-app flow only installs from a published
+  release. A `dotnet build` launcher cannot authenticate the installer. The Xbox pad here is paired
+  over Bluetooth LE and shows in no XInput slot unless powered on; the DualSense on USB is what the
+  worker's "controller present" was.

@@ -317,8 +317,15 @@ internal static class NativeMethods
         public INPUTUNION u;
     }
 
-    [DllImport("user32.dll", SetLastError = true)]
-    public static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+    // Set only by the ordinary UI. The desktop agent leaves this unset and calls Windows.
+    public static Func<INPUT[], uint>? InputSink;
+    public static uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize) =>
+        InputSink is { } sink ? sink(pInputs.Take(checked((int)nInputs)).ToArray()) : SendInputNative(nInputs, pInputs, cbSize);
+
+    public static uint SendInputLocal(INPUT[] inputs) => SendInputNative((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+
+    [DllImport("user32.dll", EntryPoint = "SendInput", SetLastError = true)]
+    private static extern uint SendInputNative(uint nInputs, INPUT[] pInputs, int cbSize);
 
     /// <summary>
     /// Put the pointer at an absolute screen position as *injected mouse input*, not with
@@ -357,6 +364,36 @@ internal static class NativeMethods
             },
         };
         SendInput(1, input, Marshal.SizeOf<INPUT>());
+    }
+
+    // Where the last relative move was aimed, and where the pointer was seen before it was sent.
+    private static int _aimX, _aimY, _seenX, _seenY;
+    private static long _aimedAt;
+
+    /// <summary>
+    /// Moves the pointer by a delta: reads where it is and aims an absolute move past it -- unless
+    /// the previous move has not landed yet. With the input service connected a move is a trip
+    /// through the pipe, and a tick that read the position before the last move had arrived aimed
+    /// from a stale base and threw that move away: motion came out slow and uneven for exactly as
+    /// long as the pipe took. So if the pointer still sits where it was seen before the last move
+    /// went out, that move is in flight and this one carries on from where it was heading. Anything
+    /// else that moved the pointer -- a landed move, a real mouse -- is read as the truth. The aim
+    /// is kept inside the virtual screen, or a push against an edge would run the aim off into
+    /// space and the pointer would stay put until the stick had brought it all the way back.
+    /// </summary>
+    public static void MoveCursorBy(int dx, int dy)
+    {
+        if (!GetCursorPos(out var p)) return;
+        bool inFlight = System.Diagnostics.Stopwatch.GetElapsedTime(_aimedAt).TotalMilliseconds < 100
+            && p.X == _seenX && p.Y == _seenY && (_aimX != _seenX || _aimY != _seenY);
+        int baseX = inFlight ? _aimX : p.X, baseY = inFlight ? _aimY : p.Y;
+        if (!inFlight) { _seenX = p.X; _seenY = p.Y; }
+        int vx = GetSystemMetrics(SM_XVIRTUALSCREEN), vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
+        int vw = GetSystemMetrics(SM_CXVIRTUALSCREEN), vh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+        _aimX = vw > 1 ? Math.Clamp(baseX + dx, vx, vx + vw - 1) : baseX + dx;
+        _aimY = vh > 1 ? Math.Clamp(baseY + dy, vy, vy + vh - 1) : baseY + dy;
+        _aimedAt = System.Diagnostics.Stopwatch.GetTimestamp();
+        MoveCursorTo(_aimX, _aimY);
     }
 
     // ---- keyboard injection ----

@@ -13,7 +13,7 @@
     <RootNamespace>Loungepad</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Loungepad.ico</ApplicationIcon>
-    <Version>1.7.2</Version>
+    <Version>1.8.0</Version>
   </PropertyGroup>
 
   <ItemGroup>
@@ -21,6 +21,11 @@
          MessageBox, Point, Color) are WPF's too. TrayIcon imports what it uses. -->
     <Using Remove="System.Windows.Forms" />
     <Using Remove="System.Drawing" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Loungepad.Input\Loungepad.Input.csproj" />
+    <Compile Remove="Interop\NativeMethods.cs;Interop\HidNative.cs;Services\HidGamepadReader.cs;Services\StickPointer.cs" />
   </ItemGroup>
 
   <ItemGroup>
@@ -44,6 +49,8 @@
     <!-- The license and the third-party notices travel inside the one file too, as they did
          beside the exe in the zip. -->
     <EmbeddedResource Include="..\LICENSE;..\NOTICE" LogicalName="shipped\%(Filename)%(Extension)" WithCulture="false" />
+    <EmbeddedResource Include="..\tools\install-input-service.ps1;..\tools\uninstall-input-service.ps1"
+                      LogicalName="shipped\setup\%(Filename)%(Extension)" WithCulture="false" />
     <!-- ApplicationIcon gives the exe its icon; Resource also embeds it so the window itself
          (and therefore Alt-Tab) can use it, since there is no taskbar button to carry one -->
     <Resource Include="Loungepad.ico" />

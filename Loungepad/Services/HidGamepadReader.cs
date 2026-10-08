@@ -39,7 +39,7 @@ internal readonly record struct TouchSample(int Dx, int Dy, double Spread, int F
 /// Xbox pads also appear here as HID devices, marked with "IG_" in their path. Those are left to
 /// XInput, which has the Guide button and the battery; everything else is ours.
 /// </summary>
-internal sealed class HidGamepadReader
+internal sealed class HidGamepadReader : IDisposable
 {
     private readonly object _lock = new();
     private readonly Dictionary<IntPtr, HidPad> _pads = new();
@@ -55,6 +55,22 @@ internal sealed class HidGamepadReader
 
     /// <summary>A pad arrived or left. Raised on the window thread.</summary>
     public event Action<string, string, bool>? PadChanged;
+
+    // Must be called on the registration's window thread, after polling has stopped.
+    public void Dispose()
+    {
+        Unregister();
+        foreach (var reader in _quietReaders) reader.Stop();
+        _quietReaders.Clear();
+        lock (_lock)
+        {
+            foreach (var pad in _pads.Values) pad.Dispose();
+            _pads.Clear();
+            _last = null;
+        }
+        _hwnd = IntPtr.Zero;
+        _quiet = false;
+    }
 
     /// <summary>
     /// Ask for every joystick and gamepad's reports, wherever the input focus is, plus a note
@@ -73,7 +89,7 @@ internal sealed class HidGamepadReader
         };
         if (!HidNative.RegisterRawInputDevices(devices, (uint)devices.Length, (uint)Marshal.SizeOf<HidNative.RAWINPUTDEVICE>()))
         {
-            Log.Info($"HID pads: RegisterRawInputDevices failed ({Marshal.GetLastWin32Error()})");
+            InputLog.Info($"HID pads: RegisterRawInputDevices failed ({Marshal.GetLastWin32Error()})");
             return;
         }
         _registered = true;
@@ -91,6 +107,7 @@ internal sealed class HidGamepadReader
     /// <summary>WM_INPUT_DEVICE_CHANGE: a HID device arrived (wParam 1) or left (2).</summary>
     public void OnDeviceChange(IntPtr wParam, IntPtr lParam)
     {
+        if (!_registered && !_quiet) return;
         if (wParam.ToInt64() == HidNative.GIDC_ARRIVAL) { TryAdd(lParam); return; }
         if (wParam.ToInt64() != HidNative.GIDC_REMOVAL) return;
 
@@ -100,8 +117,13 @@ internal sealed class HidGamepadReader
             if (!_pads.Remove(lParam, out gone)) return;
             if (_last == gone) _last = null;
         }
+        foreach (var reader in _quietReaders.Where(r => r.Pad == gone).ToArray())
+        {
+            reader.Stop();
+            _quietReaders.Remove(reader);
+        }
         gone.Dispose();
-        Log.Info($"HID pad removed: {gone.Name}");
+        InputLog.Info($"HID pad removed: {gone.Name}");
         PadChanged?.Invoke(gone.Layout, gone.Name, false);
     }
 
@@ -129,27 +151,49 @@ internal sealed class HidGamepadReader
         _quiet = quiet;
         if (quiet)
         {
-            var remove = new[]
-            {
-                new HidNative.RAWINPUTDEVICE { usUsagePage = HidNative.USAGE_PAGE_GENERIC, usUsage = HidNative.USAGE_JOYSTICK, dwFlags = HidNative.RIDEV_REMOVE, hwndTarget = IntPtr.Zero },
-                new HidNative.RAWINPUTDEVICE { usUsagePage = HidNative.USAGE_PAGE_GENERIC, usUsage = HidNative.USAGE_GAMEPAD, dwFlags = HidNative.RIDEV_REMOVE, hwndTarget = IntPtr.Zero },
-            };
-            if (_registered && !HidNative.RegisterRawInputDevices(remove, (uint)remove.Length, (uint)Marshal.SizeOf<HidNative.RAWINPUTDEVICE>()))
-                Log.Info($"HID pads: could not drop the Raw Input registration ({Marshal.GetLastWin32Error()})");
-            _registered = false;
+            Unregister();
 
             List<HidPad> pads;
             lock (_lock) pads = _pads.Values.ToList();
             foreach (var pad in pads) _quietReaders.Add(new QuietReader(this, pad));
-            Log.Info($"HID pads: quiet mode, reading {pads.Count} pad(s) directly");
+            InputLog.Info($"HID pads: quiet mode, reading {pads.Count} pad(s) directly");
         }
         else
         {
             foreach (var r in _quietReaders) r.Stop();
             _quietReaders.Clear();
             if (_hwnd != IntPtr.Zero) Register(_hwnd);
-            Log.Info("HID pads: Raw Input registration back");
+            InputLog.Info("HID pads: Raw Input registration back");
         }
+    }
+
+    private void Unregister()
+    {
+        if (!_registered) return;
+        var remove = new[]
+        {
+            new HidNative.RAWINPUTDEVICE { usUsagePage = HidNative.USAGE_PAGE_GENERIC, usUsage = HidNative.USAGE_JOYSTICK, dwFlags = HidNative.RIDEV_REMOVE },
+            new HidNative.RAWINPUTDEVICE { usUsagePage = HidNative.USAGE_PAGE_GENERIC, usUsage = HidNative.USAGE_GAMEPAD, dwFlags = HidNative.RIDEV_REMOVE },
+        };
+        if (!HidNative.RegisterRawInputDevices(remove, (uint)remove.Length, (uint)Marshal.SizeOf<HidNative.RAWINPUTDEVICE>()))
+            InputLog.Info($"HID pads: could not drop the Raw Input registration ({Marshal.GetLastWin32Error()})");
+        _registered = false;
+    }
+
+    // Direct reads remain alive across focus changes and do not reset Windows' idle timer.
+    // Polling the device list also discovers hotplug while Raw Input is unregistered.
+    public void RefreshDirectDevices()
+    {
+        uint count = 0;
+        uint size = (uint)Marshal.SizeOf<HidNative.RAWINPUTDEVICELIST>();
+        if (HidNative.GetRawInputDeviceList(null, ref count, size) == unchecked((uint)-1)) return;
+        var devices = new HidNative.RAWINPUTDEVICELIST[count];
+        uint got = HidNative.GetRawInputDeviceList(devices, ref count, size);
+        if (got == unchecked((uint)-1)) return;
+        var present = devices.Take((int)got).Where(d => d.dwType == HidNative.RIM_TYPEHID).Select(d => d.hDevice).ToHashSet();
+        foreach (var handle in present) TryAdd(handle);
+        foreach (var handle in _pads.Keys.Where(h => !present.Contains(h)).ToArray())
+            OnDeviceChange(new IntPtr(HidNative.GIDC_REMOVAL), handle);
     }
 
     /// <summary>A report read directly from a pad (quiet mode), on that pad's reader thread.</summary>
@@ -176,6 +220,7 @@ internal sealed class HidGamepadReader
     /// </summary>
     private sealed class QuietReader
     {
+        public HidPad Pad => _pad;
         private readonly HidGamepadReader _owner;
         private readonly HidPad _pad;
         private readonly Thread _thread;
@@ -215,7 +260,7 @@ internal sealed class HidGamepadReader
                     IntPtr.Zero, HidNative.OPEN_EXISTING, 0, IntPtr.Zero);
                 if (h.IsInvalid)
                 {
-                    Log.Info($"HID pad: {_pad.Name}: cannot open for a direct read (error {Marshal.GetLastWin32Error()}); it will not wake the launcher");
+                    InputLog.Info($"HID pad: {_pad.Name}: cannot open for a direct read (error {Marshal.GetLastWin32Error()}); it will not wake the launcher");
                     return;
                 }
                 int len = Math.Max(_pad.InputReportLength, 64);
@@ -226,7 +271,7 @@ internal sealed class HidGamepadReader
                     if (!HidNative.ReadFile(h, buf, (uint)len, out uint got, IntPtr.Zero))
                     {
                         int err = Marshal.GetLastWin32Error();
-                        if (!_stop) Log.Info($"HID pad: {_pad.Name}: direct read ended (error {err})");
+                        if (!_stop) InputLog.Info($"HID pad: {_pad.Name}: direct read ended (error {err})");
                         return;
                     }
                     if (got > 0 && !_stop) _owner.OnDirectReport(_pad, buf, got, usages);
@@ -234,7 +279,7 @@ internal sealed class HidGamepadReader
             }
             catch (Exception ex)
             {
-                if (!_stop) Log.Info($"HID pad: {_pad.Name}: direct read failed: {ex.Message}");
+                if (!_stop) InputLog.Info($"HID pad: {_pad.Name}: direct read failed: {ex.Message}");
             }
         }
     }
@@ -253,6 +298,7 @@ internal sealed class HidGamepadReader
     /// hands HID reports here, keyboard and mouse elsewhere).</summary>
     public void OnInputData(byte[] buffer, uint size)
     {
+        if (!_registered) return;
         _buffer = buffer;
         if (BitConverter.ToUInt32(_buffer, 0) != HidNative.RIM_TYPEHID) return;
         var hDevice = (IntPtr)BitConverter.ToInt64(_buffer, 8);
@@ -298,8 +344,10 @@ internal sealed class HidGamepadReader
         }
     }
 
-    /// <summary>What the gamepad thread reads every tick. Reading drains the touchpad travel.</summary>
-    public HidPadSnapshot Snapshot()
+    /// <summary>What the gamepad thread reads every tick. Reading drains the touchpad travel --
+    /// unless the caller only wants the sticks and buttons (the input agent's own pointer tick,
+    /// between two replies to the launcher, which is where the touch travel is going).</summary>
+    public HidPadSnapshot Snapshot(bool drainTouch = true)
     {
         lock (_lock)
         {
@@ -307,9 +355,12 @@ internal sealed class HidGamepadReader
             var p = _last ?? _pads.Values.First();
             var snap = new HidPadSnapshot(true, p.Layout, p.Name, p.InstanceId, p.State, _seq,
                 p.TouchDx, p.TouchDy, p.TouchSpread, p.TouchFingers, p.TouchClick);
-            p.TouchDx = 0;
-            p.TouchDy = 0;
-            p.TouchSpread = 0;
+            if (drainTouch)
+            {
+                p.TouchDx = 0;
+                p.TouchDy = 0;
+                p.TouchSpread = 0;
+            }
             return snap;
         }
     }
@@ -320,11 +371,12 @@ internal sealed class HidGamepadReader
 
         HidPad? pad;
         try { pad = HidPad.Open(hDevice); }
-        catch (Exception ex) { Log.Info($"HID pad: could not open device: {ex.Message}"); return null; }
+        catch (Exception ex) { InputLog.Info($"HID pad: could not open device: {ex.Message}"); return null; }
         if (pad is null) return null;
 
         lock (_lock) _pads[hDevice] = pad;
-        Log.Info($"HID pad: {pad.Name} ({pad.Layout}, VID {pad.Vid:X4} PID {pad.Pid:X4}, {pad.ButtonCount} buttons)");
+        if (_quiet) _quietReaders.Add(new QuietReader(this, pad));
+        InputLog.Info($"HID pad: {pad.Name} ({pad.Layout}, VID {pad.Vid:X4} PID {pad.Pid:X4}, {pad.ButtonCount} buttons)");
         PadChanged?.Invoke(pad.Layout, pad.Name, true);
         return pad;
     }
@@ -419,16 +471,16 @@ internal sealed class HidPad : IDisposable
                 HidNative.FILE_SHARE_READ | HidNative.FILE_SHARE_WRITE, IntPtr.Zero, HidNative.OPEN_EXISTING, 0, IntPtr.Zero);
             if (h.IsInvalid)
             {
-                Log.Info($"HID pad: {name}: cannot open for the full-report switch (error {Marshal.GetLastWin32Error()}); no touchpad over Bluetooth");
+                InputLog.Info($"HID pad: {name}: cannot open for the full-report switch (error {Marshal.GetLastWin32Error()}); no touchpad over Bluetooth");
                 return;
             }
             var buf = new byte[l.FeatureLength];
             buf[0] = l.FeatureReport;
             bool ok = HidNative.HidD_GetFeature(h, buf, (uint)buf.Length);
-            Log.Info(ok ? $"HID pad: {name}: full Bluetooth reports requested"
+            InputLog.Info(ok ? $"HID pad: {name}: full Bluetooth reports requested"
                         : $"HID pad: {name}: full-report switch refused (error {Marshal.GetLastWin32Error()})");
         }
-        catch (Exception ex) { Log.Info($"HID pad: {name}: full-report switch failed: {ex.Message}"); }
+        catch (Exception ex) { InputLog.Info($"HID pad: {name}: full-report switch failed: {ex.Message}"); }
     }
 
     /// <summary>
@@ -514,7 +566,7 @@ internal sealed class HidPad : IDisposable
         if (!_nativeLogged)
         {
             _nativeLogged = true;
-            Log.Info($"HID pad: {Name}: reading full reports (id 0x{r[0]:X2}, {length} bytes; touch bytes {Convert.ToHexString(r, p, 8)})");
+            InputLog.Info($"HID pad: {Name}: reading full reports (id 0x{r[0]:X2}, {length} bytes; touch bytes {Convert.ToHexString(r, p, 8)})");
         }
         return true;
     }

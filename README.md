@@ -10,6 +10,9 @@
   Your games and your whole desktop, driven from the couch with just a controller.
 </p>
 
+Optional UAC and sign-in screen controller support uses a separate signed service and the selected
+Loungepad keyboard. See [setup and architecture](docs/SECURE-INPUT.md). Portable builds work without it.
+
 <p align="center">
   <a href="https://github.com/sukumar-v/Loungepad/releases/latest">
     <img alt="Download Loungepad for Windows"

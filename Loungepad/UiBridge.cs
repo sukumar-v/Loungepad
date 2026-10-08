@@ -370,6 +370,13 @@ public class UiBridge
                 break;
             }
 
+            case "setSecureInput":
+                _ = SetSecureInputAsync(msg["enabled"]?.GetValue<bool>() == true, msg["installConfirmed"]?.GetValue<bool>() == true);
+                break;
+            case "uninstallSecureInput":
+                if (msg["confirmed"]?.GetValue<bool>() == true) _ = UninstallSecureInputAsync();
+                break;
+
             // Every setting back to the value a fresh install would have. Deliberately goes
             // through the same path as a save rather than writing the file directly, so the
             // startup entry and the on-screen keyboard both follow it -- resetting "Launch at
@@ -2484,6 +2491,30 @@ public class UiBridge
 
     // ---- host -> UI pushes ----
 
+    private bool _secureInputBusy;
+    private async Task SetSecureInputAsync(bool enabled, bool installConfirmed)
+    {
+        if (_secureInputBusy) return;
+        _secureInputBusy = true;
+        try { await _window.SetSecureInput(enabled, installConfirmed); PushToast(enabled ? "Secure input enabled for this PC" : "Secure input disabled; the service remains installed"); }
+        catch (InputServiceInstallRequiredException) { Push(new { type = "secureInputInstallRequired" }); }
+        catch (OperationCanceledException) { PushToast("Input service setup cancelled"); }
+        catch (Exception ex) { PushToast($"Secure input: {ex.Message}"); }
+        finally { _secureInputBusy = false; PushSecureInput(); }
+    }
+
+    private async Task UninstallSecureInputAsync()
+    {
+        if (_secureInputBusy) return;
+        _secureInputBusy = true;
+        try { await _window.UninstallSecureInput(); PushToast("Loungepad input service uninstalled"); }
+        catch (OperationCanceledException) { PushToast("Input service uninstall cancelled"); }
+        catch (Exception ex) { PushToast($"Input service: {ex.Message}"); }
+        finally { _secureInputBusy = false; PushSecureInput(); }
+    }
+
+    public void PushSecureInput() => Push(new { type = "secureInput", status = _window.SecureInputStatus });
+
     public void PushState()
     {
         var s = _settings.Settings;
@@ -2494,6 +2525,7 @@ public class UiBridge
             collections = _library.Collections,
             // The keys stay on this side; the page sees only that each is set or not.
             settings = s.ForPage(),
+            secureInput = _window.SecureInputStatus,
             displays = _displays.GetDisplays(),
             startupRegistered = StartupService.IsRegistered(),
             update = _updates.Status,
