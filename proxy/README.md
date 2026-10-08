@@ -10,16 +10,19 @@ secret, and Twitch's own guidance is that the client secret must never be expose
 
 ## What it costs
 
-Cloudflare's free tier covers 100,000 requests a day and 1,000 KV writes a day, and this is
-written to sit well inside that:
+Cloudflare's free tier covers 100,000 requests a day and 100,000 D1 rows written a day. The
+account is on Workers Paid ($5 a month) since Oct 8 2026, which raises both a long way:
 
-- **The launcher asks the proxy about very few games.** Steam titles are resolved by app id
-  straight from Steam, with no key and no proxy involved. Non-Steam games are first looked up
-  against Steam's own keyless search. Only what survives both — Epic and Game Pass exclusives,
-  GOG-only classics, ROMs, itch.io games — reaches this service.
+- **Every new game is two lookups** (`/v1/facts` and `/v1/art`), and a lookup of something nobody
+  has asked about yet is one row written. Nothing else writes: the rate limit is Cloudflare's own
+  binding and costs no storage at all.
 - **Answers are cached for 30 days, shared across every user.** Libraries overlap enormously, so
-  the hundredth person to own a game costs one KV read and no upstream request.
+  the hundredth person to own a game costs one row read and no upstream request.
 - **Misses are cached too**, for 3 days, so a game nobody's database has does not re-ask forever.
+- **ROM collections are the heavy case.** A launcher pointed at a few thousand ROMs asks about every
+  one of them on its first pass. That is what ended the KV cache: on Oct 7-8 2026 one such pass
+  spent KV's 1,000 free writes a day in six minutes and ran on for five hours keeping nothing. D1
+  allows a hundred times that.
 
 The practical ceiling is IGDB's, not Cloudflare's: 4 requests/second across the whole credential,
 shared by everyone. The cache is what keeps you under it.
@@ -56,18 +59,27 @@ Sign in to Cloudflare (opens a browser):
 npx wrangler login
 ```
 
-Create the cache. Note the two names: `loungepad-metadata-cache` is the namespace's title in your
-Cloudflare account, shared with every Worker you ever deploy, so it should be specific.
-`METADATA` is only how this worker's own code refers to it (`env.METADATA`), and is scoped to
-this service.
+Create the cache. Note the two names: `loungepad-metadata-cache` is the database's name in your
+Cloudflare account, shared with every Worker you ever deploy, so it should be specific. `CACHE` is
+only how this worker's own code refers to it (`env.CACHE`), and is scoped to this service.
 
 ```bash
-npx wrangler kv namespace create loungepad-metadata-cache --binding METADATA --config proxy/wrangler.toml
+npx wrangler d1 create loungepad-metadata-cache
 ```
 
-This prints an `id` — paste it into `proxy/wrangler.toml`, replacing
-`PUT_YOUR_KV_NAMESPACE_ID_HERE`. Do this **before** deploying; the placeholder is not a real
-namespace and a deploy carrying it will fail.
+This prints a `database_id`. Paste it into `proxy/wrangler.toml` under `[[d1_databases]]`, then make
+the table (`proxy/migrations/0001_cache.sql`):
+
+```bash
+npx wrangler d1 migrations apply loungepad-metadata-cache --remote --config proxy/wrangler.toml
+```
+
+`wrangler.toml` also binds the KV namespace the cache used to be (`METADATA`), which is only read
+now, until its entries expire (Nov 8 2026). A fresh deployment has no such namespace: delete the
+`[[kv_namespaces]]` block, and the `env.METADATA` fallback in `cacheGet` goes with it.
+
+The rate limit (`[[ratelimits]]`) and the daily clean-up of expired rows (`[triggers]`) need nothing
+created; the deploy sets both up.
 
 Set the three credentials. Each prompts for its value, which is encrypted at rest and never
 written to the repo:
@@ -124,12 +136,15 @@ Settings, but the shipped default is what makes it zero-setup.
 a command is run from anywhere but `proxy/`. Add `--config proxy/wrangler.toml`, as every command
 above does.
 
-**`KV namespace ... is not valid`** — the `kv namespace create` step has not been done, or its id
-was not pasted into `proxy/wrangler.toml`.
+**`no such table: cache`** in the worker's logs — the migration was not applied to the remote
+database. Run the `d1 migrations apply ... --remote` step above.
 
-**You named the namespace something you regret** — `npx wrangler kv namespace list` shows what you
-have, and `npx wrangler kv namespace rename <old-name> <new-name>` fixes it without touching the
-id, so `wrangler.toml` needs no change. The contents are a cache and can be thrown away regardless.
+**Checking what the cache holds** — `npx wrangler d1 execute loungepad-metadata-cache --remote
+--command "SELECT count(*) FROM cache"`. The contents are a cache and can be thrown away regardless.
+
+**Something is using a lot of the quota** — each row's `expires` is when it was written plus 30
+days (an answer) or 3 days (a miss), so grouping the rows by `expires` shows when the writes
+happened. Keys ending `:p<ids>` are ROMs, with the system's IGDB platform ids.
 
 **The worker deploys but `/v1/facts` returns 502** — the credentials are wrong or missing. Check
 them on their own first with `proxy/verify-credentials.ps1`, then confirm all three secrets are
@@ -172,13 +187,11 @@ plain URL characters) before they are written into its page.
 - **Put a contact address in the worker's User-Agent** if you publish widely, so an upstream that
   is unhappy with your traffic can reach you before it revokes the key.
 - **Nothing here is about a person.** A request carries a game's title, its Steam app id and, for a
-  ROM, the IGDB platform ids of its system. KV holds answers keyed on those, the IGDB token, and
-  rate counters keyed on a hash of the client's address and the minute -- never the address
-  itself. Invocation logs are off in `wrangler.toml`, so Workers Logs keeps only the worker's own
-  console lines, which name titles and app ids on failure and nothing else.
-- **The free tier's KV write quota is the service's weak point.** Every cache miss is a write (two
-  with the rate counter), and the free plan allows a thousand a day. A refused write no longer
-  fails the request -- the answer in hand is returned and the counter or cache entry is simply not
-  kept -- but a busy day still means the cache stops growing until midnight UTC. Workers Paid, or
-  Cloudflare's Rate Limiting binding in place of the KV counter, is the next step if the launcher
-  finds an audience.
+  ROM, the IGDB platform ids of its system. The cache holds answers keyed on those, and the IGDB
+  token. The rate limit is keyed on a hash of the client's address, never the address itself, and
+  is counted by Cloudflare, not stored here. Invocation logs are off in `wrangler.toml`, so Workers
+  Logs keeps only the worker's own console lines, which name titles and app ids on failure and
+  nothing else.
+- **A refused cache write does not fail the request.** The answer in hand is returned and the entry
+  is simply not kept (`cache: write failed` in the logs). A rate-limit binding that errors lets the
+  request through. Neither is ever a 502.

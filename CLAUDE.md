@@ -140,8 +140,8 @@ Stop the scrolled grid from clipping through the All games header
   directly, with the user's own Web API key or the Steam sign-in (the token, `access_token=`, for
   GetOwnedGames; the ISteamUserStats calls do not take it at all -- see "Steam achievements" under
   Play sessions). A launcher with neither fetches no Steam achievements. The worker
-  also requires `X-Loungepad-Client: 1` (a speed bump, not a secret), hashes the client IP in its
-  rate-limit keys, fails open when a KV write is refused, caches only 200 and 404, and only steps
+  also requires `X-Loungepad-Client: 1` (a speed bump, not a secret), hashes the client IP for its
+  rate limit, fails open when a cache write or the limiter fails, caches only 200 and 404, and only steps
   down an age-rating shape when IGDB's 400 names `age_ratings`. `invocation_logs` is off.
   **Deploying the worker breaks every build older than this one** (they send no header): ship the
   build first, or in the same sitting.
@@ -232,6 +232,19 @@ Stop the scrolled grid from clipping through the All games header
   version, developer "Tencent Games".
 - The worker's cache key carries a `SCHEMA` constant. Bump it whenever a fetcher's shape
   or picking rules change, or the old answers are served for another 30 days.
+- **The worker's cache is a D1 table, not KV** (`loungepad-metadata-cache`, Oct 8 2026). KV's free
+  tier is 1,000 writes a day, and a miss cost two (the answer and the KV rate counter), so ~250 new
+  games spent the day. On Oct 7-8 one user's pass over a ROM collection several thousand strong
+  did it in six minutes and ran on for five hours keeping nothing; worse, the counter failed open
+  when KV refused it, so the limit was off too. Worked out from the KV keys alone: an entry's
+  expiration minus its TTL is when it was written, and the first write after the midnight-UTC reset
+  at 00:00:01 showed the pass had been running across it. Now: one row per miss (`WITHOUT ROWID`),
+  the limit is Cloudflare's `[[ratelimits]]` binding (no storage), a daily cron deletes expired
+  rows, and KV is read as a fallback until its entries expire (Nov 8 2026; then drop the binding).
+  The account is on Workers Paid since the same day. `node tools\proxy-harness.mjs` is the
+  worker's regression check (node:sqlite as D1, fake KV, limiter and upstreams; 27 checks), and
+  `npx wrangler dev --local --test-scheduled` in `proxy\` checks what it cannot: D1's own SQL (its
+  `?1` placeholders, which node:sqlite reads as names) and the real bindings.
 - Tile art is never cover-cropped. It has the game's name burnt into it, close to the
   edges: a 2.14:1 header.jpg in a 16:9 box lost 18% of its width and REANIMAL lost the
   end of its own name. Polish's tile is cut to 1.75:1 (Steam's capsule exactly) and uses
@@ -1110,7 +1123,7 @@ Stop the scrolled grid from clipping through the All games header
   is not (Steam sells two games named exactly "DOOM").
 - **Every uninstalled game gets the lite metadata pass**, not just Steam's: cover and tile only,
   facts from Steam by title, never the shared service. Five hundred catalogue games through the
-  proxy would be a thousand KV writes on a free tier that allows a thousand a day. The store's own
+  proxy would be a thousand cache writes for games nobody is playing. The store's own
   art (`RemoteCoverUrl`/`RemoteBackdropUrl`, written as `_pf_`) is the last fallback, and it is the
   third name that `KeepBest`, `HasFetchedArt` and `MetadataService` all have to know.
 - `HasFetchedArt` accepts the cover alone for an uninstalled game. Judged on the tile, a Game Pass

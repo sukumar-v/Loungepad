@@ -24,7 +24,7 @@
  *
  * Every request has to carry the launcher's client header (CLIENT_HEADER). It is a speed bump,
  * not a secret -- the value is in the shipped binary -- but it turns away the scrapers and bots
- * that only know the URL before they cost an upstream call or a KV write.
+ * that only know the URL before they cost an upstream call or a cache write.
  *
  * The cache is the whole economy of this service. IGDB allows 4 requests a second across the
  * entire credential -- not per user -- so an uncached proxy would fall over the moment more than
@@ -38,8 +38,8 @@ const MISS_TTL = 60 * 60 * 24 * 3;     // Remember "no match" too, but re-check 
                                        // be added to a database after we first ask for it.
 const SCHEMA = "v7";                   // bump when a fetcher changes shape or its picking (v7: the gallery)
                                        // rules; it is part of every cache key, so stale answers retire
-const RATE_LIMIT = 240;                // requests per IP per window
-const RATE_WINDOW = 60;                // seconds
+const RATE_WINDOW = 60;                // seconds; the MISS_LIMIT period in wrangler.toml, which also
+                                       // holds the limit itself
 // The header every launcher sends (MetadataProxyClient.ClientHeader on the host side).
 const CLIENT_HEADER = "x-loungepad-client";
 const CLIENT_VALUE = "1";
@@ -79,12 +79,19 @@ export default {
       return json({ error: "upstream failed" }, 502);
     }
   },
+
+  // The daily cron in wrangler.toml. KV forgot an expired entry by itself; D1 keeps a row until it
+  // is deleted. Reads already refuse an expired row, so this is only about the table's size.
+  async scheduled(event, env, ctx) {
+    const res = await env.CACHE.prepare("DELETE FROM cache WHERE expires <= ?1").bind(nowSeconds()).run();
+    console.log(`cache: removed ${res.meta.changes} expired entries`);
+  },
 };
 
 /* ---------------------------------------------------------------- serving */
 
 /**
- * Cache-first. A hit costs one KV read and no upstream call at all, which is what keeps this
+ * Cache-first. A hit costs one row read and no upstream call at all, which is what keeps this
  * inside both IGDB's rate limit and a free hosting tier.
  *
  * Keyed on the app id when there is one. Two people who own the same game on Steam share a cache
@@ -98,7 +105,7 @@ async function serve(env, ctx, kind, title, appid, fetcher, request, platform) {
     ? `${kind}:${SCHEMA}:steam:${appid}`
     : `${kind}:${SCHEMA}:${normalise(title)}${platform ? `:p${platform}` : ""}`;
 
-  const cached = await env.METADATA.get(key, { type: "json" });
+  const cached = await cacheGet(env, key);
   if (cached) {
     return cached.miss
       ? json({ error: "no match" }, 404, { "X-Cache": "HIT" })
@@ -106,25 +113,66 @@ async function serve(env, ctx, kind, title, appid, fetcher, request, platform) {
   }
 
   // Rate limited only from here down, where a request is actually about to cost an upstream call.
-  // It used to run on EVERY request, and the counter is a KV write -- so on a free plan's 1,000
-  // writes a day, one person's first scan of a 200-game library spent 400 of them on bookkeeping
-  // for requests the cache was answering for free. The limit exists to protect IGDB's budget, and
-  // a cache hit does not touch it.
+  // The limit exists to protect IGDB's budget, and a cache hit does not touch it.
   if (await rateLimited(request, env))
     return json({ error: "slow down" }, 429, { "Retry-After": String(RATE_WINDOW) });
 
   const data = await fetcher(env, title, appid, platform);
 
   // Written after the response is on its way, so a cache write never delays the caller.
-  ctx.waitUntil(env.METADATA.put(
-    key,
-    JSON.stringify(data ? { data } : { miss: true }),
-    { expirationTtl: data ? CACHE_TTL : MISS_TTL },
-  ));
+  ctx.waitUntil(cachePut(env, key, data ? { data } : { miss: true }, data ? CACHE_TTL : MISS_TTL));
 
   return data
     ? json(data, 200, { "X-Cache": "MISS" })
     : json({ error: "no match" }, 404, { "X-Cache": "MISS" });
+}
+
+/* ------------------------------------------------------------------ cache */
+
+/*
+ * The cache is a D1 table (migrations/0001_cache.sql), not KV, since Oct 8 2026. KV's free tier
+ * allows 1,000 writes a day, and every lookup of something new cost two: the answer, and the rate
+ * counter that used to live beside it. A game is two lookups, so 250 new games spent the day, and
+ * on Oct 7-8 one launcher's pass over a ROM collection several thousand strong ran for five hours,
+ * keeping nothing it learned after the first six minutes. D1 writes are a hundred times that
+ * allowance (and a write here is one row: the table is WITHOUT ROWID, so there is no index to write
+ * as well), and the counter is Cloudflare's now (rateLimited).
+ *
+ * The answers KV already holds are still read when D1 has no row for a key, so the move threw
+ * nothing away. KV is never written any more; its entries expire within 30 days of the last write,
+ * and after Nov 8 2026 the fallback finds nothing and can be deleted with the binding.
+ *
+ * A failed read is a miss, not an outage: the answer is one upstream call away, and the rate limit
+ * is what keeps that from costing IGDB's budget. A failed write is logged and the answer in hand is
+ * returned anyway.
+ */
+const nowSeconds = () => Math.floor(Date.now() / 1000);
+
+async function cacheGet(env, key) {
+  try {
+    const row = await env.CACHE.prepare("SELECT value, expires FROM cache WHERE key = ?1").bind(key).first();
+    // An expired row is a miss, not a reason to look in KV: the KV entry for the key is older.
+    if (row) return row.expires > nowSeconds() ? JSON.parse(row.value) : null;
+  } catch (err) {
+    console.error(`cache: read failed: ${err && err.message}`);
+  }
+  try {
+    return await env.METADATA.get(key, { type: "json" });
+  } catch (err) {
+    console.error(`kv: read failed: ${err && err.message}`);
+    return null;
+  }
+}
+
+async function cachePut(env, key, value, ttl) {
+  try {
+    await env.CACHE.prepare(
+      "INSERT INTO cache (key, value, expires) VALUES (?1, ?2, ?3) " +
+      "ON CONFLICT (key) DO UPDATE SET value = excluded.value, expires = excluded.expires",
+    ).bind(key, JSON.stringify(value), nowSeconds() + ttl).run();
+  } catch (err) {
+    console.error(`cache: write failed: ${err && err.message}`);
+  }
 }
 
 /*
@@ -321,11 +369,13 @@ function pegiOf(hit) {
 const igdbImage = (id, size) => `https://images.igdb.com/igdb/image/upload/t_${size}/${id}.jpg`;
 
 /**
- * Twitch client-credentials token, cached in KV against its own stated lifetime. Without the
- * cache every cold worker would mint a fresh token, and Twitch rate limits that too.
+ * Twitch client-credentials token, cached against its own stated lifetime. Without the cache every
+ * cold worker would mint a fresh token, and Twitch rate limits that too. (KV kept it as a bare
+ * string under "igdb:token", which the JSON read of the fallback cannot take, so it is under a new
+ * key here and the first request after the move mints one.)
  */
 async function igdbToken(env) {
-  const cached = await env.METADATA.get("igdb:token");
+  const cached = await cacheGet(env, "twitch:token");
   if (cached) return cached;
 
   const res = await fetch("https://id.twitch.tv/oauth2/token", {
@@ -343,10 +393,8 @@ async function igdbToken(env) {
   if (!data.access_token) throw new Error("twitch token missing");
 
   // A minute early, so a token cannot expire between our check and IGDB's. The token is in hand
-  // whether or not KV takes it, so a refused write (the day's quota spent) is not a failure.
-  const ttl = Math.max(60, (data.expires_in || 3600) - 60);
-  try { await env.METADATA.put("igdb:token", data.access_token, { expirationTtl: ttl }); }
-  catch (err) { console.error(`kv: token not cached: ${err && err.message}`); }
+  // whether or not the write takes, so a refused one is not a failure (cachePut logs it).
+  await cachePut(env, "twitch:token", data.access_token, Math.max(60, (data.expires_in || 3600) - 60));
   return data.access_token;
 }
 
@@ -429,24 +477,24 @@ const popularityFirst = (a, b) => weight(b) - weight(a);
  * A crude per-IP cap. Not a security boundary -- an IP is cheap to change -- just enough that one
  * broken client cannot burn the whole IGDB budget for everyone else.
  *
- * The key is a hash of the address and the minute, not the address: a client's IP is personal
- * data and has no business sitting in KV in the clear, even for two minutes. And the counter is
- * bookkeeping, so a KV that refuses it (the day's writes spent, or two misses from one address in
- * the same second tripping the one-write-per-key limit) lets the request through rather than
- * failing it: a request whose data is already paid for must not come back 502 over a counter.
+ * Counted by Cloudflare's rate limiting binding (MISS_LIMIT in wrangler.toml), which costs no
+ * writes and keeps its counts per Cloudflare location. It used to be a KV key per address and
+ * minute, one write per miss, and a KV that refused the write let the request through -- so once
+ * the day's writes were spent the limit was off for everyone, exactly when one client was busiest.
+ *
+ * The key is a hash of the address, not the address: a client's IP is personal data and is not
+ * handed to anything that keeps it. A binding that throws lets the request through rather than
+ * failing it, as the counter did: a limit is bookkeeping, not a reason for a 502.
  */
 async function rateLimited(request, env) {
   const ip = request.headers.get("CF-Connecting-IP") || "unknown";
-  const bucket = Math.floor(Date.now() / 1000 / RATE_WINDOW);
-  const key = `rl:${await sha256Hex(`${ip}|${bucket}`)}`;
   try {
-    const count = parseInt(await env.METADATA.get(key) || "0", 10);
-    if (count >= RATE_LIMIT) return true;
-    await env.METADATA.put(key, String(count + 1), { expirationTtl: RATE_WINDOW * 2 });
+    const { success } = await env.MISS_LIMIT.limit({ key: await sha256Hex(ip) });
+    return !success;
   } catch (err) {
-    console.error(`kv: rate counter skipped: ${err && err.message}`);
+    console.error(`ratelimit: skipped: ${err && err.message}`);
+    return false;
   }
-  return false;
 }
 
 async function sha256Hex(text) {
@@ -456,7 +504,7 @@ async function sha256Hex(text) {
 
 function json(body, status = 200, headers = {}) {
   // A hit and a confident miss are both answers about a game and may sit in any cache for as long
-  // as KV keeps them. A refusal, a rate limit or an upstream failure is about this moment and
+  // as ours keeps them. A refusal, a rate limit or an upstream failure is about this moment and
   // must not be held by a shared cache on the way: a 502 cached for an hour is an hour's outage.
   const cache = status === 200 ? `public, max-age=${CACHE_TTL}`
     : status === 404 ? `public, max-age=${MISS_TTL}`
