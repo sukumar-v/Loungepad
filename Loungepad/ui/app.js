@@ -3869,7 +3869,7 @@ function allSettingsRows() {
     () => !!s.keyboardInGame, v => set(() => s.keyboardInGame = v)));
 
   rows.push({ section: "LOUNGEPAD KEYBOARD", cat: "keyboard" });
-  rows.push(sliderRow("Keyboard size", () => s.keyboardScale, 0.6, 1.6, 0.05,
+  rows.push(sliderRow("Keyboard size", () => s.keyboardScale, 0.3, 1.6, 0.05,
     v => set(() => s.keyboardScale = v), v => Math.round(v * 100) + "%",
     "Scales the keys up or down from the size Loungepad picks for the TV. Also the − and + beside the gear on the keyboard"));
   // The same five switches are on the keyboard itself, behind the gear at the right end of its

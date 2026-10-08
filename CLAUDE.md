@@ -1941,7 +1941,7 @@ Stop the scrolled grid from clipping through the All games header
 - **The gear** at the bar's right end swaps the keys for the five switches (`KeyboardLayout.Options`,
   same size as the keys so nothing jumps), and its bar carries − Size n% + beside the gear: the size
   is there because a sixth switch row would make the page taller than the plain keyboard. The steps
-  are a tenth at a time over the Settings slider's 0.6-1.6, raise `ScaleChanged`, and are saved and
+  are a tenth at a time over the Settings slider's 0.3-1.6, raise `ScaleChanged`, and are saved and
   pushed in `keyboardOptions` like the switches (`keyboardScale` rides in it). The harness checks
   them off-screen: options page → Up reaches −, the highlight survives the rebuild, the ends stop. B and Menu go back to the keys there, X/Y/LB/RB/RS type
   nothing. A switch raises `OptionsChanged`; `MainWindow` writes settings.json and the bridge pushes
@@ -1949,6 +1949,21 @@ Stop the scrolled grid from clipping through the All games header
   change on the page would be lost. The settings are `Keyboard{Suggestions,FunctionKeys,NavKeys,
   Numpad,Modifiers}` in AppSettings, CopySettings and the mock.
 - A B badge on the gear sat on top of the icon (the bar is shorter than a key) and was removed.
+- **Small screens** (Oct 8 2026; an AYN Odin 3, 6 inches, streaming the PC through Artemis and
+  VibePollo: "too big even at 60%"). The bottom of the size range is 30% (`ScaleMin`, which the
+  Settings slider, `MainWindow`, `CopySettings` and the keyboard's own steps all use), and the
+  smallest key is 16 DIPs (`MinKeySize`): the old floor of 28 was what 60% already came to on a
+  720p display, so going lower there would have changed nothing. The frame's padding and corner
+  follow the keys (`min(18, key × 0.28)`), or a small board was mostly border. Measured in the
+  harness, plain keyboard, 1080p at 100%: 28% × 28% of the screen at 60% before, 14% × 12% at 30%
+  now; 720p 32% × 32% before, 18% × 15% now. At high Windows scaling the 16-DIP floor is what
+  stops it (a 1080p display at 250%: 29% × 25%).
+- **With word suggestions off there is no bar**: it was a strip as tall as most of a key holding
+  nothing but the gear. Row 0 is still row 0 to `KeyboardLayout` and to navigation, but the window
+  draws it in the grab bar's line (`BarInGrip`): the grip stops where the bar's keys start
+  (`Grip.Margin.Right`), the board is pulled up by the grip's height (`Board.Margin.Top`), and on the
+  options page the grip's title becomes "Keyboard options". Both pages do it, so opening the options
+  still never changes the height. About 11% of the height comes back.
 - **Hover is MouseMove on the root, not each key's MouseEnter.** WPF raises MouseEnter for a key
   BUILT under a pointer that has not moved, so every rebuild dragged the D-pad's highlight to wherever
   the hidden cursor was parked. MouseMove has the position guard.

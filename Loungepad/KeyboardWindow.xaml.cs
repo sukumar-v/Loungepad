@@ -101,8 +101,14 @@ public partial class KeyboardWindow : Window
     /// the owner saves it. Settings → Keyboard → Keyboard size is the same number.</summary>
     public event Action<double>? ScaleChanged;
 
-    // The Settings slider's range; the keyboard's own steps are coarser, a tenth at a time.
-    public const double ScaleMin = 0.6, ScaleMax = 1.6, ScaleStep = 0.1;
+    // The Settings slider's range; the keyboard's own steps are coarser, a tenth at a time. The
+    // bottom was 60%, which on a 6-inch handheld streaming the PC was still a third of the screen.
+    public const double ScaleMin = 0.3, ScaleMax = 1.6, ScaleStep = 0.1;
+
+    /// <summary>The smallest key, in DIPs, whatever the size and the display. It was 28, which is
+    /// what the bottom of the range already came to on a 720p display: below that, the setting
+    /// changed nothing. At 16 a letter is still about two thirds the height of Windows' own text.</summary>
+    private const double MinKeySize = 16;
 
     public KeyboardWindow()
     {
@@ -325,7 +331,7 @@ public partial class KeyboardWindow : Window
     private void SizeKeys()
     {
         if (_display is not { } d) return;
-        _keySize = Math.Round(Math.Clamp(d.Height / _displayScale * 0.058 * _scale, 28, 150));
+        _keySize = Math.Round(Math.Clamp(d.Height / _displayScale * 0.058 * _scale, MinKeySize, 150));
         _gap = Math.Round(Math.Max(2, _keySize * 0.10));
     }
 
@@ -343,8 +349,8 @@ public partial class KeyboardWindow : Window
             double w = Root.ActualWidth, h = Root.ActualHeight;
             if (w <= 0 || h <= 0) return;
             double f = Math.Min(d.Width / _displayScale * 0.96 / w, d.Height / _displayScale * 0.7 / h);
-            if (f >= 1 || _keySize <= 24) return;
-            _keySize = Math.Max(24, Math.Floor(_keySize * f));
+            if (f >= 1 || _keySize <= MinKeySize) return;
+            _keySize = Math.Max(MinKeySize, Math.Floor(_keySize * f));
             _gap = Math.Round(Math.Max(2, _keySize * 0.10));
             Build();
             UpdateLayout();
@@ -385,10 +391,23 @@ public partial class KeyboardWindow : Window
     // ---- building the board ----
 
     private double Unit => _keySize + _gap;
-    private double BarHeight => Math.Round(_keySize * 0.8);
 
-    /// <summary>Top of a row. The bar is shorter than a key and stands a little apart from them.</summary>
-    private double RowTop(int row) => row == 0 ? 0 : BarHeight + Math.Round(_gap * 1.6) + (row - 1) * Unit;
+    /// <summary>
+    /// With word suggestions off, the bar would be a strip with nothing in it but the gear (and on
+    /// the options page the size steps), as tall as most of a key. It goes, and they move up into
+    /// the line the grab bar is on, at its right end. Both pages do it, so opening the options
+    /// still never changes the keyboard's height.
+    /// </summary>
+    private bool BarInGrip => !_options.Suggestions;
+
+    private double GripHeight => Math.Round(_keySize * (BarInGrip ? 0.56 : 0.44));
+    private double GripGap => Math.Round(_keySize * 0.10);
+    private double BarHeight => BarInGrip ? GripHeight : Math.Round(_keySize * 0.8);
+
+    /// <summary>Top of a row. The bar is shorter than a key and stands a little apart from them;
+    /// in the grab bar's line, it is as far from them as the grab bar is.</summary>
+    private double RowTop(int row) =>
+        row == 0 ? 0 : BarHeight + (BarInGrip ? GripGap : Math.Round(_gap * 1.6)) + (row - 1) * Unit;
 
     private void Build()
     {
@@ -398,31 +417,50 @@ public partial class KeyboardWindow : Window
         _barNote = null;
         _sizeValue = null;
 
-        Grip.Height = Math.Round(_keySize * 0.44);
-        Grip.Margin = new Thickness(0, 0, 0, Math.Round(_keySize * 0.10));
-        GripTitle.FontSize = Math.Round(_keySize * 0.20);
-        GripBar.Width = Math.Round(_keySize * 1.4);
-        GripBar.Height = Math.Max(3, Math.Round(_keySize * 0.06));
+        // The frame keeps to the keys' proportions, so a small keyboard is not mostly border.
+        double pad = Math.Min(18, Math.Round(_keySize * 0.28));
+        Root.Padding = new Thickness(pad);
+        Root.CornerRadius = new CornerRadius(pad);
 
         Board.Width = _layout.Width * Unit - _gap;
         Board.Height = RowTop(_layout.Rows) - _gap;
 
-        // With no suggestion slots the bar says why: this is the options page, or suggestions are off.
-        if (!_layout.Slots.Any(s => s.Key.Action == KeyAction.Suggestion))
+        Grip.Height = GripHeight;
+        GripTitle.FontSize = Math.Round(_keySize * 0.20);
+        GripBar.Width = Math.Round(_keySize * 1.4);
+        GripBar.Height = Math.Max(3, Math.Round(_keySize * 0.06));
+        if (BarInGrip)
+        {
+            // The grab bar stops where the bar's keys start, and the board is pulled up so its
+            // first row lies in the same line. The grip is never under a key: a press there is
+            // the key's, not the start of a drag.
+            double barFrom = _layout.Slots.Where(s => s.Row == 0).Min(s => s.X);
+            Grip.Margin = new Thickness(0, 0, (_layout.Width - barFrom) * Unit, GripGap);
+            Board.Margin = new Thickness(0, -(GripHeight + GripGap), 0, 0);
+            GripTitle.Text = _optionsPage ? "Keyboard options" : "Loungepad Keyboard";
+        }
+        else
+        {
+            Grip.Margin = new Thickness(0, 0, 0, GripGap);
+            Board.Margin = new Thickness(0);
+            GripTitle.Text = "Loungepad Keyboard";
+        }
+
+        // On the options page the bar says what this is, short of the size steps. In the grab bar's
+        // line there is no room, and the title says it instead.
+        if (_optionsPage && !BarInGrip)
         {
             _barNote = new TextBlock
             {
-                Text = _optionsPage ? "Keyboard options" : "Word suggestions are off",
+                Text = "Keyboard options",
                 FontSize = Math.Round(_keySize * 0.26),
                 FontFamily = TextFont,
                 Foreground = NoteInk,
                 VerticalAlignment = VerticalAlignment.Center,
             };
-            // On the options page the note stops short of the size steps.
-            double noteCols = _optionsPage ? KeyboardLayout.SizeDownX(_layout.Width) : _layout.Width - 1;
             Board.Children.Add(new Border
             {
-                Width = Math.Max(0, noteCols * Unit - _gap),
+                Width = Math.Max(0, KeyboardLayout.SizeDownX(_layout.Width) * Unit - _gap),
                 Height = BarHeight,
                 Padding = new Thickness(Math.Round(_keySize * 0.2), 0, 0, 0),
                 Child = _barNote,
@@ -520,9 +558,12 @@ public partial class KeyboardWindow : Window
                 // One glyph -- a letter, a digit, an arrow -- gets the character size; at the
                 // word-key size an arrow reads as a speck.
                 bool glyph = key.Action == KeyAction.Char || key.Lower.Length == 1;
+                double size = glyph ? _keySize * 0.42 : _keySize * 0.26;
+                // The size steps in the grab bar's line are shorter than the bar they usually sit in.
+                if (s.Row == 0) size = Math.Min(size, BarHeight * 0.6);
                 s.Label = new TextBlock
                 {
-                    FontSize = glyph ? _keySize * 0.42 : _keySize * 0.26,
+                    FontSize = size,
                     FontFamily = KeyFont,
                     HorizontalAlignment = HorizontalAlignment.Center,
                     VerticalAlignment = VerticalAlignment.Center,

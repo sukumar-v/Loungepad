@@ -1929,7 +1929,7 @@ public class UiBridge
         t.KeyboardToggleHoldMs = Math.Clamp(s.KeyboardToggleHoldMs, 200, 2000);
         t.KeyboardInGame = s.KeyboardInGame;
         t.KeyboardApp = s.KeyboardApp;
-        t.KeyboardScale = Math.Clamp(s.KeyboardScale, 0.6, 1.6);
+        t.KeyboardScale = Math.Clamp(s.KeyboardScale, KeyboardWindow.ScaleMin, KeyboardWindow.ScaleMax);
         t.KeyboardSuggestions = s.KeyboardSuggestions;
         t.KeyboardFunctionKeys = s.KeyboardFunctionKeys;
         t.KeyboardNavKeys = s.KeyboardNavKeys;

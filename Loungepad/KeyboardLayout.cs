@@ -265,7 +265,9 @@ internal sealed class KeyboardLayout
 
     /// <summary>
     /// The suggestion slots, evenly across the board, and the gear in the last column. With
-    /// suggestions off the gear stands alone; it is still how they are turned back on.
+    /// suggestions off the gear stands alone; it is still how they are turned back on. The window
+    /// then draws this row in the grab bar's line rather than as a strip of its own, but to
+    /// navigation it is the same row 0.
     /// </summary>
     private void AddBar(bool suggestions)
     {

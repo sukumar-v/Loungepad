@@ -966,7 +966,7 @@ public partial class MainWindow : Window
         var target = (_settings.Settings.TvDeviceName is { } name ? _displays.GetDisplay(name) : null)
                      ?? _displays.GetDisplays().FirstOrDefault(d => d.IsPrimary);
         if (target is not null)
-            _kb.ShowOn(target, Math.Clamp(_settings.Settings.KeyboardScale, 0.6, 1.6), KeyboardOptions.From(_settings.Settings));
+            _kb.ShowOn(target, Math.Clamp(_settings.Settings.KeyboardScale, KeyboardWindow.ScaleMin, KeyboardWindow.ScaleMax), KeyboardOptions.From(_settings.Settings));
         // Hand the pad over. Nothing else can read it until the keyboard closes, which is what
         // makes A "press this key" rather than "launch the highlighted game".
         _gamepad.KeyboardOwnsPad = true;
