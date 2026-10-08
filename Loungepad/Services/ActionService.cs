@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO;
+using System.Numerics;
 using System.Text;
 using System.Text.Json;
 using Loungepad.Interop;
@@ -566,63 +567,171 @@ internal class ActionService
 
     // ---- bindings, on the pad thread ----
 
+    /// <summary>
+    /// How long a button waits when it is also the start of a longer binding -- LB alone when
+    /// "LB + RB" exists too -- for the rest of the chord to land. Two thumbs on two shoulder
+    /// buttons arrive a few polls apart. Let go sooner, the short binding fires on the release;
+    /// a button that starts no longer binding fires on its press, as it always has.
+    /// </summary>
+    private const int ChordWindowMs = 100;
+
+    /// <summary>The window in front and the program behind a window. Replaceable so a harness can
+    /// fake the foreground changing under a held chord, which is what Win+D and Alt+Tab do.</summary>
+    public Func<IntPtr> Foreground = NativeMethods.GetForegroundWindow;
+    public Func<IntPtr, string> ExeOfWindow = ExeOf;
+
     private IntPtr _fgHwnd;
     private Snapshot? _fgSnapshot;
     private ActionApp? _fgApp;
-    private readonly HashSet<string> _satisfied = new();
+    /// <summary>What was held at the last poll, as <see cref="GamepadService.HeldMask"/> writes it.</summary>
+    private uint _prevHeld;
+    /// <summary>The buttons of the last binding that fired, or of a press that was swallowed. No
+    /// binding using any of them fires again until every one of them is let go.</summary>
+    private uint _latched;
+    /// <summary>A binding held back for <see cref="ChordWindowMs"/> because more buttons would make
+    /// it a longer one.</summary>
+    private Binding? _pending;
+    private long _pendingSince;
+    /// <summary>Set when the pad stops being a desktop device: whatever is still held when it comes
+    /// back was pressed for something else, and is latched rather than fired.</summary>
+    private bool _resync = true;
 
     /// <summary>
     /// Called once per poll while the pad is a desktop device: the launcher not in front, no
     /// focused game, the on-screen keyboard not driving. Fires the binding that the pad state has
-    /// just completed and returns the mask of buttons it used, so the same press is not also a
-    /// mouse click. <paramref name="spent"/> is what the loop already spent this poll (the keyboard
-    /// toggle); <paramref name="reserved"/> the menu and screenshot combos, which always win.
+    /// just completed and returns the mask of buttons it used (or is holding back), so the same
+    /// press is not also a mouse click. <paramref name="spent"/> is what the loop already spent
+    /// this poll (the keyboard toggle); <paramref name="reserved"/> the menu and screenshot combos,
+    /// which always win; <paramref name="now"/> the loop's clock in milliseconds.
+    ///
+    /// A press fires one binding, once. The rules are all about buttons, never about which
+    /// binding was satisfied: they used to be, keyed per app, and a foreground change forgot
+    /// them -- so a chord whose shortcut moves the foreground (Win+D, Alt+Tab) fired again in
+    /// the window it brought up, and again on the way back, for as long as it was held.
     /// </summary>
-    public ushort Evaluate(in NativeMethods.XINPUT_GAMEPAD pad, ushort spent, IReadOnlyList<ushort> reserved)
+    public ushort Evaluate(in NativeMethods.XINPUT_GAMEPAD pad, ushort spent, IReadOnlyList<uint> reserved, long now)
     {
         var snap = _snapshot;
-        var fg = NativeMethods.GetForegroundWindow();
+        uint held = GamepadService.HeldMask(pad);
+        if (_resync)
+        {
+            _resync = false;
+            _prevHeld = held;
+            _latched = held;
+            _pending = null;
+        }
+
+        var fg = Foreground();
         if (fg != _fgHwnd || !ReferenceEquals(snap, _fgSnapshot))
         {
             _fgHwnd = fg;
             _fgSnapshot = snap;
-            _fgApp = snap.ForExe(ExeOf(fg));
-            _satisfied.Clear();
+            _fgApp = snap.ForExe(ExeOfWindow(fg));
+            // What fired stays fired across the change: it is still latched. A press still
+            // waiting for the rest of its chord has not done anything yet, so it is judged
+            // again, as if it had just landed, against the new window's bindings.
+            if (_pending is not null) { _prevHeld &= ~_pending.Mask; _pending = null; }
         }
 
-        Binding? fire = null;
-        var nowSatisfied = new List<string>();
-        foreach (var b in snap.BindingsFor(_fgApp))
+        uint pressed = held & ~_prevHeld;
+        _prevHeld = held;
+        if ((held & _latched) == 0) _latched = 0;
+
+        var bindings = snap.BindingsFor(_fgApp);
+        // A menu or screenshot combo held right now: whatever its press completed belongs to it.
+        uint reservedHeld = 0;
+        foreach (var r in reserved)
+            if ((held & r) == r) reservedHeld |= r;
+
+        // The binding this poll's presses completed: all of its buttons down, one of them new.
+        // The longest one wins, so "LB + Y" beats the "Y" that completed it.
+        Binding? best = null;
+        foreach (var b in bindings)
         {
-            if (!GamepadService.ComboPressed(pad, b.Combo)) continue;
-            nowSatisfied.Add(b.Key);
-            if (_satisfied.Contains(b.Key)) continue;               // held since last time
+            if ((held & b.Mask) != b.Mask || (b.Mask & pressed) == 0) continue;
             if ((b.Mask & spent) != 0) continue;                    // the loop spent this press
-            if (b.Mask != 0 && reserved.Any(r => r == b.Mask)) continue;
-            if (fire is null || b.Parts > fire.Parts) fire = b;     // the longest chord wins
+            if (reserved.Any(r => r == b.Mask)) continue;
+            if (best is null || b.Parts > best.Parts) best = b;
         }
-        _satisfied.Clear();
-        foreach (var k in nowSatisfied) _satisfied.Add(k);
-        if (fire is null) return 0;
 
-        // Everything the chord holds counts as satisfied now, so "Y" does not fire on the same
-        // press that completed "LB + Y".
-        foreach (var b in snap.BindingsFor(_fgApp))
-            if ((b.Mask & fire.Mask) != 0) _satisfied.Add(b.Key);
+        uint taken = 0;
+        bool growing = false;
+        if (_pending is { } p)
+        {
+            if ((p.Mask & reservedHeld) != 0)
+            {
+                // It was the start of the menu or screenshot combo.
+                _latched |= p.Mask | reservedHeld;
+                _pending = null;
+                taken |= p.Mask;
+            }
+            else if (best is not null && (best.Mask & p.Mask) == p.Mask)
+            {
+                // The rest of the chord landed: the longer binding replaces the waiting one, and
+                // waits on in turn (from the same start) if it is the start of a longer one still.
+                _pending = null;
+                growing = true;
+            }
+            else if ((held & p.Mask) != p.Mask || now - _pendingSince >= ChordWindowMs || best is not null)
+            {
+                // Let go (a tap), held past the window, or something else was pressed: no chord.
+                _pending = null;
+                taken |= Fire(p);
+            }
+            else taken |= p.Mask;   // still waiting
+        }
 
+        if (best is not null)
+        {
+            if ((best.Mask & (_latched | reservedHeld)) != 0)
+            {
+                // Completed while a chord that already fired is still held, or as part of the menu
+                // or screenshot combo: swallowed, and its buttons wait to be let go like the rest.
+                _latched |= best.Mask;
+                taken |= best.Mask;
+            }
+            else if (_pending is null && CanGrow(best, bindings, reserved))
+            {
+                _pending = best;
+                if (!growing) _pendingSince = now;
+                taken |= best.Mask;
+            }
+            else taken |= Fire(best);
+        }
+        return (ushort)(taken & 0xFFFF);
+    }
+
+    /// <summary>Whether another binding, or the menu or screenshot combo, holds every button this
+    /// one does and more, so pressing on could still turn it into that.</summary>
+    private static bool CanGrow(Binding b, IEnumerable<Binding> bindings, IReadOnlyList<uint> reserved)
+    {
+        foreach (var o in bindings)
+            if (o.Mask != b.Mask && (o.Mask & b.Mask) == b.Mask && !reserved.Any(r => r == o.Mask)) return true;
+        foreach (var r in reserved)
+            if (r != b.Mask && (r & b.Mask) == b.Mask) return true;
+        return false;
+    }
+
+    private uint Fire(Binding b)
+    {
+        _latched |= b.Mask;
         try
         {
-            SendKeys(fire.Keys);
-            Log.Info($"Action: {fire.Combo} → {fire.Keys} ({fire.Name}) in {(_fgApp?.Name ?? "no app")}");
+            SendKeys(b.Keys);
+            Log.Info($"Action: {b.Combo} → {b.Keys} ({b.Name}) in {(_fgApp?.Name ?? "no app")}");
         }
-        catch (Exception ex) { Log.Info($"Action {fire.Name} failed: {ex.Message}"); }
-        return fire.Mask;
+        catch (Exception ex) { Log.Info($"Action {b.Name} failed: {ex.Message}"); }
+        return b.Mask;
     }
 
     /// <summary>Forget the held chords: called when the pad stops being a desktop device.</summary>
-    public void ResetBindings() => _satisfied.Clear();
+    public void ResetBindings()
+    {
+        _resync = true;
+        _pending = null;
+    }
 
-    private sealed record Binding(string Key, string Combo, ushort Mask, int Parts, string Keys, string Name);
+    private sealed record Binding(string Combo, uint Mask, int Parts, string Keys, string Name);
 
     /// <summary>The resolved apps plus their bindings, built once per edit and read without locks.</summary>
     private sealed class Snapshot
@@ -640,8 +749,9 @@ internal class ActionService
                 foreach (var exe in app.Exes) _byExe.TryAdd(exe, app);
                 _bindings[app.Id] = app.Actions
                     .Where(a => !string.IsNullOrEmpty(a.Button) && !IsReservedButton(a.Button) && ShortcutKeys.IsValid(a.Keys))
-                    .Select(a => new Binding(app.Id + "/" + a.Id, a.Button!, GamepadService.ComboMask(a.Button),
-                        a.Button!.Split('+').Length, a.Keys, a.Name))
+                    .Select(a => (a, mask: GamepadService.ChordMask(a.Button)))
+                    .Where(x => x.mask != 0)
+                    .Select(x => new Binding(x.a.Button!, x.mask, BitOperations.PopCount(x.mask), x.a.Keys, x.a.Name))
                     .ToArray();
             }
             _everywhere = _bindings.TryGetValue(ActionPacks.EverywhereId, out var e) ? e : Array.Empty<Binding>();

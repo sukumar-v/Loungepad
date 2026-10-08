@@ -1826,10 +1826,24 @@ Stop the scrolled grid from clipping through the All games header
 - **Bindings live in the pad loop's desktop branch** (`ActionService.Evaluate`, 125 Hz): launcher
   not in front, service active, keyboard not driving. The loop resets them on every other path.
   The foreground app is cached per hwnd; Store apps resolve through the `Windows.UI.Core.CoreWindow`
-  child because the frame host owns the top-level window. Chords: the longest newly satisfied
-  binding fires and every binding sharing a button with it is marked satisfied, so Y does not fire
-  on the press that completed LB + Y. A button a binding took is added to `modalTaken` so it is
-  not also a click.
+  child because the frame host owns the top-level window. Chords: the longest binding a poll's
+  presses complete fires, so Y does not fire on the press that completed LB + Y. A button a
+  binding took is added to `modalTaken` so it is not also a click.
+- **A chord fires once, and the rules are about buttons, not bindings** (Oct 8 2026, the user's
+  report: Show desktop on LB + RB "switches apps too quickly"). The held state used to be a set of
+  per-app binding keys, cleared on every foreground change -- and Win+D changes the foreground,
+  so a held chord fired again in the window it brought up, and again on the way back: the desktop
+  and the windows flipping for as long as it was held. Now: whatever fired is `_latched` by mask
+  until every one of its buttons is up, across any foreground change, and nothing that uses one of
+  them fires meanwhile (a one-poll bounce cannot refire it). A binding that is the start of a
+  longer one, or of the menu or screenshot combo (LB alone in Firefox when Everywhere has
+  LB + RB), waits `ChordWindowMs` (100) for the rest and fires on the release if let go sooner;
+  any other binding still fires on its press. Whatever is held when the pad comes back to the
+  desktop (`ResetBindings`) is latched, not fired. Masks are `GamepadService.ChordMask` /
+  `HeldMask`, with the triggers as bits 16 and 17: the old 16-bit masks dropped them, so a menu
+  combo of LT + RT + LB + RB reserved plain LB + RB too. Scratch harness (Loungepad.dll by
+  reflection, `Foreground`/`ExeOfWindow`/`SendKeys` replaced, a fake 8 ms clock, the real log held
+  shut): 32 traces plus 16 randomised runs of 50 chords; the old code failed 7 of the first 14.
 - **The system wins over a binding, always**: a press the keyboard toggle spent (`toggleFired` on
   this press), the menu combo and the screenshot combo (`ReservedCombos`) never reach a binding,
   and A, B and Guide on their own are never one (`IsReservedButton`; the page refuses them at

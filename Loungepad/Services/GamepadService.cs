@@ -671,7 +671,7 @@ internal class GamepadService : IDisposable
                 {
                     ushort spent = (ushort)(modalTaken | (toggleFired && (pressed & toggleMask) != 0 ? toggleMask : 0)
                                             | (sharePressed ? shareMask : 0));
-                    actionTaken = acts.Evaluate(in state.Gamepad, spent, ReservedCombos(s));
+                    actionTaken = acts.Evaluate(in state.Gamepad, spent, ReservedCombos(s), now);
                 }
                 else Actions?.ResetBindings();
                 modalTaken |= actionTaken;
@@ -901,14 +901,14 @@ internal class GamepadService : IDisposable
         return true;
     }
 
-    /// <summary>The menu and screenshot combos as masks, so a binding equal to one never fires.
-    /// Rebuilt only when the settings change: this is asked on every poll.</summary>
-    private (string? Min, string? Shot, ushort[] Masks) _reserved;
-    private ushort[] ReservedCombos(AppSettings s)
+    /// <summary>The menu and screenshot combos as masks (<see cref="ChordMask"/>), so a binding equal
+    /// to one never fires. Rebuilt only when the settings change: this is asked on every poll.</summary>
+    private (string? Min, string? Shot, uint[] Masks) _reserved;
+    private uint[] ReservedCombos(AppSettings s)
     {
         if (_reserved.Masks is null || _reserved.Min != s.MinimizeCombo || _reserved.Shot != s.ScreenshotCombo)
             _reserved = (s.MinimizeCombo, s.ScreenshotCombo,
-                new[] { ComboMask(s.MinimizeCombo), ComboMask(s.ScreenshotCombo) }.Where(m => m != 0).ToArray());
+                new[] { ChordMask(s.MinimizeCombo), ChordMask(s.ScreenshotCombo) }.Where(m => m != 0).ToArray());
         return _reserved.Masks;
     }
 
@@ -943,16 +943,35 @@ internal class GamepadService : IDisposable
         (NativeMethods.XINPUT_GAMEPAD_DPAD_RIGHT, "Right"),
     };
 
-    /// <summary>Mask for a "A + B" style combo string; 0 when disabled or unparseable.</summary>
-    public static ushort ComboMask(string? combo)
+    /// <summary>The triggers' bits in <see cref="ChordMask"/> and <see cref="HeldMask"/>, above the
+    /// sixteen XInput uses. Without them "LT + RT + LB + RB" and "LB + RB" were the same mask, so
+    /// a binding on LB + RB was refused as the menu combo when the combo was the four-button one.</summary>
+    internal const uint LeftTriggerBit = 1u << 16, RightTriggerBit = 1u << 17;
+
+    /// <summary>Mask for a "LT + A" style combo string, triggers included; 0 when disabled or when
+    /// any part is unknown (such a combo could never be pressed).</summary>
+    internal static uint ChordMask(string? combo)
     {
         if (string.IsNullOrWhiteSpace(combo) || combo.Equals("Off", StringComparison.OrdinalIgnoreCase))
             return 0;
-        ushort mask = 0;
+        uint mask = 0;
         foreach (var part in combo.Split('+', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-            mask |= ButtonMask(part);
+        {
+            uint m = part.Equals("LT", StringComparison.OrdinalIgnoreCase) ? LeftTriggerBit
+                   : part.Equals("RT", StringComparison.OrdinalIgnoreCase) ? RightTriggerBit
+                   : ButtonMask(part);
+            if (m == 0) return 0;
+            mask |= m;
+        }
         return mask;
     }
+
+    /// <summary>What is held, in <see cref="ChordMask"/>'s bits: a trigger counts past the same
+    /// threshold <see cref="ComboPressed"/> uses.</summary>
+    internal static uint HeldMask(in NativeMethods.XINPUT_GAMEPAD pad) =>
+        pad.wButtons
+        | (pad.bLeftTrigger >= TriggerThreshold ? LeftTriggerBit : 0)
+        | (pad.bRightTrigger >= TriggerThreshold ? RightTriggerBit : 0);
 
     /// <summary>Every button a combo, a binding or a recording may hold: all of them but the
     /// share bit, which is a screenshot and nothing else.</summary>
