@@ -306,9 +306,21 @@ Service ZIP SHA-256: `2659A60B413E4EE201ACA1DCC34B85FE602AA60DDB58A8A8854A564B36
 New agent exe SHA-256: `B0336553B688B77AFC6AD2C5BFB850319EAE0EEFF978C01474D0BC341384B68E`
 (the installed one starts `83504FAD5A7C52A1`; both report file version 1.8.0.0, so the hash is
 how to tell them apart). Every binary and the catalog in the new package verified: signature
-Valid with a timestamp, `Test-FileCatalog` Valid. **The new service package is NOT installed
-yet** (needs UAC): the installed worker is still the 17:26 build, which does not claim the
-pointer, so a new launcher against it moves the pointer through the pipe as before.
+Valid with a timestamp, `Test-FileCatalog` Valid. **The new service package is NOT installed**:
+the signed installer was started elevated from that folder at 18:26 and the UAC prompt was
+cancelled by the user (Win32 1223), so the installed worker is still the 17:26 build, which does
+not claim the pointer, and the new launcher against it moves the pointer through the pipe as
+before. While the prompt was up the old service put a fresh worker on Winlogon (pid 129840,
+controller present, ready, no error) and came back to Default when it closed. To install when
+wanted, in an administrator PowerShell:
+
+```powershell
+cd 'C:\Users\Sukumar\Projects\Windows\Loungepad\artifacts\input-service\ae79aa8ac9fd4caf98710160132e5b8b\package'
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install-input-service.ps1 -SourcePath .
+```
+
+It keeps the enabled flag and the profile. The running launcher reconnects on its own and the
+settings row stops saying the service is older.
 Launcher SHA-256: `5FBFA8FD2E3D5DF033741C047E83D74A35DBEBCD61079AC014C0B45C04200AF9`.
 Launcher ZIP SHA-256: `624E71A8909FEBE56CCD26C700665FAC45E188A92FBCD70BEB41FBAE8D680BF8`.
 Launcher signature Valid with a timestamp, file version 1.8.0.0, 29 shipped files embedded.
