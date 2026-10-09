@@ -2534,9 +2534,13 @@ Stop the scrolled grid from clipping through the All games header
 ## Add-ons: community themes and extensions (1.9.0)
 
 - **Built on the branch `community-addons`** (Oct 9 2026, off main at dfccd9c). `docs/ADDONS.md` is
-  the design and the author's guide; read it first. The seed of the separate repository the user
-  will maintain is `addons-repo/` (README, `index.json`, `tools/build-index.mjs`, the workflow,
-  `extensions/howlongtobeat`); nothing in the launcher's build reads it.
+  the design and the author's guide; read it first. The add-ons themselves live in
+  `github.com/sukumar-v/loungepad-addons` (public, created Oct 9 2026; checked out beside this repo
+  as `..\loungepad-addons`). Its `.gitattributes` pins LF: `index.json` hashes the bytes
+  raw.githubusercontent serves, and this PC's `core.autocrlf=true` would otherwise hash CRLF
+  copies on the next checkout. Commits there need the noreply address
+  (`38338592+sukumar-v@users.noreply.github.com`, set in that repo's config): GitHub refuses a
+  push that exposes the private email.
 - **An extension runs in a hidden WebView2 controller of its own** (`ExtensionHost`), a child of
   the main window's HWND, `IsVisible=false`, on `https://<id>.loungepad.ext`, served from
   `%APPDATA%\Loungepad\extensions\<id>` plus `ui/ext/runtime.js` out of the exe. The page's CSP is
