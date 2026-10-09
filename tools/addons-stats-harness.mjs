@@ -14,7 +14,7 @@ const mod = await import(pathToFileURL(path.join(dir, "src", "worker.js")).href)
 const worker = mod.default;
 
 const db = new DatabaseSync(":memory:");
-db.exec(readFileSync(path.join(dir, "migrations", "0001_stats.sql"), "utf8"));
+for (const m of ["0001_stats.sql", "0002_like_state.sql"]) db.exec(readFileSync(path.join(dir, "migrations", m), "utf8"));
 const DB = {
   prepare(sql) {
     const stmt = db.prepare(sql.replace(/\?\d+/g, "?"));
@@ -80,9 +80,20 @@ check("a like counts", r.body.counted && r.body.likes === 1);
 r = await like("extension:howlongtobeat");
 check("a second like from the address does not", !r.body.counted && r.body.likes === 1);
 r = await like("extension:howlongtobeat", false);
-check("an unlike counts once", r.body.counted && r.body.likes === 0);
+check("an unlike counts", r.body.counted && r.body.likes === 0);
 r = await like("extension:howlongtobeat", false);
-check("a second unlike does not", !r.body.counted && r.body.likes === 0);
+check("a second unlike in a row does not", !r.body.counted && r.body.likes === 0);
+r = await like("extension:howlongtobeat");
+check("liking again after the unlike counts (the user's report)", r.body.counted && r.body.likes === 1);
+for (let i = 0; i < 10; i++) await like("extension:howlongtobeat", i % 2 === 1);
+r = await like("extension:howlongtobeat");
+check("changes stop counting at the day's cap, and the count stays sane", !r.body.counted && r.body.likes <= 1 && r.body.likes >= 0, `likes=${r.body.likes}`);
+const cap = db.prepare("SELECT changes FROM like_state").all().map(x => x.changes);
+check("no more than six changes recorded for one address and add-on", cap.every(n => n <= 6), cap.join(","));
+ip = "198.51.100.99";
+r = await like("extension:howlongtobeat", false);
+check("an unlike with no state today (a like from an earlier day) counts", r.body.counted);
+ip = "198.51.100.7";
 ip = "192.0.2.9";
 r = await like("theme:arcade", false);
 check("likes never go below zero", r.body.counted && r.body.likes === 0);
@@ -117,11 +128,14 @@ limiterThrows = false; limit = 1000;
 // The cron: yesterday's salt and expired marks go, today's stay.
 db.prepare("INSERT INTO salts (day, salt) VALUES ('2000-01-01', 'old')").run();
 db.prepare("INSERT INTO marks (k, expires) VALUES ('old', 1)").run();
+db.prepare("INSERT INTO like_state (k, liked, changes, expires) VALUES ('old', 1, 1, 1)").run();
 const marksBefore = db.prepare("SELECT count(*) n FROM marks").get().n;
 console.log = (() => { const l = console.log; return (...a) => { if (!String(a[0]).startsWith("stats:")) l(...a); }; })();
 await worker.scheduled({}, env, {});
 check("cron drops old salts only", db.prepare("SELECT count(*) n FROM salts").get().n === 1 && !db.prepare("SELECT 1 FROM salts WHERE day = '2000-01-01'").get());
 check("cron drops expired marks only", db.prepare("SELECT count(*) n FROM marks").get().n === marksBefore - 1);
+check("cron drops expired like states", !db.prepare("SELECT 1 FROM like_state WHERE k = 'old'").get() && db.prepare("SELECT count(*) n FROM like_state").get().n > 0);
+check("no address in like_state either", db.prepare("SELECT k FROM like_state").all().every(x => /^[0-9a-f]{64}$/.test(x.k)));
 
 process.stdout.write(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);

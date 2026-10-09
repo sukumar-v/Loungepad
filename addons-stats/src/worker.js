@@ -15,6 +15,11 @@
  * a mark cannot be tied back to an address once its day is over. People behind one address (a
  * household, a mobile network) share one like per add-on per day; that is the price of no ids.
  *
+ * A like is a state, not an event: like_state remembers, for the day, whether this address likes
+ * the add-on now, so like → unlike → like counts +1, −1, +1 and a second like in a row counts
+ * nothing. An address with no state today may like (+1) or unlike (−1, from a like on an earlier
+ * day). MAX_LIKE_CHANGES caps the changes in a day. Downloads stay one per address per day.
+ *
  * Only add-ons the repository's index lists can be counted, so the table cannot be filled with
  * made-up keys. The index is read from raw.githubusercontent.com and kept for ten minutes.
  */
@@ -25,6 +30,9 @@ const INDEX_URL = "https://raw.githubusercontent.com/sukumar-v/loungepad-addons/
 const INDEX_TTL_MS = 10 * 60 * 1000;
 const KEY = /^(theme|extension):[a-z][a-z0-9-]{0,39}$/;
 const RATE_WINDOW = 60;   // seconds; WRITE_LIMIT's period in wrangler.toml
+// How often one address may change its mind about one add-on in a day. Enough to like, unlike and
+// like again a few times; few enough that a loop cannot walk a count anywhere.
+const MAX_LIKE_CHANGES = 6;
 
 export default {
   async fetch(request, env, ctx) {
@@ -44,6 +52,7 @@ export default {
   // Once a day: the marks past their day, and every salt but today's.
   async scheduled(event, env, ctx) {
     const marks = await env.DB.prepare("DELETE FROM marks WHERE expires <= ?1").bind(nowSeconds()).run();
+    await env.DB.prepare("DELETE FROM like_state WHERE expires <= ?1").bind(nowSeconds()).run();
     const salts = await env.DB.prepare("DELETE FROM salts WHERE day <> ?1").bind(today()).run();
     console.log(`stats: removed ${marks.meta.changes} marks and ${salts.meta.changes} old salts`);
   },
@@ -84,23 +93,38 @@ async function count(request, env, kind) {
   }
   if (!listed.has(key)) return json({ error: "not a listed add-on" }, 404);
 
-  const action = kind === "download" ? "download" : on ? "like" : "unlike";
   const salt = await daySalt(env);
-  const mark = await sha256Hex(`${salt}|${ip}|${action}|${key}`);
+  if (kind === "like") return await like(env, key, on, await sha256Hex(`${salt}|${ip}|like-state|${key}`));
+
+  // A download: one per address per add-on per day.
+  const mark = await sha256Hex(`${salt}|${ip}|download|${key}`);
   const fresh = await env.DB.prepare("INSERT OR IGNORE INTO marks (k, expires) VALUES (?1, ?2)").bind(mark, endOfDay()).run();
   const counted = fresh.meta.changes > 0;
+  if (counted)
+    await env.DB.prepare("INSERT INTO counts (key, downloads, likes) VALUES (?1, 1, 0) ON CONFLICT(key) DO UPDATE SET downloads = downloads + 1").bind(key).run();
+  return await answer(env, key, counted);
+}
 
-  if (counted) {
-    const sql = action === "download"
-      ? "INSERT INTO counts (key, downloads, likes) VALUES (?1, 1, 0) ON CONFLICT(key) DO UPDATE SET downloads = downloads + 1"
-      : action === "like"
-        ? "INSERT INTO counts (key, downloads, likes) VALUES (?1, 0, 1) ON CONFLICT(key) DO UPDATE SET likes = likes + 1"
-        // Never below zero: nothing here can tell an unlike from someone who never liked.
-        : "INSERT INTO counts (key, downloads, likes) VALUES (?1, 0, 0) ON CONFLICT(key) DO UPDATE SET likes = MAX(0, likes - 1)";
-    await env.DB.prepare(sql).bind(key).run();
-  }
+async function answer(env, key, counted) {
   const row = await env.DB.prepare("SELECT downloads, likes FROM counts WHERE key = ?1").bind(key).first();
   return json({ key, counted, downloads: row?.downloads ?? 0, likes: row?.likes ?? 0 });
+}
+
+/** A like or an unlike, counted only when it changes this address's state for today. */
+async function like(env, key, on, k) {
+  const state = await env.DB.prepare("SELECT liked, changes FROM like_state WHERE k = ?1").bind(k).first();
+  const want = on ? 1 : 0;
+  if (state && (state.liked === want || state.changes >= MAX_LIKE_CHANGES)) return await answer(env, key, false);
+
+  await env.DB.prepare(
+    "INSERT INTO like_state (k, liked, changes, expires) VALUES (?1, ?2, 1, ?3) " +
+    "ON CONFLICT(k) DO UPDATE SET liked = excluded.liked, changes = changes + 1").bind(k, want, endOfDay()).run();
+  await env.DB.prepare(on
+    ? "INSERT INTO counts (key, downloads, likes) VALUES (?1, 0, 1) ON CONFLICT(key) DO UPDATE SET likes = likes + 1"
+    // Never below zero: nothing here can tell an unlike from someone who never liked.
+    : "INSERT INTO counts (key, downloads, likes) VALUES (?1, 0, 0) ON CONFLICT(key) DO UPDATE SET likes = MAX(0, likes - 1)")
+    .bind(key).run();
+  return await answer(env, key, true);
 }
 
 /* ------------------------------------------------------------- the index */

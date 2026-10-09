@@ -2587,7 +2587,9 @@ Stop the scrolled grid from clipping through the All games header
   Oct 9 2026), reached only through the metadata service's `ADDONS` service binding at
   `api.loungepad.app/v1/addons/*`: `workers_dev = false`, no URL of its own. **No device or user id,
   ever** (the user's rule): a like is kept in `addons.json` (`Liked`) and the service hears only +1
-  or −1. One like, one unlike and one download per address per add-on per UTC day, held as a
+  or −1. A like is a state per address per add-on per UTC day (`like_state`, migration 0002: like,
+  unlike, like counts +1 −1 +1, at most six changes a day; the user's report, Oct 9 2026, after the
+  first cut refused a re-like), and one download per address per add-on per day, held as a
   SHA-256 of a random per-day salt + address + action + key (`marks`); the cron deletes old salts,
   so a mark cannot be traced once its day is over. A write with no `CF-Connecting-IP` is refused,
   which is what proves the header survives the binding (checked live: the second like from this

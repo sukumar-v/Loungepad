@@ -114,8 +114,9 @@ Nothing identifies a person or a PC. A like is kept on the PC that gave it, in `
 service is only told "+1" or "−1" for an add-on. A download is counted when an install from the
 repository passes its hash checks; installs from a file are not counted.
 
-To stop one place counting over and over, the service allows one like, one unlike and one download
-per address per add-on per day. It never stores the address: it keeps a hash of it mixed with a
+To stop one place counting over and over, the service remembers for the day whether an address
+likes each add-on: a like or an unlike counts when it changes that, up to six changes a day, and a
+second like in a row counts nothing. Downloads count once per address per add-on per day. It never stores the address: it keeps a hash of it mixed with a
 random salt for that day, and deletes the salt the next day, after which nothing can tie the hash
 back to an address. People sharing an address (a household, a mobile network) get one like per
 add-on per day between them. Without accounts the numbers can be inflated by anyone determined
