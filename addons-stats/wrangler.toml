@@ -1,5 +1,5 @@
 # Add-on downloads and likes (src/worker.js). No URL of its own: the metadata service
-# (proxy/, loungepad-metadata-service) answers https://api.loungepad.app and hands /v1/addons/* to
+# (proxy/, loungepad-service) answers https://api.loungepad.app and hands /v1/addons/* to
 # this worker through a service binding, which carries the caller's request as it arrived.
 name = "loungepad-addons-stats"
 main = "src/worker.js"

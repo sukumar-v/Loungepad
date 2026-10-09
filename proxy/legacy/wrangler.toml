@@ -1,4 +1,4 @@
-# The old name, forwarding everything to loungepad-metadata-service (forwarder.js). Deploy it only
+# The old name, forwarding everything to loungepad-service (forwarder.js). Deploy it only
 # after the new worker answers /v1/facts with its credentials set: from that moment every build up
 # to 1.8.0 is served by the new worker.
 #
@@ -10,7 +10,7 @@ workers_dev = true
 
 [[services]]
 binding = "TARGET"
-service = "loungepad-metadata-service"
+service = "loungepad-service"
 
 # The cache's daily clean-up runs on the new worker now; an empty list takes this worker's off.
 [triggers]

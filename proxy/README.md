@@ -29,7 +29,7 @@ shared by everyone. The cache is what keeps you under it.
 
 ## Where it lives
 
-The service is the Worker `loungepad-metadata-service`, answering `https://api.loungepad.app` (a
+The service is the Worker `loungepad-service`, answering `https://api.loungepad.app` (a
 Custom Domain on the loungepad.app zone, made by `wrangler deploy` from the `routes` entry). From
 1.9.0 the launcher only knows that address, so the Worker behind it can be renamed, rewritten or
 moved somewhere else with nothing shipped.
