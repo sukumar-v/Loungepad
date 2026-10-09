@@ -85,7 +85,23 @@ click and an A (Oct 2026). The worker tells a running launcher by its single-ins
 across the desktop, including games; disable the feature if background controller-to-mouse
 mapping is unwanted. On Winlogon, it maps
 physical readings independently of the UI. No UI input pipe exists on Winlogon. Buttons and
-sticks must return to neutral when a new worker starts.
+sticks must return to neutral when a new worker starts. The Winlogon worker also reads Xbox
+pads through their HID interface (`HidGamepadReader.IncludeXbox`), because XInput delivers a
+connected pad with every axis at rest behind a locked session: on the sign-in screen the
+worker followed the DualSense, whose direct HID read is not blanked, and the Xbox stick did
+nothing (Oct 2026). An Xbox pad's HID reports arrive only through Raw Input (a direct read of
+the device returns nothing), so that worker owns a message-only window (`RawInputSink`) whose
+registration stays up through quiet mode for the Xbox pads alone, the other pads keeping their
+direct reads; while it is held Windows counts the registered pads' reports as user input, so a
+locked PC with a Sony pad attached keeps its display awake. Over UAC both readings of the pad
+move together and the mapper keeps whichever it was following; the health record's `Pad`
+names it. On the sign-in screen itself Windows reads an Xbox-class pad in-process (LogonUI's
+focus follows the left stick and D-pad, A invokes and opens Windows' own on-screen keyboard on
+the PIN field, and none of it passes the keyboard hook), and anything injected beside that
+competes with it -- a pointer click for the same A put LogonUI in mouse mode and its keyboard
+stayed away. So while the session is locked the worker maps nothing for Xbox-class pads and
+Windows' own flow runs untouched. A pad Windows cannot see, such as a DualSense, keeps the
+pointer, clicks and the Loungepad keyboard on the sign-in screen.
 XInput checks four slots. Sony, Switch and generic HID controllers use the existing parsers
 and direct HID reads, with hotplug enumeration every second. Direct reads avoid Raw Input
 registrations continuously waking the display. No ViGEmBus driver, credential

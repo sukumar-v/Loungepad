@@ -37,9 +37,11 @@ internal static class Program
                 NavigationHookStallProbe();
                 return 0;
             }
-            if (args is ["--hid-probe"])
+            if (args.Length is >= 1 and <= 3 && args[0] == "--hid-probe")
             {
-                MotionProbes.Hid();
+                bool xbox = args.Skip(1).Contains("xbox");
+                int seconds = args.Skip(1).Select(a => int.TryParse(a, out int s) ? s : 0).FirstOrDefault(s => s > 0);
+                MotionProbes.Hid(xbox, seconds > 0 ? seconds : 3);
                 return 0;
             }
             if (args.Length is 2 or 3 && args[0] == "--pointer-trace" && int.TryParse(args[1], out int traceSeconds))
@@ -50,6 +52,11 @@ internal static class Program
             if (args is ["--absolute-mapping-probe"])
             {
                 MotionProbes.AbsoluteMapping();
+                return 0;
+            }
+            if (args.Length is 1 or 2 && args[0] == "--xbox-hid-dump")
+            {
+                MotionProbes.XboxHidDump(args.Length == 2 && int.TryParse(args[1], out int s) ? s : 60);
                 return 0;
             }
             if (args.Length is 1 or 2 && args[0] == "--xinput-lock-probe")

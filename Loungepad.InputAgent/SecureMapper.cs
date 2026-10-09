@@ -48,6 +48,16 @@ internal sealed class SecureMapper : IDisposable
         ushort pressed = (ushort)(pad.wButtons & ~_previous);
         ushort released = (ushort)(_previous & ~pad.wButtons);
         _previous = pad.wButtons;
+        // On the sign-in screen an Xbox-class pad is Windows' own. LogonUI reads it in-process,
+        // past any hook (measured Oct 9 2026: the filter installed and alive, the focus following
+        // the stick, the blocked count 0): it walks its focus with the stick and D-pad, invokes on
+        // A, and shows its on-screen keyboard for a gamepad's A on the PIN field. Whatever this
+        // mapping added competed with that: the mouse click injected for the same A put LogonUI
+        // in mouse mode and its keyboard stayed away, and our keyboard could not keep the field
+        // focused with the stick walking LogonUI's focus too. So while the session is locked the
+        // mapping stands down for Xbox-class pads entirely and Windows' flow runs untouched (Xbox
+        // button, A on the field, its keyboard). A DualSense, which Windows cannot see, keeps all.
+        if (WindowsOwnsXboxPads && Following is "xinput" or "hid:xbox") { Relinquish(); return; }
         _keyboard?.SetLayout(_useHid ? snapshot.Hid.Layout : "xbox");
 
         ushort toggle = ButtonMask(_profile.KeyboardToggle);
@@ -131,9 +141,18 @@ internal sealed class SecureMapper : IDisposable
         if (hm && !xm) _useHid = true; else if (xm && !hm) _useHid = false;
         if (_useHid && !snapshot.Hid.Present) _useHid = false;
         if (!_useHid && !snapshot.XInputPresent) _useHid = true;
-        if (!snapshot.XInputPresent && !snapshot.Hid.Present) return null;
+        if (!snapshot.XInputPresent && !snapshot.Hid.Present) { Following = "none"; return null; }
+        Following = _useHid ? "hid:" + snapshot.Hid.Layout : "xinput";
         return _useHid ? snapshot.Hid.Pad : snapshot.Xbox.Gamepad;
     }
+
+    /// <summary>Which pad the mapping follows, for the health record: "xinput", "hid:&lt;layout&gt;"
+    /// or "none". On the sign-in screen "hid:xbox" is the Xbox pad read past XInput's blank.</summary>
+    public string Following { get; private set; } = "";
+
+    /// <summary>Set by the worker while the session is locked on Winlogon: Windows' own sign-in
+    /// screen reads Xbox-class pads itself, and the mapping stands down for them (see Update).</summary>
+    public bool WindowsOwnsXboxPads { get; set; }
 
     private void Pointer(in XINPUT_GAMEPAD pad, double dt, bool move, bool wheel, HidPadSnapshot? touch, double now)
     {

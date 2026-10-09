@@ -74,7 +74,7 @@ internal static class LauncherPresence { public const string Mutex = "Loungepad_
 internal sealed record AgentHealth(long Tick, int Session, int ProcessId, string Desktop, string Mode, bool ControllerPresent, bool Ready,
     long SuppressedNavigationEvents = 0, double TickMeanMs = 0, double TickMaxMs = 0, double CaptureMaxMs = 0, double MapMaxMs = 0,
     double SendMaxMs = 0, int SendShort = 0, int Ticks = 0, double XInputProbeMaxMs = 0, int XInputSlots = 0,
-    double QueueMeanMs = 0, double QueueMaxMs = 0, double WorkMaxMs = 0, double WaitMeanMs = 0);
+    double QueueMeanMs = 0, double QueueMaxMs = 0, double WorkMaxMs = 0, double WaitMeanMs = 0, string Pad = "");
 // MovePointer and ScrollWheel are the launcher's policy for this tick: whether the left stick is
 // a mouse right now and whether the right stick is a wheel. The agent then moves the pointer
 // itself, from its own reading, in its own loop (see DesktopWorker.Tick). PointerOwner is the

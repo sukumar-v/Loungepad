@@ -9,7 +9,8 @@ namespace Loungepad.Services;
 /// service does not have to know which kind of controller it is holding.
 /// </summary>
 /// <param name="Present">At least one HID pad is attached, whether or not it has said anything yet.</param>
-/// <param name="Layout">"playstation", "switch" or "generic": which glyphs the UI should draw.</param>
+/// <param name="Layout">"playstation", "switch", "generic", or "xbox" for an Xbox pad read over
+/// HID (the agent's Winlogon worker only): which glyphs the UI should draw.</param>
 /// <param name="Name">The product string, for the log and the toast.</param>
 /// <param name="InstanceId">The device node, so the Bluetooth battery lookup can find the pad's own radio.</param>
 /// <param name="Seq">Bumped on every parsed report, so a reader can tell a fresh reading from a repeat.</param>
@@ -51,10 +52,42 @@ internal sealed class HidGamepadReader : IDisposable
     private bool _registered;
     private bool _quiet;
     private IntPtr _hwnd;
+    /// <summary>Read Xbox pads (the "IG_" HID devices) as well. Off for the launcher, which has
+    /// them from XInput; on for the input agent's Winlogon worker, where XInput goes blank behind
+    /// a locked session (the sign-in screen). Their reports come only through Raw Input: a direct
+    /// ReadFile on the IG_ device opens and never returns one (fourteen minutes of use, Oct 9
+    /// 2026), so this needs <see cref="ReadXboxThroughRawInput"/> as well. Set before the first
+    /// device refresh.</summary>
+    public bool IncludeXbox { get; set; }
+    private bool _xboxRaw;
+    private bool ThroughRawInput(HidPad pad) => _xboxRaw && pad.Layout == "xbox";
+
+    /// <summary>
+    /// Xbox pads through Raw Input on this window, whether or not the reader is quiet: the
+    /// registration stays up in quiet mode and the direct readers are started for the other pads
+    /// only. Call before SetQuiet(true), on the window's thread. While the registration is held
+    /// Windows counts every registered pad's reports as user input (see SetQuiet), which the
+    /// Winlogon worker accepts for the sign-in screen's sake.
+    /// </summary>
+    public void ReadXboxThroughRawInput(IntPtr hwnd)
+    {
+        IncludeXbox = true;
+        _xboxRaw = true;
+        Register(hwnd);
+    }
     private readonly List<QuietReader> _quietReaders = new();
 
     /// <summary>A pad arrived or left. Raised on the window thread.</summary>
     public event Action<string, string, bool>? PadChanged;
+    /// <summary>Every Raw Input report as it is parsed (the pad, the report bytes, their length,
+    /// whether the parse accepted it, and the state it gave), for the probes that take a pad's
+    /// map from the device instead of a table. Null in production.</summary>
+    public Action<HidPad, byte[], uint, bool, NativeMethods.XINPUT_GAMEPAD>? ReportTrace;
+    /// <summary>Each pad's descriptor as the reader parsed it, for the probes.</summary>
+    public IReadOnlyList<string> DescribeCaps()
+    {
+        lock (_lock) return _pads.Values.Select(p => $"{p.Name}: {p.DescribeCaps()}").ToList();
+    }
 
     // Must be called on the registration's window thread, after polling has stopped.
     public void Dispose()
@@ -152,12 +185,12 @@ internal sealed class HidGamepadReader : IDisposable
         _quiet = quiet;
         if (quiet)
         {
-            Unregister();
+            if (!_xboxRaw) Unregister();
 
             List<HidPad> pads;
-            lock (_lock) pads = _pads.Values.ToList();
+            lock (_lock) pads = _pads.Values.Where(p => !ThroughRawInput(p)).ToList();
             foreach (var pad in pads) _quietReaders.Add(new QuietReader(this, pad));
-            InputLog.Info($"HID pads: quiet mode, reading {pads.Count} pad(s) directly");
+            InputLog.Info($"HID pads: quiet mode, reading {pads.Count} pad(s) directly{(_xboxRaw ? ", Xbox pads through Raw Input" : "")}");
         }
         else
         {
@@ -210,9 +243,27 @@ internal sealed class HidGamepadReader : IDisposable
             pad.TouchSpread += t.Spread;
             pad.TouchFingers = t.Fingers;
             pad.TouchClick = t.Click;
-            _last = pad;
-            _seq++;
+            Adopt(pad, state, t);
         }
+    }
+
+    /// <summary>
+    /// Whether this report makes the pad the reading. The reading is the pad that moved last,
+    /// measured against its own anchor past the sticks' noise (as the launcher and the agent
+    /// choose between XInput and HID), never merely the last to report: a DualSense reports every
+    /// 4 ms whether or not it is touched, so "last to report" would hand the reading to a resting
+    /// DualSense a few hundred times a second while an Xbox pad beside it was being pushed. Touch
+    /// travel, a finger or a click counts as moving, so the touchpad is never stranded. Under the
+    /// lock; the first report only seeds the anchor.
+    /// </summary>
+    private void Adopt(HidPad pad, in NativeMethods.XINPUT_GAMEPAD state, in TouchSample touch)
+    {
+        bool moved;
+        if (!pad.Anchored) { pad.Anchor = state; pad.Anchored = true; moved = false; }
+        else moved = StickPointer.Moved(state, pad.Anchor);
+        if (moved) pad.Anchor = state;
+        if (touch.Dx != 0 || touch.Dy != 0 || touch.Fingers > 0 || touch.Click) moved = true;
+        if (_last is null || _last == pad || moved) { _last = pad; _seq++; }
     }
 
     /// <summary>
@@ -316,6 +367,9 @@ internal sealed class HidGamepadReader : IDisposable
         // still worth reading; add it on its first report.
         pad ??= TryAdd(hDevice);
         if (pad is null) return;
+        // In quiet mode the direct readers own every pad but the Xbox ones: their Raw Input copy
+        // here would be the same report twice, touch travel included.
+        if (_quiet && !ThroughRawInput(pad)) return;
 
         if (_report.Length < sizeHid) _report = new byte[sizeHid];
         if (_usages.Length < pad.MaxUsages) _usages = new ushort[pad.MaxUsages];
@@ -325,7 +379,9 @@ internal sealed class HidGamepadReader : IDisposable
         for (uint i = 0; i < count; i++)
         {
             Buffer.BlockCopy(_buffer, data + (int)(i * sizeHid), _report, 0, (int)sizeHid);
-            if (!pad.Parse(_report, sizeHid, _usages, out var parsed, out var t)) continue;
+            bool parsedOk = pad.Parse(_report, sizeHid, _usages, out var parsed, out var t);
+            ReportTrace?.Invoke(pad, _report, sizeHid, parsedOk, parsed);
+            if (!parsedOk) continue;
             any = true;
             state = parsed;
             // Travel adds up across the reports in one message; fingers and the click are the latest word.
@@ -342,8 +398,7 @@ internal sealed class HidGamepadReader : IDisposable
             pad.TouchSpread += touch.Spread;
             pad.TouchFingers = touch.Fingers;
             pad.TouchClick = touch.Click;
-            _last = pad;
-            _seq++;
+            Adopt(pad, state, touch);
         }
     }
 
@@ -403,12 +458,12 @@ internal sealed class HidGamepadReader : IDisposable
         lock (_lock) if (_pads.ContainsKey(hDevice)) return _pads[hDevice];
 
         HidPad? pad;
-        try { pad = HidPad.Open(hDevice); }
+        try { pad = HidPad.Open(hDevice, IncludeXbox); }
         catch (Exception ex) { InputLog.Info($"HID pad: could not open device: {ex.Message}"); return null; }
         if (pad is null) return null;
 
         lock (_lock) { _pads[hDevice] = pad; Reconcile(); }
-        if (_quiet) _quietReaders.Add(new QuietReader(this, pad));
+        if (_quiet && !ThroughRawInput(pad)) _quietReaders.Add(new QuietReader(this, pad));
         InputLog.Info($"HID pad: {pad.Name} ({pad.Layout}, VID {pad.Vid:X4} PID {pad.Pid:X4}, {pad.ButtonCount} buttons)");
         PadChanged?.Invoke(pad.Layout, pad.Name, true);
         return pad;
@@ -456,6 +511,10 @@ internal sealed class HidPad : IDisposable
     /// <summary>The longest usage list a report can carry, so the reader's buffer is never too small.</summary>
     public int MaxUsages { get; private set; }
     public NativeMethods.XINPUT_GAMEPAD State;
+    /// <summary>Where the pad last registered as moving, for the reader's choice of which pad is
+    /// the reading (HidGamepadReader.Adopt); the first report seeds it.</summary>
+    public NativeMethods.XINPUT_GAMEPAD Anchor;
+    public bool Anchored;
     /// <summary>Touchpad travel accumulated since the reader last drained it, plus the latest finger count and click.</summary>
     public int TouchDx, TouchDy, TouchFingers;
     public double TouchSpread;
@@ -466,7 +525,7 @@ internal sealed class HidPad : IDisposable
     private readonly Dictionary<ushort, Axis> _axes = new();
     private uint _maxButtons, _maxGeneric;
     private byte _reportId;
-    private bool _rightStickOnZ, _triggersOnRxRy;
+    private bool _rightStickOnZ, _triggersOnRxRy, _triggersOnZ;
     private SonyLayout? _sony;
     private struct Contact { public int Id, X, Y; }
     private readonly Contact[] _contacts = { new() { Id = -1 }, new() { Id = -1 } };
@@ -474,6 +533,12 @@ internal sealed class HidPad : IDisposable
     private bool _nativeLogged;
 
     private readonly record struct Axis(ushort LinkCollection, int Min, int Max, ushort BitSize, bool HasNull, byte ReportId);
+
+    /// <summary>What the descriptor declared and how the parse reads it, for the probes.</summary>
+    public string DescribeCaps() => $"layout {Layout}, report id {_reportId}, input report {InputReportLength} bytes, {_maxButtons} buttons, "
+        + $"{_maxGeneric} generic usages; axes " + string.Join(", ", _axes.Select(kv =>
+            $"0x{kv.Key:X2}[coll {kv.Value.LinkCollection} {kv.Value.Min}..{kv.Value.Max} {kv.Value.BitSize} bits{(kv.Value.HasNull ? " null" : "")} rid {kv.Value.ReportId}]"))
+        + $"; rightStickOnZ {_rightStickOnZ}, triggersOnRxRy {_triggersOnRxRy}, triggersOnZ {_triggersOnZ}";
 
     /* ---- Sony's full reports, read by hand ----
 
@@ -657,14 +722,26 @@ internal sealed class HidPad : IDisposable
         PadButton.Back, PadButton.Start, PadButton.LS, PadButton.RS, PadButton.Guide, PadButton.Share,
     };
 
-    private static (string layout, PadButton[] map) LayoutFor(uint vid, uint pid)
+    /* An Xbox pad's own HID interface, the "IG_" device XInput also reads: A, B, X, Y, LB, RB,
+       View, Menu, left stick, right stick, in that order, the D-pad as a hat switch, and both
+       triggers sharing Z around its centre. No Guide button. Read only where XInput goes blank:
+       behind a locked session (the sign-in screen) XInput keeps the slot connected and the packet
+       counter moving but reports every axis at rest (--xinput-lock-probe, Oct 9 2026). */
+    private static readonly PadButton[] XboxMap =
     {
+        PadButton.A, PadButton.B, PadButton.X, PadButton.Y, PadButton.LB, PadButton.RB,
+        PadButton.Back, PadButton.Start, PadButton.LS, PadButton.RS,
+    };
+
+    private static (string layout, PadButton[] map) LayoutFor(uint vid, uint pid, bool xinput)
+    {
+        if (xinput) return ("xbox", XboxMap);                 // any XInput-compatible pad, by its IG_ path
         if (vid == 0x054C) return ("playstation", SonyMap);   // Sony: DualShock 4, DualSense, DualSense Edge
         if (vid == 0x057E) return ("switch", SwitchMap);      // Nintendo: Pro Controller, and 8BitDo pads in Switch mode
         return ("generic", SonyMap);
     }
 
-    public static HidPad? Open(IntPtr hDevice)
+    public static HidPad? Open(IntPtr hDevice, bool includeXbox = false)
     {
         // What kind of device, and is it one of ours?
         var info = new HidNative.RID_DEVICE_INFO { cbSize = 32 };
@@ -684,8 +761,10 @@ internal sealed class HidPad : IDisposable
         var path = DeviceName(hDevice);
         if (path is null) return null;
         // XInput's own devices. XInput has the Guide button and the battery for them, and reading
-        // the same pad twice would double every press.
-        if (path.Contains("IG_", StringComparison.OrdinalIgnoreCase)) return null;
+        // the same pad twice would double every press -- unless the caller asks, which the agent's
+        // Winlogon worker does, since XInput reports nothing behind a locked session.
+        bool xinput = path.Contains("IG_", StringComparison.OrdinalIgnoreCase);
+        if (xinput && !includeXbox) return null;
 
         // The descriptor, parsed by hid.dll.
         uint ppSize = 0;
@@ -699,7 +778,7 @@ internal sealed class HidPad : IDisposable
 
         var pad = new HidPad { _preparsed = preparsed, Vid = info.dwVendorId, Pid = info.dwProductId, InstanceId = InstanceIdOf(path), Path = path,
             Bluetooth = IsBluetooth(path), Serial = SerialString(path) ?? "" };
-        (pad.Layout, pad._map) = LayoutFor(info.dwVendorId, info.dwProductId);
+        (pad.Layout, pad._map) = LayoutFor(info.dwVendorId, info.dwProductId, xinput);
         pad.Name = ProductString(path) ?? $"{pad.Layout} controller {info.dwVendorId:X4}:{info.dwProductId:X4}";
         if (!pad.ReadCaps()) { pad.Dispose(); return null; }
         pad._sony = SonyLayoutFor(info.dwVendorId, info.dwProductId);
@@ -728,12 +807,19 @@ internal sealed class HidPad : IDisposable
                     var v = values[i];
                     if (v.UsagePage != HidNative.USAGE_PAGE_GENERIC) continue;
                     ushort first = v.UsageMin, last = v.IsRange != 0 ? v.UsageMax : v.UsageMin;
+                    // An unsigned axis that uses every bit of its field (an Xbox pad's sticks and
+                    // triggers: 16 bits, 0..65535) comes back from hid.dll with a logical maximum
+                    // of -1, the top value read as signed. An inverted range is that, and means
+                    // 0 to the field's full value: read as an empty range, every such axis was 0
+                    // (Oct 9 2026, the Xbox pad's HID interface on the sign-in screen).
+                    int min = v.LogicalMin, max = v.LogicalMax;
+                    if (max < min && v.BitSize is > 0 and < 32) { min = 0; max = (1 << v.BitSize) - 1; }
                     for (int u = first; u <= last; u++)
                     {
                         if (u is not (X or Y or Z or Rx or Ry or Rz or Hat)) continue;
                         // The first declaration of an axis wins; a second is an alias or a
                         // second report we are not going to read.
-                        _axes.TryAdd((ushort)u, new Axis(v.LinkCollection, v.LogicalMin, v.LogicalMax, v.BitSize, v.HasNull != 0, v.ReportID));
+                        _axes.TryAdd((ushort)u, new Axis(v.LinkCollection, min, max, v.BitSize, v.HasNull != 0, v.ReportID));
                     }
                 }
             }
@@ -748,6 +834,8 @@ internal sealed class HidPad : IDisposable
            triggers at all, share Z between them. Z and Rz together means the first. */
         _rightStickOnZ = _axes.ContainsKey(Z) && _axes.ContainsKey(Rz);
         _triggersOnRxRy = _rightStickOnZ && _axes.ContainsKey(Rx) && _axes.ContainsKey(Ry);
+        // An Xbox pad's HID interface: the right stick on Rx/Ry and both triggers on one Z axis.
+        _triggersOnZ = Layout == "xbox" && _axes.ContainsKey(Z) && !_rightStickOnZ;
         return _axes.ContainsKey(X) || _maxButtons > 0;
     }
 
@@ -843,6 +931,15 @@ internal sealed class HidPad : IDisposable
         {
             lt = Math.Max(lt, Trigger(Rx, report, length));
             rt = Math.Max(rt, Trigger(Ry, report, length));
+        }
+        else if (_triggersOnZ && Unit(Z, report, length) is { } z)
+        {
+            // Both triggers on one axis resting at its centre, the left pulling it up and the
+            // right pulling it down, as DirectInput has always read these pads. Unverified on
+            // this hardware (--hid-probe xbox prints it beside XInput's own reading); it reaches
+            // only the boost button and a click bound to a trigger.
+            lt = Math.Max(lt, (byte)Math.Round(Math.Clamp((z - .5) * 2, 0, 1) * 255));
+            rt = Math.Max(rt, (byte)Math.Round(Math.Clamp((.5 - z) * 2, 0, 1) * 255));
         }
         pad.bLeftTrigger = lt;
         pad.bRightTrigger = rt;

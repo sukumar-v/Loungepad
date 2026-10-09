@@ -15,21 +15,48 @@ internal static class MotionProbes
 {
     /// <summary>Three seconds of snapshots from a reader of our own: which pads, how often the
     /// "last reported" pad changes, each pad's report rate and its stick reading.</summary>
-    public static void Hid()
+    /// <summary>With <paramref name="xbox"/>, Xbox pads are read over HID too (the agent's Winlogon
+    /// worker's way) for the given seconds, and what the HID decode saw of the triggers and buttons
+    /// is printed beside XInput's own reading of the same pad: pull each trigger and press A while
+    /// it runs, and the two columns must agree.</summary>
+    public static void Hid(bool xbox = false, int seconds = 3)
     {
-        using var hid = new HidGamepadReader();
-        hid.RefreshDirectDevices();
-        hid.SetQuiet(true);
+        // The reader says why a direct read could not be opened; without a sink that is silent.
+        InputLog.Sink = m => Console.WriteLine("reader: " + m);
+        // The Winlogon worker's arrangement: a dispatcher thread owning a message-only window that
+        // takes Raw Input (an Xbox pad's HID reports come no other way) and direct reads for every
+        // other pad. The reader is driven from that thread; the snapshots are read from this one.
+        HidGamepadReader hid = null!;
+        RawInputSink? sink = null;
+        Dispatcher? dispatcher = null;
+        var ready = new ManualResetEventSlim();
+        var host = new Thread(() =>
+        {
+            dispatcher = Dispatcher.CurrentDispatcher;
+            hid = new HidGamepadReader { IncludeXbox = xbox };
+            hid.RefreshDirectDevices();
+            if (xbox) { sink = new RawInputSink(hid); hid.ReadXboxThroughRawInput(sink.Handle); }
+            hid.SetQuiet(true);
+            ready.Set();
+            Dispatcher.Run();
+            hid.Dispose();
+            sink?.Dispose();
+        }) { IsBackground = true };
+        host.SetApartmentState(ApartmentState.STA);
+        host.Start();
+        ready.Wait();
         Thread.Sleep(400);
         var samples = new Dictionary<string, int>();
         var seqs = new Dictionary<string, HashSet<long>>();
         var names = new Dictionary<string, string>();
         var sticks = new Dictionary<string, (short LX, short LY)>();
+        var extremes = new Dictionary<string, (byte LT, byte RT, ushort Buttons, int StickMax)>();
+        byte xLt = 0, xRt = 0; ushort xButtons = 0; int xStick = 0;
         string? previous = null;
         int flips = 0, present = 0, total = 0;
         var sw = Stopwatch.StartNew();
         using var tick = new MillisecondTimer();
-        while (sw.ElapsedMilliseconds < 3000)
+        while (sw.ElapsedMilliseconds < seconds * 1000)
         {
             var s = hid.Snapshot();
             total++;
@@ -41,10 +68,29 @@ internal static class MotionProbes
                 (seqs.TryGetValue(id, out var set) ? set : seqs[id] = new()).Add(s.Seq);
                 names[id] = $"{s.Name} [{s.Layout}]";
                 sticks[id] = (s.Pad.sThumbLX, s.Pad.sThumbLY);
+                var e = extremes.GetValueOrDefault(id);
+                extremes[id] = (Math.Max(e.LT, s.Pad.bLeftTrigger), Math.Max(e.RT, s.Pad.bRightTrigger), (ushort)(e.Buttons | s.Pad.wButtons),
+                    Math.Max(e.StickMax, Math.Max(Math.Abs((int)s.Pad.sThumbLX), Math.Abs((int)s.Pad.sThumbLY))));
                 if (previous is not null && previous != id) flips++;
                 previous = id;
             }
+            if (xbox)
+                for (int i = 0; i < 4; i++)
+                {
+                    try { if (NativeMethods.XInputGetStateAny(i, out var x) != 0) continue; }
+                    catch (DllNotFoundException) { break; }
+                    NativeMethods.XInputGetStateAny(i, out var state);
+                    xLt = Math.Max(xLt, state.Gamepad.bLeftTrigger); xRt = Math.Max(xRt, state.Gamepad.bRightTrigger);
+                    xButtons |= state.Gamepad.wButtons;
+                    xStick = Math.Max(xStick, Math.Max(Math.Abs((int)state.Gamepad.sThumbLX), Math.Abs((int)state.Gamepad.sThumbLY)));
+                }
             tick.Wait();
+        }
+        if (xbox)
+        {
+            Console.WriteLine($"XInput saw over {seconds} s: LT max {xLt}, RT max {xRt}, buttons 0x{xButtons:X4}, stick max {xStick}");
+            foreach (var (id, e) in extremes)
+                Console.WriteLine($"HID {names[id]} saw: LT max {e.LT}, RT max {e.RT}, buttons 0x{e.Buttons:X4}, stick max {e.StickMax}{(names[id].Contains("[xbox]") ? "   <- must match XInput's line for the same pulls and presses" : "")}");
         }
         foreach (var (name, path, serial, bluetooth, shadowed) in hid.Describe())
             Console.WriteLine($"instance: {name}  {(bluetooth ? "Bluetooth" : "wired")}  serial='{serial}' (key {HidPad.SerialKey(serial)})  {(shadowed ? "SHADOWED (another instance of the same pad is read)" : "read")}  {path}");
@@ -53,6 +99,8 @@ internal static class MotionProbes
             Console.WriteLine($"  {names[id]}  id={id}  share={100.0 * count / present:F0}%  ~{seqs[id].Count / 3.0:F0} reports/s seen as last  stick=({sticks[id].LX},{sticks[id].LY})");
         if (samples.Count > 1)
             Console.WriteLine("  NOTE: more than one HID instance is reporting; a DualSense on USB and Bluetooth at once is two pads to the reader.");
+        dispatcher!.BeginInvokeShutdown(DispatcherPriority.Send);
+        host.Join(3000);
     }
 
     /// <summary>Records every change of the real pointer's position for the given number of
@@ -469,6 +517,57 @@ internal static class MotionProbes
         }
     }
 
+    /// <summary>Prints every HID pad's descriptor as the reader parsed it, then, for the given
+    /// seconds, each Raw Input report that differs from the one before it: the bytes, whether
+    /// the parse took it, and the state it decoded to, beside XInput's reading at that moment.
+    /// Xbox pads are taken through Raw Input as the Winlogon worker takes them. Move one stick
+    /// at a time, press each button on its own, pull each trigger: the map is read off the
+    /// device from this, not assumed.</summary>
+    public static void XboxHidDump(int seconds)
+    {
+        InputLog.Sink = m => Console.WriteLine("reader: " + m);
+        HidGamepadReader hid = null!;
+        RawInputSink? sink = null;
+        Dispatcher? dispatcher = null;
+        var ready = new ManualResetEventSlim();
+        string? lastLine = null; int printed = 0; long window = 0;
+        var host = new Thread(() =>
+        {
+            dispatcher = Dispatcher.CurrentDispatcher;
+            hid = new HidGamepadReader { IncludeXbox = true };
+            hid.ReportTrace = (pad, report, size, ok, state) =>
+            {
+                string hex = string.Join(" ", report.Take((int)Math.Min(size, 24)).Select(b => b.ToString("X2")));
+                NativeMethods.XINPUT_STATE x = default; int rc = 1;
+                try { rc = NativeMethods.XInputGetStateAny(0, out x); } catch (DllNotFoundException) { }
+                string line = $"{hex}  -> {(ok ? "parsed" : "REJECTED")} LX {state.sThumbLX} LY {state.sThumbLY} RX {state.sThumbRX} RY {state.sThumbRY} LT {state.bLeftTrigger} RT {state.bRightTrigger} buttons 0x{state.wButtons:X4}"
+                    + (rc == 0 ? $"   | XInput LX {x.Gamepad.sThumbLX} LY {x.Gamepad.sThumbLY} RX {x.Gamepad.sThumbRX} RY {x.Gamepad.sThumbRY} LT {x.Gamepad.bLeftTrigger} RT {x.Gamepad.bRightTrigger} buttons 0x{x.Gamepad.wButtons:X4}" : "");
+                if (line == lastLine) return;
+                lastLine = line;
+                long now = Environment.TickCount64 / 1000;
+                if (now != window) { window = now; printed = 0; }
+                if (printed++ < 12) Console.WriteLine($"{DateTime.Now:HH:mm:ss.fff} {pad.Layout} {line}");
+            };
+            hid.RefreshDirectDevices();
+            sink = new RawInputSink(hid);
+            hid.ReadXboxThroughRawInput(sink.Handle);
+            hid.SetQuiet(true);
+            ready.Set();
+            Dispatcher.Run();
+            hid.Dispose();
+            sink?.Dispose();
+        }) { IsBackground = true };
+        host.SetApartmentState(ApartmentState.STA);
+        host.Start();
+        ready.Wait();
+        Thread.Sleep(300);
+        foreach (string line in hid.DescribeCaps()) Console.WriteLine("caps: " + line);
+        Console.WriteLine($"Reporting changed Xbox reports for {seconds} s (at most 12 a second). Move one stick at a time, press each button alone, pull each trigger.");
+        Thread.Sleep(seconds * 1000);
+        dispatcher!.BeginInvokeShutdown(DispatcherPriority.Send);
+        host.Join(3000);
+    }
+
     public static void HealthWatch(int seconds)
     {
         Console.WriteLine($"Watching the agent for {seconds} s. Repeat the scenarios now.");
@@ -492,8 +591,8 @@ internal static class MotionProbes
             }
             else
             {
-                string k = $"{health.ProcessId}|{health.Desktop}|{health.Mode}|{health.ControllerPresent}|{health.Ready}";
-                if (k != lastKey) { Console.WriteLine($"{stamp} worker {health.ProcessId} on {health.Desktop}, {health.Mode}, controller={health.ControllerPresent} ready={health.Ready}"); lastKey = k; }
+                string k = $"{health.ProcessId}|{health.Desktop}|{health.Mode}|{health.ControllerPresent}|{health.Ready}|{health.Pad}";
+                if (k != lastKey) { Console.WriteLine($"{stamp} worker {health.ProcessId} on {health.Desktop}, {health.Mode}, controller={health.ControllerPresent} ready={health.Ready} pad={health.Pad}"); lastKey = k; }
                 if (health.Tick != lastTick)
                 {
                     lastTick = health.Tick;

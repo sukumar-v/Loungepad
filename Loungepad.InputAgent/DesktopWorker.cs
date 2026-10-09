@@ -34,6 +34,7 @@ internal sealed class DesktopWorker
     // Where a tick's time went over the current health period. Nothing short of these numbers
     // could say which call was slow in a SYSTEM process.
     private bool _mapping, _launcherPresent; private long _nextLauncherCheck;
+    private RawInputSink? _sink;
     private long _tickStarted; private int _ticks, _waits;
     private double _tickSum, _tickMax, _captureMax, _mapMax, _sendMax, _queueSum, _queueMax, _workMax, _waitSum; private int _sendShort;
 
@@ -62,14 +63,27 @@ internal sealed class DesktopWorker
         };
         var xinputProbe = Task.Factory.StartNew(ProbeXInputSlots, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
         _profile = MachineInputSettings.Load();
+        // On Winlogon the Xbox pad is read through its HID interface as well as XInput: behind a
+        // locked session (the sign-in screen) XInput keeps the slot connected and its packet
+        // counter moving but reports every axis at rest, so the worker there never saw the stick
+        // move and stayed on the DualSense (--xinput-lock-probe, Oct 9 2026). The HID reports
+        // reach a process only through Raw Input (RawInputSink), never a direct read. Over UAC
+        // both copies move together and the mapper keeps whichever it was following.
+        _hid.IncludeXbox = _desktop == "Winlogon";
         _hid.RefreshDirectDevices();
+        if (_desktop == "Winlogon") { _sink = new RawInputSink(_hid); _hid.ReadXboxThroughRawInput(_sink.Handle); }
         _hid.SetQuiet(true);
         _mapper = new SecureMapper(_profile, _injector);
         // On a thread of its own: a low-level hook whose thread stalls past Windows' timeout is
         // removed silently, and this dispatcher thread shows the secure keyboard, a WPF window.
         using var navigation = _navigation = new GamepadNavigationFilter(() => _profile.MouseEnabled);
         // Clear synthetic drags left by a terminated desktop worker before accepting fresh presses.
-        _injector.ReleaseMouse();
+        // Not fatal: a Default worker starting just as the desktops switch (the lock screen coming
+        // up) had this first injection refused with ERROR_ACCESS_DENIED (Win32 5, Oct 9 2026,
+        // 11:09) and died for it, to be restarted by the supervisor a moment later. The release is
+        // a courtesy; the ticks' own desktop check decides what may be injected from here on.
+        try { _injector.ReleaseMouse(); }
+        catch (Exception ex) { MachineInputSettings.ReportError($"Input agent: start-up release skipped: {Program.Describe(ex)}"); }
         // DispatcherTimer uses the coarse Windows message timer. Drive the STA dispatcher
         // from a precise clock instead; await every tick so slow work cannot queue a burst.
         // The tick and the pipe requests (Serve) are posted at the same foreground priority,
@@ -121,7 +135,7 @@ internal sealed class DesktopWorker
         try { Dispatcher.Run(); }
         finally
         {
-            _stop.Cancel(); _mapper?.Dispose(); _hid.Dispose();
+            _stop.Cancel(); _mapper?.Dispose(); _hid.Dispose(); _sink?.Dispose();
             if (DesktopApi.IsCurrent(_desktop)) _injector.Release();
             try { server?.Wait(1500); } catch (AggregateException) { }
             try { pump.Wait(1500); } catch (AggregateException) { }
@@ -163,7 +177,13 @@ internal sealed class DesktopWorker
         _desktopCurrent = DesktopApi.IsCurrent(_desktop);
         if (!_desktopCurrent) { _stop.Cancel(); _dispatcher.BeginInvokeShutdown(DispatcherPriority.Send); return; }
         long now = Environment.TickCount64;
-        if (now >= _nextDevices) { _nextDevices = now + 1000; _hid.RefreshDirectDevices(); }
+        if (now >= _nextDevices)
+        {
+            _nextDevices = now + 1000;
+            _hid.RefreshDirectDevices();
+            // Locked on Winlogon is the sign-in screen, where Windows reads Xbox pads itself.
+            if (_desktop == "Winlogon" && _mapper is { } m) m.WindowsOwnsXboxPads = DesktopApi.SignedInAndUnlocked() == false;
+        }
         if (_desktop == "Default" && _remoteActive && now - _lastClient <= 250)
         {
             // The launcher owns the buttons and decides the policy; the pointer itself is moved
@@ -231,6 +251,7 @@ internal sealed class DesktopWorker
             CaptureMaxMs: Math.Round(_captureMax, 2), MapMaxMs: Math.Round(_mapMax, 2), SendMaxMs: Math.Round(_sendMax, 2),
             SendShort: _sendShort, Ticks: _ticks, XInputProbeMaxMs: Math.Round(_xboxProbeMax, 2),
             XInputSlots: _xboxConnected.Count(c => c),
+            Pad: (_mapper?.Following ?? "") + (_mapper?.WindowsOwnsXboxPads == true ? " (locked: an Xbox pad is Windows' own, not mapped)" : ""),
             QueueMeanMs: _waits == 0 ? 0 : Math.Round(_queueSum / _waits, 2), QueueMaxMs: Math.Round(_queueMax, 2),
             WorkMaxMs: Math.Round(_workMax, 2), WaitMeanMs: _waits == 0 ? 0 : Math.Round(_waitSum / _waits, 2)));
         _ticks = _waits = 0; _tickSum = _tickMax = _captureMax = _mapMax = _sendMax = _queueSum = _queueMax = _workMax = _waitSum = 0;
