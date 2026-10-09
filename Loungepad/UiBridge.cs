@@ -31,6 +31,9 @@ public class UiBridge
     private readonly ThemeService _themes;
     private readonly UpdateService _updates;
     private readonly MetadataService _metadata = new();
+    /// <summary>The community server's invite, the same one the README, the website and the issue
+    /// chooser link to.</summary>
+    private const string DiscordInvite = "https://discord.gg/a6gngxS9b4";
     /// <summary>A Steam sign-in, for a profile whose games are private. Kept apart from _accounts:
     /// Steam's owned games already come in through _steam and OwnedSteamGames, and the sign-in is
     /// only a better way for _steam to ask.</summary>
@@ -175,11 +178,12 @@ public class UiBridge
             case "ready":
                 PushState();
                 _window.PushPadState();
-                if (App.UpdatedFrom is not null)
-                {
+                // The notes say which version this is; the toast is for a build that has none.
+                if (!PushWhatsNew() && App.UpdatedFrom is not null)
                     PushToast($"Updated to Loungepad {UpdateService.Format(UpdateService.Current)}");
-                    App.UpdatedFrom = null;
-                }
+                App.UpdatedFrom = null;
+                // After the notes: the page asks one question at a time, in the order it hears them.
+                PushSecureInputUpdate();
                 // Scan on every start, not just an empty library: games get installed and
                 // uninstalled between sessions, and nobody on a couch wants to go looking for
                 // Settings to find out. The merge keeps playtime, favourites, manual entries and
@@ -375,6 +379,9 @@ public class UiBridge
                 break;
             case "uninstallSecureInput":
                 if (msg["confirmed"]?.GetValue<bool>() == true) _ = UninstallSecureInputAsync();
+                break;
+            case "updateSecureInput":
+                _ = UpdateSecureInputAsync();
                 break;
 
             // Every setting back to the value a fresh install would have. Deliberately goes
@@ -1208,6 +1215,23 @@ public class UiBridge
                 if (ModsGame(msg) is { } gRes) _ = ModsRestartAsync(gRes);
                 break;
 
+            // Settings → General → Join the Loungepad Discord. The invite is the host's, so the page
+            // can ask for exactly this and nothing else; parked first, or the browser would open
+            // behind the launcher on the TV.
+            case "openDiscord":
+                try
+                {
+                    _window.Park();
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(DiscordInvite) { UseShellExecute = true });
+                    Log.Info("Opened the Discord invite");
+                }
+                catch (Exception ex)
+                {
+                    _window.Unpark();
+                    Push(new { type = "toast", message = $"Could not open the browser: {ex.Message}" });
+                }
+                break;
+
             // The page where the installer is, in the default browser. Not downloaded and run
             // from here: an installer is the one thing worth a mouse in hand.
             case "modsGetVortex":
@@ -1907,6 +1931,7 @@ public class UiBridge
         t.SleepAfterRestMinutes = Math.Clamp(s.SleepAfterRestMinutes, -1, 1440);
         t.GamepadMouseEnabled = s.GamepadMouseEnabled;
         t.GamepadMouseDuringGame = s.GamepadMouseDuringGame;
+        t.SteamOwnsPad = s.SteamOwnsPad;
         t.Deadzone = Math.Clamp(s.Deadzone, 0.05, 0.40);
         t.Sensitivity = Math.Clamp(s.Sensitivity, 0.2, 3.0);
         t.AccelExponent = Math.Clamp(s.AccelExponent, 1.0, 3.0);
@@ -2513,7 +2538,61 @@ public class UiBridge
         finally { _secureInputBusy = false; PushSecureInput(); }
     }
 
+    private async Task UpdateSecureInputAsync()
+    {
+        if (_secureInputBusy) return;
+        _secureInputBusy = true;
+        try { PushToast($"Loungepad input service updated to {await _window.UpdateSecureInput()}"); }
+        catch (OperationCanceledException) { PushToast("Input service update cancelled"); }
+        catch (Exception ex) { PushToast($"Input service: {ex.Message}"); }
+        finally { _secureInputBusy = false; PushSecureInput(); }
+    }
+
     public void PushSecureInput() => Push(new { type = "secureInput", status = _window.SecureInputStatus });
+
+    /// <summary>
+    /// The input service is older than this launcher: ask once per version whether to update it,
+    /// on the start after Loungepad itself updated. Updating needs Windows' administrator approval,
+    /// so it cannot happen on its own the way the launcher's update does. Only asked while one of
+    /// its switches is on (somebody who turned both off is not using it); Settings → Advanced
+    /// offers it either way. Marked as asked when sent, so Later holds until the next version.
+    /// </summary>
+    private void PushSecureInputUpdate()
+    {
+        if (_window.PendingSecureInputUpdate() is not { } due || !due.InUse) return;
+        var target = UpdateService.Format(due.Target);
+        if (_settings.Settings.SecureInputUpdateAsked == target) return;
+        _settings.Settings.SecureInputUpdateAsked = target;
+        _settings.Save();
+        Push(new { type = "secureInputUpdate", installed = UpdateService.Format(due.Installed), version = target });
+        Log.Info($"Input service: {UpdateService.Format(due.Installed)} installed, offered {target}");
+    }
+
+    /// <summary>
+    /// This version's release notes, once: on the first start of a version this install has not
+    /// shown the notes for, whether the updater installed it or a new exe was put in place by hand.
+    /// Never on a new install, which opens on the first-run setup, and never for a version older
+    /// than notes already shown (a newer build was run, then this one). The notes are
+    /// release-notes\v&lt;version&gt;.md, built in as whatsnew.md; the page leaves out the download
+    /// steps. Marked as seen when sent, so a launcher closed before reading them does not show
+    /// them again. Returns whether anything was sent.
+    /// </summary>
+    private bool PushWhatsNew()
+    {
+        var s = _settings.Settings;
+        var current = UpdateService.Format(UpdateService.Current);
+        if (s.WhatsNewSeen == current) return false;
+        if (Version.TryParse(s.WhatsNewSeen, out var seen) && seen > UpdateService.Current) return false;
+        bool newInstall = s.OnboardingVersion == 0;
+        s.WhatsNewSeen = current;
+        _settings.Save();
+        if (newInstall) return false;
+        var notes = ShippedFiles.ReadAllText("whatsnew.md");
+        if (string.IsNullOrWhiteSpace(notes)) return false;
+        Push(new { type = "whatsNew", version = current, notes });
+        Log.Info($"What's new: showed the notes for {current}");
+        return true;
+    }
 
     public void PushState()
     {

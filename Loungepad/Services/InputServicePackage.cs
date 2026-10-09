@@ -20,14 +20,14 @@ internal static class InputServicePackage
         string tag = $"v{version.Major}.{version.Minor}.{version.Build}";
         using var release = await http.GetAsync($"https://api.github.com/repos/sukumar-v/Loungepad/releases/tags/{tag}", HttpCompletionOption.ResponseHeadersRead, ct);
         if (release.StatusCode == HttpStatusCode.NotFound)
-            throw new IOException($"The input service for {tag} has not been published yet. Try again after the release is available.");
+            throw new InputServicePackageMissingException($"The input service for {tag} has not been published yet. Try again after the release is available.");
         release.EnsureSuccessStatusCode();
         using var metadata = new MemoryStream();
         await CopyBounded(await release.Content.ReadAsStreamAsync(ct), metadata, 2 * 1024 * 1024, ct);
         var root = JsonNode.Parse(metadata.ToArray());
         if (root?["tag_name"]?.GetValue<string>() != tag) throw new IOException("Unexpected input service release");
         var asset = root?["assets"]?.AsArray().FirstOrDefault(a => a?["name"]?.GetValue<string>() == AssetName(version));
-        if (asset is null) throw new IOException($"The {tag} release does not include the input service yet.");
+        if (asset is null) throw new InputServicePackageMissingException($"The {tag} release does not include the input service yet.");
         long size = asset["size"]?.GetValue<long>() ?? 0;
         string digest = asset["digest"]?.GetValue<string>() ?? "";
         if (size is < 1 or > MaxDownload || !digest.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase)
@@ -103,3 +103,8 @@ internal static class InputServicePackage
         return total;
     }
 }
+
+/// <summary>The release for this version has no input service package (not published yet, or
+/// published without one). Raised before anything is elevated, so a caller that only wanted to
+/// update the service can fall back to configuring the one that is installed.</summary>
+internal sealed class InputServicePackageMissingException(string message) : IOException(message);

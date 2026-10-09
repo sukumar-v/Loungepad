@@ -916,6 +916,16 @@ body.no-motion .pill-primary.focused { animation: none; }
 .guide-step-text { font-size: 20px; line-height: 1.55; color: color-mix(in srgb, var(--ink) 62%, transparent); }
 .guide-step-text b { color: color-mix(in srgb, var(--ink) 90%, transparent); font-weight: 600; }
 .guide-foot { display: flex; align-items: center; gap: 14px; font-size: 20px; color: color-mix(in srgb, var(--ink) 70%, transparent); }
+/* What's new: a version's release notes on the guide's card (notesHtml in app.js). */
+.notes-h { font-size: 24px; font-weight: 600; margin-top: 4px; margin-bottom: -10px; }
+.notes-p { margin: 0; font-size: 20px; line-height: 1.55; color: color-mix(in srgb, var(--ink) 78%, transparent); }
+.notes-list {
+  margin: 0; padding-left: 26px; display: flex; flex-direction: column; gap: 12px;
+  font-size: 20px; line-height: 1.55; color: color-mix(in srgb, var(--ink) 62%, transparent);
+}
+.notes-list li::marker { color: var(--accent); }
+.notes-list b { color: color-mix(in srgb, var(--ink) 90%, transparent); font-weight: 600; }
+.notes-p code, .notes-list code { font-family: "IBM Plex Mono", monospace; font-size: 0.88em; }
 .guide-foot .btn-icon, .input-hint .btn-icon { height: 34px; }
 
 /* ---- toast ---- */

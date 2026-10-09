@@ -3829,6 +3829,9 @@ function allSettingsRows() {
 
   rows.push({ section: "WINDOWS AND STEAM", cat: "input" });
   rows.push(...xboxButtonRows());
+  // On by default on the host, so a settings file from before it (no key) reads as on.
+  rows.push(toggleRow("Let Steam drive its own games", "Big Picture, and any game Steam starts, count as a game you started here: the menu combo still works, but the stick is not a mouse and A is not a click, so Steam is the only thing driving them. Off, both read every press",
+    () => s.steamOwnsPad !== false, v => set(() => s.steamOwnsPad = v)));
 
   rows.push({ section: "KEYBOARD", cat: "keyboard" });
   rows.push(cycleRow("Keyboard app", ["Builtin", "TabTip", "Osk"], () => s.keyboardApp, v => set(() => s.keyboardApp = v),
@@ -4057,13 +4060,21 @@ function allSettingsRows() {
   });
   restWakeRows(wake).forEach(r => rows.push(r));
 
+  // The host holds the invite: the page never names a URL for it to open.
+  rows.push({ section: "COMMUNITY", cat: "general" });
+  rows.push({
+    name: "Join the Loungepad Discord",
+    hint: "Get help, share your couch setup and vote in polls on what comes next. Opens the invite in your browser",
+    type: "action", label: "Join", action: () => send({ cmd: "openDiscord" }),
+  });
+
   rows.push({ section: "STARTUP & LOCK SCREEN", cat: "general" });
   rows.push(toggleRow("Launch Loungepad at login", "Registers a startup entry so the launcher is ready after wake or reboot",
     () => s.launchOnStartup, v => set(() => s.launchOnStartup = v)));
   rows.push({
     name: "Couch setup guide", hint: "Gamepad keyboard layout, PIN sign-in, controller wake, auto-start",
     type: "action", label: "Open guide",
-    action: () => { guideOpen = true; showOverlay("overlay-guide"); },
+    action: () => openGuide(),
   });
   rows.push({
     name: "First-time setup",
@@ -4088,6 +4099,7 @@ function allSettingsRows() {
       renderConfirm();
     },
   });
+  // Exit stays the last row of General (the user's call, Oct 9 2026).
   rows.push({
     name: "Exit Loungepad", type: "action", label: "Exit", danger: true,
     action: () => send({ cmd: "exitApp" }),
@@ -4543,6 +4555,13 @@ function secureInputRows() {
     row("uac", "Controller on UAC prompts", "Control Windows administrator approval prompts with your controller."),
     row("signIn", "Controller on sign-in screens", "Control Windows lock and sign-in screens, including before login."),
   ];
+  // The installed service is older than this Loungepad (the host compares versions). Offered here
+  // whether or not a switch is on; the start-up question only asks while one is.
+  if (service.installed && service.updateTo) rows.push({
+    name: "Update the input service", type: "action", label: service.busy ? "Please wait" : "Update",
+    hint: `Version ${service.installedVersion || "?"} is installed, and this Loungepad comes with ${service.updateTo}. Your switches stay as they are. Windows asks for administrator approval`,
+    action: () => { if (!service.busy) send({ cmd: "updateSecureInput" }); },
+  });
   if (service.installed) rows.push({
     name: "Uninstall Loungepad input service", type: "action", label: service.busy ? "Please wait" : "Uninstall", danger: true,
     hint: "Removes the background service and XInputUWPFix startup scripts, and restores Windows controller navigation. Loungepad and your library stay installed. Windows asks for administrator approval",
@@ -4759,10 +4778,17 @@ function renderSettingsNav() {
       el.addEventListener("click", () => { setFocusEl(el); setSettingsTab(t.id); });
       el.addEventListener("mouseenter", () => {
         if (!hoverEnabled()) return;
-        // Repaint the highlight only: a node destroyed between mousedown and mouseup never raises
-        // a click, which is why the categories once could not be clicked at all.
+        // The highlight follows the pointer onto the category, and the pane follows the
+        // highlight: left as "rows", the next repaint (crossing the gap to the next category
+        // flips pointerOnItem and repaints the screen) dragged the highlight back to the
+        // remembered option on the right, so it flicked across while the pointer moved down the
+        // categories and A landed on whichever side the last repaint had left it (Oct 9 2026).
+        // Hovering still selects nothing: the category opens on a click or A. Updated in place,
+        // never rebuilt: a node destroyed between mousedown and mouseup never raises a click,
+        // which is why the categories once could not be clicked at all.
+        settingsPane = "nav";
         setFocusEl(el);
-        paintNav();
+        renderSettings();
       });
       nav.appendChild(el);
     });
@@ -4777,6 +4803,9 @@ function renderSettingsNav() {
 /* The wake facts are read off Windows by spawning powercfg, so they are asked for when General
    is on screen and at most every half minute, not on every highlight move. */
 let restRefreshedAt = 0;
+/* What renderSettings last revealed (the Actions level and the highlight's key), so a repaint
+   that moves nothing does not scroll. Cleared on the way into Settings. */
+let settingsRevealed = null;
 
 function renderSettings() {
   renderSettingsNav();
@@ -4784,6 +4813,28 @@ function renderSettings() {
     restRefreshedAt = Date.now();
     send({ cmd: "restRefresh" });
   }
+  // With the pointer in charge the highlight is whatever the pointer rests on, read from the
+  // pointer's position itself (never from the remembered key: a mouseenter that fired while
+  // hover was still disabled, on the first move after the D-pad, has not moved it), and the
+  // pane and the row index follow it. Every repaint used to put the highlight back on the
+  // pane's remembered item -- the option on the right while the pointer was on a category,
+  // the active category while it was on another -- and a repaint comes with every gap the
+  // pointer crosses (pointerOnItem), every family change and every state push.
+  const scope = document.getElementById("screen-settings");
+  const underPointer = () => {
+    if (!hoverEnabled() || !pointerOnItem) return null;
+    // The browser's own hover state first: a mouseenter fires before the mousemove that
+    // records the pointer's position, so on a move straight from one item to the next the
+    // recorded position still names the item just left. The position is the fallback for a
+    // rebuild under a resting pointer, whose new nodes are not :hover until the next move.
+    const hot = scope.querySelector("[data-settings-tab]:hover, [data-row-index]:hover");
+    if (hot) return hot;
+    const under = document.elementFromPoint(lastClientX, lastClientY);
+    return under && scope.contains(under) ? under.closest("[data-settings-tab], [data-row-index]") : null;
+  };
+  const hovered = underPointer();
+  if (hovered && hovered.dataset.settingsTab !== undefined) settingsPane = "nav";
+  else if (hovered) { settingsPane = "rows"; settingsIdx = parseInt(hovered.dataset.rowIndex, 10) || 0; }
   // The legend changes with the pane: on the categories B leaves Settings, inside the options it
   // only steps back to the categories, and saying so is cheaper than letting people find out.
   const footEl = $("settingsFoot");
@@ -4838,13 +4889,25 @@ function renderSettings() {
     if (el.__html !== n.html) { el.innerHTML = n.html; el.__html = n.html; }
   });
 
-  // Keep the highlight on the row the caller has selected, then let the engine paint.
-  const scope = document.getElementById("screen-settings");
-  if (settingsPane === "rows") setScopeKey(scope, "setrow:" + settingsTab + ":" + settingsIdx);
+  // Keep the highlight on the row the caller has selected, then let the engine paint. Under a
+  // resting pointer the highlight goes to what the pointer is on (see the top of this function),
+  // read again here because a rebuild above replaces the row nodes.
+  const resting = underPointer();
+  if (resting) setFocusEl(resting);
+  else if (settingsPane === "rows") setScopeKey(scope, "setrow:" + settingsTab + ":" + settingsIdx);
   else setScopeKey(scope, "settab:" + settingsTab);
   paintNav();
+  // Scroll only when the highlight has gone somewhere new. Most repaints move nothing -- a state
+  // push, the service status, a toggle flipped where it stands -- and revealing on each of them
+  // pulled a list the user had scrolled away with the stick or the wheel back to the highlight a
+  // moment later. A highlight the pointer put there is never revealed either: the row is under
+  // the pointer already, and scrolling would move it out from under it.
   const cur = focusEl(scope);
-  if (cur && focusVisible()) revealFocus(cur);
+  if (cur && focusVisible()) {
+    const tag = levelTag + "|" + Nav.keyOf(cur);
+    if (tag !== settingsRevealed && !resting) revealFocus(cur);
+    settingsRevealed = tag;
+  }
 }
 
 /* A `bare` section still starts its category but draws no heading (Settings → Stats' first row). */
@@ -4960,7 +5023,9 @@ function settingsInput(btn) {
       // it without selecting it, so A was opening whichever one had last been activated -- the
       // highlight said Keyboard and the rows that appeared were Controller's, which reads as A
       // not working at all.
-      if (onTab) { setSettingsTab(el.dataset.settingsTab); enterSettingsPane("rows"); break; }
+      // With the pointer resting on the category, A opens it and the highlight stays under the
+      // pointer, as a click does; from the D-pad it steps into the rows as before.
+      if (onTab) { setSettingsTab(el.dataset.settingsTab); if (hoverEnabled() && pointerOnItem) renderSettings(); else enterSettingsPane("rows"); break; }
       if (row) activateSettingRow(row);
       break;
 
@@ -5975,6 +6040,7 @@ function renderConfirm() {
   $("confirmBody").textContent = confirmState.body || "";
   $("confirmBody").hidden = !confirmState.body;
   $("confirmYesLabel").textContent = confirmState.yesLabel || "Delete";
+  $("confirmNoLabel").textContent = confirmState.noLabel || "Cancel";
 }
 
 function confirmChoose(yes) {
@@ -6185,6 +6251,130 @@ function guideInput(btn) {
   }
 }
 
+/* The guide's card carries two things: the couch setup guide, and a version's release notes
+   after an update (showWhatsNew). Whichever opens it fills it, title and all. */
+function openGuide() {
+  $("guideTitle").textContent = "COUCH SETUP GUIDE";
+  renderGuide();
+  $("guideBody").scrollTop = 0;
+  guideOpen = true;
+  showOverlay("overlay-guide");
+}
+
+/* ============================== what's new, and the update prompt ============================== */
+
+/* Both wait for a quiet moment: not over the first-run setup, a game, the Power Wheel or anything
+   else that is already open (a confirm under the guide's card would take A while out of sight,
+   and the wheel paints over a confirm). They try again every few seconds until then. */
+function busyForPrompt() {
+  return view === "onboarding" || S.gameRunning || overlayMode || overlayOpen()
+    || radialOpen || !!radialSub || ingameOpen || actionWheelOpen || searchOpen;
+}
+
+let pendingWhatsNew = null, whatsNewTimer = 0;
+
+/** The notes the host sends once, on the first start of a version (UiBridge.PushWhatsNew). */
+function showWhatsNew() {
+  clearTimeout(whatsNewTimer);
+  if (!pendingWhatsNew) return;
+  if (busyForPrompt()) { whatsNewTimer = setTimeout(showWhatsNew, 3000); return; }
+  const { version, notes } = pendingWhatsNew;
+  pendingWhatsNew = null;
+  $("guideTitle").textContent = `WHAT'S NEW IN LOUNGEPAD ${version}`;
+  $("guideBody").innerHTML = notesHtml(notes);
+  $("guideBody").scrollTop = 0;
+  guideOpen = true;
+  showOverlay("overlay-guide");
+}
+
+/* Release notes in the Markdown they are written in: "## " headings, "- " and "1. " items with
+   indented continuation lines, paragraphs, **bold**, `code`, and [links](…) drawn as their text.
+   Every line is escaped before any markup is added, so nothing in the file becomes markup that
+   this function did not put there. The download steps and the changelog link are for GitHub, not
+   for somebody already running the new version, so they are left out. */
+function notesHtml(md) {
+  const inline = (t) => esc(t)
+    .replace(/\*\*(.+?)\*\*/g, "<b>$1</b>")
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\[([^\]]+)\]\([^)\s]+\)/g, "$1");
+  const out = [];
+  let skip = false, list = null, item = null, para = null;
+  const flushItem = () => { if (item !== null) { list.items.push(item); item = null; } };
+  const flushList = () => {
+    flushItem();
+    if (list) out.push(`<${list.tag} class="notes-list">${list.items.map(i => `<li>${inline(i)}</li>`).join("")}</${list.tag}>`);
+    list = null;
+  };
+  const flushPara = () => { if (para !== null) out.push(`<p class="notes-p">${inline(para)}</p>`); para = null; };
+  for (const raw of String(md || "").replace(/\r/g, "").split("\n")) {
+    const line = raw.trimEnd();
+    const heading = /^#{1,3}\s+(.*)$/.exec(line);
+    if (heading) {
+      flushPara(); flushList();
+      skip = /^(download|updating)/i.test(heading[1]);
+      if (!skip) out.push(`<div class="notes-h">${inline(heading[1])}</div>`);
+      continue;
+    }
+    if (skip || /^\*\*Full Changelog\*\*/i.test(line)) continue;
+    if (!line.trim()) { flushPara(); flushItem(); continue; }
+    const li = /^(\s{0,1})([-*]|\d+\.)\s+(.*)$/.exec(line);
+    if (li) {
+      flushPara();
+      const tag = /\d/.test(li[2]) ? "ol" : "ul";
+      if (list && list.tag !== tag) flushList();
+      if (!list) list = { tag, items: [] };
+      flushItem();
+      item = li[3];
+    } else if (item !== null && /^\s/.test(raw)) {
+      item += " " + line.trim();
+    } else {
+      flushList();
+      para = para === null ? line.trim() : para + " " + line.trim();
+    }
+  }
+  flushPara(); flushList();
+  return out.join("");
+}
+
+let pendingServiceUpdate = null, serviceUpdateTimer = 0;
+
+/* The launcher has updated and the input service it runs on admin prompts and the sign-in screen
+   has not: Windows has to approve replacing it, so it is a question, after the notes. Later leaves
+   it for Settings → Advanced, which offers it until it is done. */
+function askSecureInputUpdate() {
+  clearTimeout(serviceUpdateTimer);
+  if (!pendingServiceUpdate) return;
+  if (busyForPrompt()) { serviceUpdateTimer = setTimeout(askSecureInputUpdate, 3000); return; }
+  const { installed, version } = pendingServiceUpdate;
+  pendingServiceUpdate = null;
+  askConfirm({
+    title: "Update the input service?",
+    body: `Loungepad comes with version ${version} of its input service, which runs your controller on admin prompts and the sign-in screen. Version ${installed} is installed. Windows asks for administrator approval, and your switches stay as they are. If you choose Later, Settings → Advanced offers it until it is done.`,
+    yesLabel: "Update", noLabel: "Later", icon: "download", danger: false,
+    onYes: () => send({ cmd: "updateSecureInput" }),
+  });
+}
+
+let pendingUpdatePrompt = null, updatePromptTimer = 0;
+
+/* A download the updater made on its own has finished: ask whether to restart onto it now. Later
+   leaves it where it was, installed the next time Loungepad starts. Not while a game runs (the
+   host refuses to install then anyway): it waits for the game to end. */
+function askRestartForUpdate() {
+  clearTimeout(updatePromptTimer);
+  if (!pendingUpdatePrompt) return;
+  if (!S.update || S.update.state !== "ready") { pendingUpdatePrompt = null; return; }
+  if (busyForPrompt()) { updatePromptTimer = setTimeout(askRestartForUpdate, 5000); return; }
+  const latest = pendingUpdatePrompt;
+  pendingUpdatePrompt = null;
+  askConfirm({
+    title: `Loungepad ${latest} is ready`,
+    body: "The update has been downloaded. Restart Loungepad now to apply it? It takes a few seconds, and nothing in your library changes. Otherwise it is applied the next time Loungepad starts.",
+    yesLabel: "Restart now", noLabel: "Later", icon: "refresh", danger: false,
+    onYes: () => send({ cmd: "updateInstall" }),
+  });
+}
+
 /**
  * The still the host grabbed of whatever was on screen before the menu opened. Deliberately
  * NOT cleared when overlay mode ends: the in-game menu drops overlay mode on its way into the
@@ -6245,7 +6435,7 @@ function switchView(v) {
   if (v === "library") { clampFocus(); updateLibraryFocus(); }
   if (v === "detail") renderDetail();
   // Always land on the categories, never mid-list in whatever was open last time.
-  if (v === "settings") { settingsPane = "nav"; settingsIdx = 0; renderSettings(); }
+  if (v === "settings") { settingsPane = "nav"; settingsIdx = 0; settingsRevealed = null; renderSettings(); }
   if (v === "stats") openStatsView(prev);
   if (v === "onboarding") renderOnboarding();
   else delete document.body.dataset.onbStep;   // what moves the library into view on the Look step
@@ -6845,13 +7035,25 @@ function handleHostMessage(m) {
     case "update": {
       const was = S.update && S.update.state;
       S.update = m.status;
-      // Said once, when a background download finishes. Anything somebody asked for, they are
-      // already looking at in Settings or the tray menu.
-      if (m.status.state === "ready" && was !== "ready" && !m.status.userAsked)
-        toast(`Loungepad ${m.status.latest} is ready. It installs the next time Loungepad starts`);
+      // Asked once, when a background download finishes: restart now, or later. Anything somebody
+      // asked for, they are already looking at in Settings or the tray menu.
+      if (m.status.state === "ready" && was !== "ready" && !m.status.userAsked) {
+        pendingUpdatePrompt = m.status.latest;
+        askRestartForUpdate();
+      }
       if (view === "settings") renderSettings();
       break;
     }
+    // This version's release notes, sent once on its first start (UiBridge.PushWhatsNew).
+    case "whatsNew":
+      pendingWhatsNew = { version: m.version, notes: m.notes };
+      showWhatsNew();
+      break;
+    // The input service is older than this Loungepad, asked once per version after an update.
+    case "secureInputUpdate":
+      pendingServiceUpdate = { installed: m.installed, version: m.version };
+      askSecureInputUpdate();
+      break;
     // B on the built-in keyboard closes the keyboard, and the press never reaches the page. With
     // a text field open behind it, that B means "I'm done with this field" as well.
     case "keyboardDismissed":
@@ -7327,7 +7529,7 @@ function mockHandle(msg) {
       settings: S.settings || {
         tvDeviceName: "\\\\.\\DISPLAY2", switchPrimaryOnLaunch: true, repositionGameWindow: true,
         keepFocus: true, launchOnStartup: false, gamepadMouseEnabled: true, gamepadMouseDuringGame: false,
-        deadzone: 0.18, sensitivity: 1.0, accelExponent: 1.8, hideCursorSystemWide: false,
+        steamOwnsPad: true, deadzone: 0.18, sensitivity: 1.0, accelExponent: 1.8, hideCursorSystemWide: false,
         touchpadMouse: true, touchpadSensitivity: 1.0, touchpadTapToClick: true,
         touchpadTapDrag: true, touchpadNaturalScroll: true, touchpadScrollSpeed: 1.0,
         boostButton: "RT", boostMultiplier: 2.5, hideLegend: false, igdbClientId: "", igdbClientSecret: "", steamGridDbKey: "", metadataEndpoint: "",
@@ -7392,6 +7594,10 @@ function mockHandle(msg) {
     if (msg.mode === "connect" && mockHandle._vortex !== "ready") mockHandle._vortex = "needsRestart";
     if (msg.mode === "restart") mockHandle._vortex = "ready";
     setTimeout(() => handleHostMessage({ type: "onboardingVortex", busy: false, mode: msg.mode, ...mockVortex() }), msg.mode === "peek" ? 200 : 1600);
+  } else if (msg.cmd === "openDiscord") {
+    toast("(preview) would open the Discord invite in the browser");
+  } else if (msg.cmd === "updateSecureInput") {
+    toast("(preview) would update the input service, after Windows' approval");
   } else if (msg.cmd === "updateCheck") {
     mockUpdateStep({ state: "checking" }, 0);
     mockUpdateStep({ state: "available", latest: "1.6.0" }, 700);

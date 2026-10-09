@@ -51,6 +51,10 @@
     <EmbeddedResource Include="..\LICENSE;..\NOTICE" LogicalName="shipped\%(Filename)%(Extension)" WithCulture="false" />
     <EmbeddedResource Include="..\tools\install-input-service.ps1;..\tools\uninstall-input-service.ps1"
                       LogicalName="shipped\setup\%(Filename)%(Extension)" WithCulture="false" />
+    <!-- This version's release notes, the GitHub release's own text, shown once after an update
+         (UiBridge.PushWhatsNew). Only this version's file: a build with no notes shows nothing. -->
+    <EmbeddedResource Include="..\release-notes\v$(Version).md" LogicalName="shipped\whatsnew.md" WithCulture="false"
+                      Condition="Exists('..\release-notes\v$(Version).md')" />
     <!-- ApplicationIcon gives the exe its icon; Resource also embeds it so the window itself
          (and therefore Alt-Tab) can use it, since there is no taskbar button to carry one -->
     <Resource Include="Loungepad.ico" />

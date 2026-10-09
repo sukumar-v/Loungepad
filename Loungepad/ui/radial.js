@@ -24,7 +24,7 @@ const RADIAL_ITEMS = [
   { id: "windows",     label: "Switch window", icon: "viewBtn",
     desc: "Pick another open window and bring it to the TV" },
   { id: "shortcuts",   label: "Shortcuts",     icon: "apps",
-    desc: "Task Manager, Explorer, Settings and friends" },
+    desc: "File Explorer, Settings and friends" },
   { id: "keyboard",    label: "Keyboard",      icon: "keyboard",
     desc: "Show or hide the on-screen keyboard" },
   { id: "centerMouse", label: "Center mouse",  icon: "pointer",
@@ -44,8 +44,10 @@ const RADIAL_ITEMS = [
    to destroy something by default. Spoke 1 is Actions, the one most worth a single press. */
 const RADIAL_HOME = 1;
 
+/* No Task Manager (the user's call, Oct 9 2026): it runs as administrator, and Windows keeps an
+   ordinary program's pointer and clicks out of an administrator's window, so without the input
+   service the stick did nothing on it and that read as a bug. */
 const SHORTCUTS = [
-  { id: "taskManager",     label: "Task Manager",     icon: "bars" },
   { id: "explorer",        label: "File Explorer",    icon: "folder" },
   { id: "settings",        label: "Windows Settings", icon: "gear" },
   { id: "displaySettings", label: "Display Settings", icon: "monitor" },

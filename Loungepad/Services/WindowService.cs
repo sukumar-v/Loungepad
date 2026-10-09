@@ -204,8 +204,8 @@ public class WindowService
 
     /// <summary>
     /// Start one of the Power Wheel's shortcuts. False when it could not be started.
-    /// <paramref name="started"/> is the process when a program was started directly (Task
-    /// Manager, Explorer, the mixer), so the caller can hand it the foreground; the Settings pages
+    /// <paramref name="started"/> is the process when a program was started directly (Explorer,
+    /// the mixer), so the caller can hand it the foreground; the Settings pages
     /// are URIs and have none.
     /// </summary>
     public bool RunShortcut(string id, out Process? started)
@@ -215,7 +215,6 @@ public class WindowService
         {
             switch (id)
             {
-                case "taskManager": started = Start("taskmgr.exe"); break;
                 case "explorer": started = Start("explorer.exe"); break;
                 case "settings": started = Start("ms-settings:"); break;
                 case "displaySettings": started = Start("ms-settings:display"); break;
@@ -235,7 +234,7 @@ public class WindowService
     /// <summary>Whether a shortcut puts up a window to bring forward. Lock hands the session to
     /// the lock screen instead.</summary>
     public static bool OpensWindow(string id) =>
-        id is "taskManager" or "explorer" or "settings" or "displaySettings" or "volume";
+        id is "explorer" or "settings" or "displaySettings" or "volume";
 
     /// <summary>
     /// Whether a window is the program a shortcut opens, by the program behind it -- ExeOf looks
@@ -248,7 +247,6 @@ public class WindowService
         var exe = ActionService.ExeOf(hwnd);
         switch (id)
         {
-            case "taskManager": return exe == "taskmgr";
             case "volume": return exe == "sndvol";
             case "settings":
             case "displaySettings": return exe == "systemsettings" || (fresh && exe == "applicationframehost");

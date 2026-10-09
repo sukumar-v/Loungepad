@@ -20,6 +20,7 @@ public partial class MainWindow : Window
     private readonly GamepadService _gamepad;
     private readonly ActionService _actions;
     private readonly HidGamepadReader _hid = new();
+    private readonly SteamForeground _steam = new();
     private readonly ServiceInputClient _serviceInput = new();
     private bool _inputClosing;
     /// <summary>When the keyboard and mouse were last pressed, scrolled or really moved, for rest
@@ -71,7 +72,10 @@ public partial class MainWindow : Window
             // screen but the pad still went to the game -- a menu that looked frozen until a
             // mouse click handed Windows' foreground over.
             isLauncherForeground: () => _overlayActive || NativeMethods.GetForegroundWindow() == _hwnd,
-            isGameFocused: () => !_overlayActive && _launcher.IsGameForeground(),
+            // Steam's Big Picture reads the pad itself, and so does any game Steam started: both
+            // count as a focused game, so the stick is not also a mouse and A not also a click.
+            isGameFocused: () => !_overlayActive && (_launcher.IsGameForeground()
+                || (_settings.Settings.SteamOwnsPad && _steam.Owner() is not null)),
             hid: _hid);
         _gamepad.ServiceInput = _serviceInput;
         _serviceInput.ConnectionChanged += connected => Dispatcher.BeginInvoke(() =>
@@ -1129,6 +1133,8 @@ public partial class MainWindow : Window
     internal InputServiceUiStatus SecureInputStatus => _serviceInput.UiStatus;
     internal Task SetSecureInput(string feature, bool enabled, bool installConfirmed) => _serviceInput.SetEnabled(feature, enabled, _settings.Settings, installConfirmed);
     internal Task UninstallSecureInput() => _serviceInput.Uninstall();
+    internal Task<string> UpdateSecureInput() => _serviceInput.Update(_settings.Settings);
+    internal (Version Installed, Version Target, bool InUse)? PendingSecureInputUpdate() => _serviceInput.PendingUpdate();
 
     /// <summary>
     /// An action chosen on the wheel: put the launcher away, hand the foreground back to the
@@ -1185,8 +1191,9 @@ public partial class MainWindow : Window
     /// </summary>
     private void TakeScreenshot(string source)
     {
-        bool steam = _launcher.IsGameForeground()
-            && (_launcher.RunningGameId?.StartsWith("steam:", StringComparison.Ordinal) ?? false);
+        bool steam = (_launcher.IsGameForeground()
+            && (_launcher.RunningGameId?.StartsWith("steam:", StringComparison.Ordinal) ?? false))
+            || _steam.Owner() == SteamForeground.SteamGame;
         if (steam) NativeMethods.SendKeyTap(NativeMethods.VK_F12, NativeMethods.SCAN_F12);
         else ShortcutKeys.Send("Win+PrintScreen");
         Log.Info($"Screenshot: {source} → {(steam ? "F12 (Steam)" : "Win+PrintScreen")}");
@@ -1226,6 +1233,10 @@ public partial class MainWindow : Window
         // is wherever the choice left it.
         while (_tray?.MenuOpen == true) await Task.Delay(150);
         if (_suppressRefocus || _launcher.GameRunning || _parked) return;
+
+        // Nor Steam's Big Picture, or a game Steam started: something of its own that somebody just
+        // chose. Taking the foreground back would put the library over it 350 ms later.
+        if (_steam.Owner() is not null) { StepBehindForeground(); return; }
 
         // Don't fight the virtual keyboard for focus
         var kb = NativeMethods.FindWindow("IPTip_Main_Window", null);

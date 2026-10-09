@@ -11,6 +11,31 @@ namespace Loungepad.Services;
 
 internal static class InputServiceSetup
 {
+    public static string ServiceExe => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), @"Loungepad\Input\Loungepad.Service.exe");
+
+    /// <summary>The version the installed service was built as: its exe's file version, which
+    /// package-input-service.ps1 stamps with the release's number. Null when there is no service or
+    /// the file cannot be read.</summary>
+    public static Version? InstalledVersion()
+    {
+        try
+        {
+            if (!File.Exists(ServiceExe)) return null;
+            var info = FileVersionInfo.GetVersionInfo(ServiceExe);
+            return info.FileMajorPart == 0 && info.FileMinorPart == 0 ? null : new Version(info.FileMajorPart, info.FileMinorPart, info.FileBuildPart);
+        }
+        catch (Exception) { return null; }
+    }
+
+    /// <summary>The service this launcher installs: the one published with its own release.</summary>
+    public static Version Bundled => new(UpdateService.Current.Major, UpdateService.Current.Minor, Math.Max(0, UpdateService.Current.Build));
+
+    /// <summary>Whether this launcher can install the service at all: only a signed release build
+    /// can, because the installer checks the package against the launcher's own publisher. Read
+    /// once; the signature does not change while the process runs.</summary>
+    public static bool CanInstall => _canInstall.Value;
+    private static readonly Lazy<bool> _canInstall = new(() => { try { Publisher(); return true; } catch (IOException) { return false; } });
+
     public static bool IsInstalled()
     {
         IntPtr manager = OpenSCManager(null, null, 1);

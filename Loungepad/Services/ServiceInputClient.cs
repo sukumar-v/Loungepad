@@ -29,6 +29,8 @@ internal sealed class ServiceInputClient : IDisposable
     private long _policyAt;
     private string? _operation;
     private int? _progress;
+    private InputServiceUiStatus? _shown;
+    private Version? _installedVersion;
     public ServiceStatus Status { get; private set; } = new(false, null, "service unavailable");
     public InputServiceUiStatus UiStatus
     {
@@ -38,11 +40,42 @@ internal sealed class ServiceInputClient : IDisposable
             {
                 string state = Status.State switch { "agent running" => "Enabled", "disabled" => "Disabled",
                     "waiting for console" => "Waiting for a console session", "error" => "Error", _ => Status.State };
-                if (_olderAgent && _enabled && _connected) state += " (the installed service is older than this Loungepad: reinstall it to update)";
+                if (_olderAgent && _enabled && _connected) state += " (the installed service is older than this Loungepad: update it below)";
+                var update = UpdateTarget(_installed, _installedVersion);
                 return new(_enabled, _installed, _operation ?? state, Status.Error, _operation is not null, _progress,
-                    _features.Uac, _features.SignIn);
+                    _features.Uac, _features.SignIn, _installedVersion is { } v ? UpdateService.Format(v) : null,
+                    update is { } u ? UpdateService.Format(u) : null);
             }
         }
+    }
+
+    /// <summary>
+    /// The version to update the installed service to, or null when there is nothing to do. The
+    /// launcher installs the service published with its own release, so an update is due whenever
+    /// the installed one was built as an older version than this launcher. Never offered by a
+    /// build that cannot install at all (an unsigned development build), nor for a service newer
+    /// than the launcher.
+    /// </summary>
+    private static Version? UpdateTarget(bool installed, Version? installedVersion) =>
+        UpdateTarget(installed, installedVersion, InputServiceSetup.Bundled, InputServiceSetup.CanInstall);
+
+    /// <summary>The rule itself, apart from where its inputs come from, for the harness.</summary>
+    internal static Version? UpdateTarget(bool installed, Version? installedVersion, Version bundled, bool canInstall) =>
+        installed && installedVersion is { } v && v < bundled && canInstall ? bundled : null;
+
+    /// <summary>The update due right now, read fresh (for the start-up question, before the
+    /// status loop has run): the installed version, the version it would become, and whether a
+    /// switch is on. Null when nothing is due.</summary>
+    public (Version Installed, Version Target, bool InUse)? PendingUpdate()
+    {
+        try
+        {
+            if (!InputServiceSetup.IsInstalled()) return null;
+            var installed = InputServiceSetup.InstalledVersion();
+            if (installed is null || UpdateTarget(true, installed) is not { } target) return null;
+            return (installed, target, InputFeatures.Load().Enabled);
+        }
+        catch (Exception) { return null; }
     }
 
     /// <summary>
@@ -187,13 +220,18 @@ internal sealed class ServiceInputClient : IDisposable
         }
         catch (OperationCanceledException) when (_stop.IsCancellationRequested) { throw; }
         catch (Exception ex) { status = new(enabled, null, installed ? "Service stopped or unavailable" : "Unable to check installation", ex.Message); }
-        bool changed;
-        lock (_gate)
-        {
-            changed = status != Status || _installed != installed || _enabled != enabled || _features != features;
-            Status = status; _installed = installed; _enabled = enabled; _features = features;
-        }
-        if (changed) StatusChanged?.Invoke();
+        // Only a change Settings can show is a change. The raw status carries the worker's health
+        // record, whose tick counter and timings are new on every heartbeat, so comparing that
+        // pushed the status to the page every 2 s -- and each push re-rendered Settings, which
+        // scrolled a list the user had scrolled away back to the highlight.
+        // Compared with what was last pushed rather than with the moment before, so a change made
+        // outside this poll (the connection, an older agent's reply) still reaches the page within 2 s.
+        var installedVersion = installed ? InputServiceSetup.InstalledVersion() : null;
+        lock (_gate) { Status = status; _installed = installed; _enabled = enabled; _features = features; _installedVersion = installedVersion; }
+        var shown = UiStatus;
+        if (shown == _shown) return;
+        _shown = shown;
+        StatusChanged?.Invoke();
     }
 
     private void ReportSetup(string? state, int? progress)
@@ -212,20 +250,55 @@ internal sealed class ServiceInputClient : IDisposable
         var features = feature == "uac" ? current with { Uac = enabled } : current with { SignIn = enabled };
         UpdateProfile(settings);
         string profile = Convert.ToBase64String(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(_profile, Protocol.Json)));
-        ReportSetup(installed ? "Waiting for administrator approval" : "Preparing input service", null);
+        // An installed service older than this launcher is updated in the same step: one approval
+        // prompt either way, and the switch lands on the service this launcher was built against.
+        // A release published without the package falls back to switching the installed one.
+        bool update = installed && UpdateTarget(true, InputServiceSetup.InstalledVersion()) is not null;
+        ReportSetup(installed && !update ? "Waiting for administrator approval" : "Preparing input service", null);
         try
         {
             if (!installed) await InputServiceSetup.Install(profile, features, ReportSetup, _stop.Token);
-            else
+            else if (update)
             {
-                string exe = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), @"Loungepad\Input\Loungepad.Service.exe");
-                if (!File.Exists(exe)) throw new IOException("Input service files are missing. Uninstall the service and enable it again to reinstall.");
-                using var process = Process.Start(new ProcessStartInfo(exe, $"--configure {(features.Uac ? 1 : 0)} {(features.SignIn ? 1 : 0)} " + profile)
-                { UseShellExecute = true, Verb = "runas", WindowStyle = ProcessWindowStyle.Hidden }) ?? throw new IOException("Could not open input service configuration");
-                await process.WaitForExitAsync();
-                if (process.ExitCode != 0) throw new IOException("Input service configuration failed. If the service is from an older build, install the matching updated service package.");
-                if (InputFeatures.Load() != features) throw new IOException("Input service did not save the requested feature switches");
+                try { await InputServiceSetup.Install(profile, features, ReportSetup, _stop.Token); }
+                catch (InputServicePackageMissingException) { ReportSetup("Waiting for administrator approval", null); await Configure(features, profile); }
             }
+            else await Configure(features, profile);
+        }
+        catch (Win32Exception ex) when (ex.NativeErrorCode == 1223) { throw new OperationCanceledException("Administrator approval was cancelled", ex); }
+        finally { await RefreshStatus(); ReportSetup(null, null); }
+    }
+
+    private static async Task Configure(InputFeatures features, string profile)
+    {
+        string exe = InputServiceSetup.ServiceExe;
+        if (!File.Exists(exe)) throw new IOException("Input service files are missing. Uninstall the service and enable it again to reinstall.");
+        using var process = Process.Start(new ProcessStartInfo(exe, $"--configure {(features.Uac ? 1 : 0)} {(features.SignIn ? 1 : 0)} " + profile)
+        { UseShellExecute = true, Verb = "runas", WindowStyle = ProcessWindowStyle.Hidden }) ?? throw new IOException("Could not open input service configuration");
+        await process.WaitForExitAsync();
+        if (process.ExitCode != 0) throw new IOException("Input service configuration failed. If the service is from an older build, update it from Settings > Advanced.");
+        if (InputFeatures.Load() != features) throw new IOException("Input service did not save the requested feature switches");
+    }
+
+    /// <summary>
+    /// Replace the installed service with the one published with this launcher's release: the same
+    /// download, signature checks and elevated installer as a first install, with the switches and
+    /// the profile as they are now. The installer stops the service, swaps its folder and starts it
+    /// again. Returns the version now installed.
+    /// </summary>
+    public async Task<string> Update(AppSettings settings)
+    {
+        if (!InputServiceSetup.IsInstalled()) throw new IOException("The input service is not installed");
+        var features = InputFeatures.Load();
+        UpdateProfile(settings);
+        string profile = Convert.ToBase64String(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(_profile, Protocol.Json)));
+        ReportSetup("Preparing input service update", null);
+        try
+        {
+            await InputServiceSetup.Install(profile, features, ReportSetup, _stop.Token);
+            var now = InputServiceSetup.InstalledVersion();
+            Log.Info($"Input service updated to {(now is null ? "an unreadable version" : UpdateService.Format(now))}");
+            return now is null ? UpdateService.Format(InputServiceSetup.Bundled) : UpdateService.Format(now);
         }
         catch (Win32Exception ex) when (ex.NativeErrorCode == 1223) { throw new OperationCanceledException("Administrator approval was cancelled", ex); }
         finally { await RefreshStatus(); ReportSetup(null, null); }
@@ -259,5 +332,5 @@ internal sealed class ServiceInputClient : IDisposable
 }
 
 internal sealed record InputServiceUiStatus(bool Enabled, bool Installed, string State, string? Error, bool Busy, int? Progress,
-    bool UacEnabled, bool SignInEnabled);
+    bool UacEnabled, bool SignInEnabled, string? InstalledVersion = null, string? UpdateTo = null);
 internal sealed class InputServiceInstallRequiredException : Exception { }

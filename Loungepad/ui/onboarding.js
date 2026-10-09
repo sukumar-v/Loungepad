@@ -337,7 +337,7 @@ const ONB_PAGES = {
         {
           name: "More couch tips", hint: "Signing in without a PIN at all, waking the PC with the controller, starting Loungepad on its own",
           type: "action", label: "Open guide",
-          action: () => { guideOpen = true; showOverlay("overlay-guide"); },
+          action: () => openGuide(),
         },
       ],
     };

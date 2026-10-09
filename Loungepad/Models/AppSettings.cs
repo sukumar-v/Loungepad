@@ -211,6 +211,15 @@ public class AppSettings
     /// SettingsStore.Load: that install was set up by hand, and nobody wants a welcome screen on
     /// the hundredth start.</summary>
     public int OnboardingVersion { get; set; }
+    /// <summary>The version whose release notes were last shown (UiBridge.PushWhatsNew). Written by
+    /// the host only and left out of CopySettings on purpose: the page's copy is whatever the last
+    /// state push said, and sending it back must not be able to bring the notes up again. Null on
+    /// an install from before it existed, which is an update, so its notes are shown.</summary>
+    public string? WhatsNewSeen { get; set; }
+    /// <summary>The input service version this install was last asked to update to
+    /// (UiBridge.PushSecureInputUpdate), so "Later" is not asked again until the next one. Host-only
+    /// like WhatsNewSeen, and for the same reason not in CopySettings.</summary>
+    public string? SecureInputUpdateAsked { get; set; }
 
     // Rest and sleep (see RestService)
     /// <summary>Minutes without a touch on the pad, the keyboard or the mouse before the launcher
@@ -235,6 +244,10 @@ public class AppSettings
     // Gamepad → mouse
     public bool GamepadMouseEnabled { get; set; } = true;
     public bool GamepadMouseDuringGame { get; set; }   // off by default so it never fights native pad support
+    /// <summary>Steam's Big Picture, and any game Steam started, count as a focused game: Steam
+    /// reads the pad there, and the stick as a mouse and A as a click on top of it was two drivers
+    /// on every press. Off, Loungepad's desktop mapping runs over them as over any window.</summary>
+    public bool SteamOwnsPad { get; set; } = true;
     public double Deadzone { get; set; } = 0.18;       // 0.05 .. 0.40
     public double Sensitivity { get; set; } = 1.0;     // 0.2 .. 3.0 (multiplier on max cursor speed)
     public double AccelExponent { get; set; } = 1.8;   // 1.0 linear .. 3.0 strongly curved
