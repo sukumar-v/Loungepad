@@ -887,6 +887,16 @@ function updateFocusDetail(g) {
   $("fdPlaytime").textContent = g ? fmtPlaytime(g.playtimeMinutes) : "";
   $("fdLastPlayed").textContent = g ? fmtLastPlayed(g.lastPlayed) : "";
   $("fdSize").textContent = g ? fmtSize(g.sizeBytes) : "";
+  const logo = $("fdLogo"), src = g ? logoUrl(g) : null;
+  logo.style.backgroundImage = src ? `url('${src}')` : "";
+  logo.closest(".focus-detail").classList.toggle("has-logo", !!src);
+  $("fdPlayLabel").textContent = g ? playLabel(g) : "Play";
+}
+
+/** What the Play button says for a game: the detail page's, and the focused-game panel's. */
+function playLabel(g) {
+  return !g.installed ? (canInstall(g) ? "Install" : "Not installed")
+    : (g.playtimeMinutes > 0 ? "Continue" : "Play");
 }
 
 /** The game the highlight is on, straight off the element. */
@@ -3400,9 +3410,7 @@ function renderDetail() {
   renderDetailExtFacts(g);
   renderDetailStats(g);
 
-  $("playLabel").textContent = !g.installed
-    ? (canInstall(g) ? "Install" : "Not installed")
-    : (g.playtimeMinutes > 0 ? "Continue" : "Play");
+  $("playLabel").textContent = playLabel(g);
   // Achievements only for a game that can have a list; Stats for every game, because its sheet is
   // also where a session Loungepad did not see is logged by hand. Hidden elements are not
   // focusables, so the highlight simply never lands on a missing one.

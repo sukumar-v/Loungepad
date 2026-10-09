@@ -2612,3 +2612,9 @@ Stop the scrolled grid from clipping through the All games header
   (made before the domain existed): curl and .NET failed with "could not resolve" while public DNS
   answered. Test with `--resolve api.loungepad.app:443:104.21.28.128`, or a `ConnectCallback` in
   .NET; never look a new name up before it exists.
+- **Nova, the console-home theme, is in `..\loungepad-addons\themes\nova`, not yet in `index.json`**
+  (Oct 9 2026; the user asked for it unpublished). It uses the focused-game panel's wordmark and
+  Play/Options hints (`#fdLogo`, `.fd-actions`), which ship from 1.9.0, hence its `minLauncher`.
+  To preview it, junction the folder into `Loungepad\themes\nova` and push a `themes` message;
+  **remove the junction before any build**, or the csproj embeds it as a bundled theme. No
+  PlayStation name or marks in it: the add-ons repository is public.
