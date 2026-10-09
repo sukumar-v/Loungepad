@@ -2595,13 +2595,17 @@ Stop the scrolled grid from clipping through the All games header
   `node tools\addons-stats-harness.mjs` is its check (26). **Clear test rows after a live test**
   (`wrangler d1 execute loungepad-addons-stats --remote --command "DELETE FROM marks; DELETE FROM
   counts; DELETE FROM salts;"`), or the user's own like from the same address is refused that day.
-- **The metadata service is `loungepad-service` at `api.loungepad.app`** (Custom Domain,
-  Oct 9 2026; `MetadataProxyClient.DefaultEndpoint` from 1.9.0). `consolify-metadata` becomes
-  `proxy/legacy/forwarder.js`, a service binding to it that keeps the caller's address -- **but only
-  once the new worker has its three secrets** (`IGDB_CLIENT_ID`, `IGDB_CLIENT_SECRET`, `SGDB_KEY`,
-  per worker; the user sets them, they are API keys). Until then the old worker is untouched and
-  serves 1.8.0 and older; the new one shares its D1 cache, so it answers hits already. Check with
-  `wrangler secret list --name loungepad-service` before deploying the forwarder.
+- **The service is `loungepad-service` at `api.loungepad.app`** (Custom Domain, Oct 9 2026;
+  `MetadataProxyClient.DefaultEndpoint` from 1.9.0; named for more than metadata, the user's call).
+  `consolify-metadata` is `proxy/legacy/forwarder.js` since the same evening, a service binding to it
+  that keeps the caller's address: builds up to 1.8.0 reach the same code (checked: the old address
+  answers `/v1/addons/stats`, a route only the new worker has). Its cron is off and its three old
+  secrets are unused. Delete it once nobody runs a build from before 1.9.0. The keys are a NEW
+  Twitch application's, so the old one can be deleted on dev.twitch.tv.
+- **The Twitch token is cached as `twitch:token:<client id>`**, and a 401 from IGDB fetches a new
+  one once. The D1 cache is shared, and the new worker first read the old application's token under
+  the bare `twitch:token`: every uncached IGDB lookup was a 502 while SteamGridDB worked, which is
+  the signature of a token from another application, not of a bad key.
 - **This PC's resolver cached `api.loungepad.app` as missing** for a while after the first lookup
   (made before the domain existed): curl and .NET failed with "could not resolve" while public DNS
   answered. Test with `--resolve api.loungepad.app:443:104.21.28.128`, or a `ConnectCallback` in
