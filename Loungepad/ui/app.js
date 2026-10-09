@@ -4861,7 +4861,7 @@ function renderSettings() {
   if (footEl) footEl.innerHTML = settingsPane === "nav"
     ? foot(["A", "Open"], ["B", "Back"], ["DpadV", "Category"])
     : settingsTab === "addons" ? (addonsUi.level === "grid"
-        ? foot(["A", "Open"], ["Y", "Options"], ["X", "Sort: " + addonSortLabel()], ["LB", "Themes"], ["RB", "Extensions"], ["B", "Categories"])
+        ? foot(["A", "View details"], ["Y", "Options"], ["X", "Sort: " + addonSortLabel()], ["LB", "Themes"], ["RB", "Extensions"], ["B", "Categories"])
         : foot(["A", aLabel], ["B", "Back"]))
     : settingsTab !== "actions" ? foot(["A", aLabel], ["B", "Categories"])
     : actionsUi.level === "apps" ? foot(["A", "Open"], ["B", "Categories"])

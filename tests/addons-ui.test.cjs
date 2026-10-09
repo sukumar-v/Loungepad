@@ -90,8 +90,21 @@ ctx.enterAddon('extension:howlongtobeat');
 assert.equal(ctx.addonsUi.level, 'addon');
 rows = ctx.addonsSettingsRows();
 const names = rows.filter(r => !r.section).map(r => r.name);
-deepEqual(names, ['HowLongToBeat', 'Can reach', 'Like', 'Enabled', 'Status', 'Fetch now', 'Match the release year', 'Restart', 'Open developer tools', 'Remove', 'Extensions folder']);
-assert.equal(rows.find(r => r.name === 'Can reach').valueHtml.includes('howlongtobeat.com'), true);
+// Only rows that do something: the facts are the header, which is not focusable.
+deepEqual(names, ['Like', 'Enabled', 'Fetch now', 'Match the release year', 'Restart', 'Open developer tools', 'Remove', 'Extensions folder']);
+const hero = rows.find(r => r.header);
+assert(hero && hero.section, 'the header is a section to the counting, so never highlighted');
+const heroHtml = hero.build().innerHTML;
+assert.match(heroHtml, /addon-hero-name">HowLongToBeat</);
+assert.match(heroHtml, /addon-pill good">Running</);
+assert.match(heroHtml, /Reaches <b>howlongtobeat\.com<\/b> only/);
+assert.match(heroHtml, /cannot read your settings/);
+assert.match(heroHtml, /Extension · v1\.0\.0/);
+assert.match(ctx.addonStatusPill({ ...hltb, status: { state: 'error' } }), /danger">Error/);
+assert.match(ctx.addonStatusPill({ ...hltb, enabled: false }), />Off</);
+assert.match(ctx.addonStatusPill({ installed: false, needsLauncher: '2.0.0', kind: 'extension' }), /warn">Needs Loungepad 2\.0\.0/);
+assert.match(ctx.addonHeroEl({ ...hltb, error: 'manifest.json is not valid' }).innerHTML, /addon-hero-warn">manifest\.json is not valid/);
+assert.match(ctx.addonHeroEl({ ...hltb, name: '<b>x</b>' }).innerHTML, /&lt;b&gt;|\<b\>x/, 'the name goes through esc');
 assert.match(rows.find(r => r.name === 'Fetch now').hint, /10 asked, 8 answered, 1 failed/);
 rows.find(r => r.name === 'Enabled').action();
 deepEqual(sent.pop(), { cmd: 'addonEnable', key: 'extension:howlongtobeat', on: false });
@@ -126,11 +139,12 @@ deepEqual(sent.pop(), { cmd: 'addonInstallFile', how: 'folder' });
 // The short menu.
 ctx.S.settings.theme = 'loungepad';
 ctx.addonQuickMenu(items[1]);
-deepEqual(choice.items.map(i => i.label), ['Open', 'Like', 'Update to 1.1.0', 'Use this theme', 'Remove']);
+deepEqual(choice.items.map(i => i.label), ['View details', 'Like', 'Update to 1.1.0', 'Use this theme', 'Remove']);
+assert.equal(choice.items[0].sub, undefined, 'View details has no sub text');
 ctx.addonQuickMenu(items[2]);
-deepEqual(choice.items.map(i => i.label), ['Open', 'Like', 'Install']);
+deepEqual(choice.items.map(i => i.label), ['View details', 'Like', 'Install']);
 ctx.addonQuickMenu(items[0]);
-deepEqual(choice.items.map(i => i.label), ['Open'], 'a bundled theme in use: only Open');
+deepEqual(choice.items.map(i => i.label), ['View details'], 'a bundled theme in use: only View details');
 
 // The back path lands on the tile that was opened.
 ctx.addonsUi = { level: 'addon', kind: 'theme', key: 'theme:night' };

@@ -238,31 +238,76 @@ function fmtAgo(iso) {
   return `${Math.round(h / 24)} days ago`;
 }
 
-/* ---- one add-on's page ---- */
+/* ---- one add-on's page ----
+   The facts are a header, not rows: nothing in it takes the highlight, so everything the D-pad can
+   land on below it does something. The header carries what used to be read-only rows (the
+   description, what an extension can reach, whether it is running, an error) beside the icon,
+   with the counts and a status pill. */
+
+/** The pill beside the name: where the add-on stands, in a word or two. */
+function addonStatusPill(a) {
+  const pill = (text, tone) => `<span class="addon-pill${tone ? " " + tone : ""}">${esc(text)}</span>`;
+  if (a.busy === "downloading") return pill(`Downloading ${a.progress || 0}%`, "accent");
+  if (a.busy === "installing") return pill("Installing…", "accent");
+  if (!a.installed) return a.needsLauncher ? pill(`Needs Loungepad ${a.needsLauncher}`, "warn") : pill("Not installed");
+  if (a.error) return pill("Cannot load", "danger");
+  if (a.kind === "theme") return addonInUse(a) ? pill("In use", "good") : pill(a.bundled ? "Built in" : "Installed");
+  if (!a.enabled) return pill("Off");
+  const st = (a.status && a.status.state) || "stopped";
+  return st === "running" ? pill("Running", "good") : st === "error" ? pill("Error", "danger")
+    : st === "starting" ? pill("Starting") : pill("Stopped");
+}
+
+function addonHeroEl(a) {
+  const el = document.createElement("div");
+  el.className = "addon-hero";
+  const icon = a.icon ? `<div class="addon-hero-icon" style="background-image:url('${esc(a.icon)}')"></div>`
+    : `<div class="addon-hero-icon mono"><span>${esc((a.name || "?").trim().charAt(0).toUpperCase())}</span></div>`;
+  const meta = [a.kind === "theme" ? "Theme" : "Extension",
+    a.version ? "v" + a.version : a.available ? "v" + a.available : null,
+    a.author ? "by " + a.author : null].filter(Boolean).join(" · ");
+  const pills = addonStatusPill(a)
+    + (a.installed && a.update ? `<span class="addon-pill accent">Update to ${esc(a.available)}</span>` : "");
+
+  const facts = [];
+  if (hasCounts(a)) {
+    facts.push(`<span class="addon-fact${a.liked ? " liked" : ""}">${iconSvg("heart")}<b>${fmtCount(a.likes)}</b> ${a.likes === 1 ? "like" : "likes"}</span>`);
+    facts.push(`<span class="addon-fact">${iconSvg("download")}<b>${fmtCount(a.downloads)}</b> ${a.downloads === 1 ? "download" : "downloads"}</span>`);
+  }
+  if (a.kind === "extension") {
+    const hosts = a.hosts || [];
+    facts.push(`<span class="addon-fact">${iconSvg("globe")}${hosts.length ? `Reaches <b>${esc(hosts.join(", "))}</b> only` : "Reaches nothing on the network"}</span>`);
+  }
+  const st = a.status || {};
+  if (a.kind === "extension" && a.installed && a.enabled && st.state === "running" && st.startedAt)
+    facts.push(`<span class="addon-fact">${iconSvg("clock")}Running for ${esc(fmtAgo(st.startedAt).replace(" ago", "").replace("just now", "a moment"))}${st.calls ? ` · ${st.calls} ${st.calls === 1 ? "lookup" : "lookups"}` : ""}</span>`);
+
+  const notes = [];
+  if (a.error) notes.push(`<div class="addon-hero-warn">${esc(a.error)}. Reinstall it, or remove it below.</div>`);
+  else if (a.kind === "extension" && a.enabled && st.state === "error") notes.push(`<div class="addon-hero-warn">${esc(st.error || "It stopped with an error")}</div>`);
+  if (!a.installed && a.needsLauncher) notes.push(`<div class="addon-hero-warn">This version needs Loungepad ${esc(a.needsLauncher)}; this is ${esc(addonsData().launcher || "older")}. Update Loungepad first.</div>`);
+  if (a.kind === "extension")
+    notes.push(`<div class="addon-hero-note">It cannot read your settings, your files or your accounts, start anything, or draw on the screen.</div>`);
+  if (a.bundled) notes.push(`<div class="addon-hero-note">Part of Loungepad, and kept up to date with it.</div>`);
+
+  el.innerHTML = icon + `<div class="addon-hero-body">
+    <div class="addon-hero-title"><span class="addon-hero-name">${esc(a.name)}</span>${pills}</div>
+    <div class="addon-hero-meta">${esc(meta)}</div>
+    ${a.description ? `<p class="addon-hero-desc">${esc(a.description)}</p>` : ""}
+    ${facts.length ? `<div class="addon-hero-facts">${facts.join("")}</div>` : ""}
+    ${notes.join("")}
+  </div>`;
+  return el;
+}
 
 function addonPageRows(a) {
   const rows = [];
   const s = S.settings || {};
   const set = (fn) => { fn(); scheduleSave(); renderSettings(); };
-  const bits = [a.version ? "v" + a.version : a.available ? "v" + a.available : null, a.author ? "by " + a.author : null].filter(Boolean);
-  rows.push({ section: `${a.name.toUpperCase()}${bits.length ? " · " + bits.join(" · ").toUpperCase() : ""}`, cat: "addons" });
-  // The facts first: what it is, and for an extension what it may reach. Neither does anything on A.
-  rows.push({
-    name: a.name, hint: a.description || (a.kind === "theme" ? "A theme for Loungepad" : "An extension for Loungepad"),
-    type: "html", valueHtml: a.icon ? `<span class="addon-row-icon" style="background-image:url('${esc(a.icon)}')"></span>` : "",
-  });
-  if (a.kind === "extension") rows.push({
-    name: "Can reach", type: "html",
-    hint: a.hosts && a.hosts.length
-      ? "The only hosts it may send requests to. It cannot read your settings, your files or your accounts, start anything, or draw on the screen"
-      : "Nothing on the network. It cannot read your settings, your files or your accounts, start anything, or draw on the screen",
-    valueHtml: `<span class="set-text">${esc(a.hosts && a.hosts.length ? a.hosts.join(", ") : "Nothing")}</span>`,
-  });
-  if (a.error) rows.push({ name: "Cannot load", hint: a.error, warn: "Reinstall it, or remove it below", type: "html", valueHtml: "" });
+  rows.push({ section: true, header: true, build: () => addonHeroEl(a) });
   if (a.available) rows.push({
     name: a.liked ? "You like this" : "Like", type: "html",
-    hint: (hasCounts(a) ? `${a.likes} ${a.likes === 1 ? "person likes" : "people like"} it, ${a.downloads} ${a.downloads === 1 ? "download" : "downloads"}. ` : "")
-      + "A like is kept on this PC; the add-ons service only counts it",
+    hint: "Kept on this PC. The add-ons service only counts it",
     valueHtml: `<span class="addon-like-row${a.liked ? " liked" : ""}">${iconSvg("heart")}<span>${a.liked ? "Liked" : "Like"}</span></span>`,
     action: () => toggleAddonLike(a),
   });
@@ -271,8 +316,7 @@ function addonPageRows(a) {
   if (!a.installed) {
     rows.push({
       name: "Install", type: "action", label: a.busy ? (a.busy === "downloading" ? `${a.progress || 0}%` : "Installing…") : "Install",
-      hint: a.needsLauncher ? `Needs Loungepad ${a.needsLauncher}; this is ${addonsData().launcher || "older"}. Update Loungepad first`
-        : `From the add-ons repository${a.available ? ", version " + a.available : ""}`,
+      hint: a.needsLauncher ? "Needs a newer Loungepad" : `From the add-ons repository${a.available ? ", version " + a.available : ""}`,
       action: () => installAddon(a),
     });
   } else if (a.update) {
@@ -304,14 +348,6 @@ function addonPageRows(a) {
   if (a.kind === "extension" && a.installed && !a.error) {
     rows.push(toggleRow("Enabled", a.enabled ? "On. Off stops it and keeps what it stored" : "Off. On starts it and asks it about your games",
       () => !!a.enabled, v => { a.enabled = v; send({ cmd: "addonEnable", key: a.key, on: v }); renderSettings(); }));
-    const st = a.status || {};
-    if (a.enabled) rows.push({
-      name: "Status", type: "html",
-      hint: st.state === "error" ? null : st.state === "running" ? `Running${st.startedAt ? " for " + fmtAgo(st.startedAt).replace(" ago", "").replace("just now", "a moment") : ""}${st.calls ? ` · ${st.calls} call${st.calls === 1 ? "" : "s"}` : ""}`
-        : st.state === "starting" ? "Starting…" : "Not running",
-      warn: st.state === "error" ? (st.error || "It stopped with an error") : null,
-      valueHtml: `<span class="set-text${st.state === "error" ? " danger" : ""}">${esc(st.state === "running" ? "Running" : st.state === "error" ? "Error" : st.state === "starting" ? "Starting" : "Stopped")}</span>`,
-    });
     if (a.enabled && a.contributes && a.contributes.metadata) {
       const lp = a.lastPass;
       const passing = addonsData().passRunning;
@@ -366,7 +402,6 @@ function addonPageRows(a) {
       onYes: () => { send({ cmd: "addonRemove", key: a.key }); addonsTabReset(); settingsIdx = 0; },
     }),
   });
-  if (a.bundled) rows.push({ name: "Built into Loungepad", hint: "Kept up to date with the launcher; it cannot be removed", type: "html", valueHtml: "" });
   rows.push({
     name: a.kind === "theme" ? "Themes folder" : "Extensions folder", hint: "Opens it in Explorer, for a look at the files",
     type: "action", label: "Open",
@@ -437,7 +472,7 @@ function refreshAddons() {
 /* ---- the short menu (Y on a tile) ---- */
 
 function addonQuickMenu(a) {
-  const items = [{ label: "Open", icon: "info", sub: a.description || null, action: () => enterAddon(a.key) }];
+  const items = [{ label: "View details", icon: "info", action: () => enterAddon(a.key) }];
   if (a.available) items.push({ label: a.liked ? "Unlike" : "Like", icon: "heart", sub: hasCounts(a) ? `${fmtCount(a.likes)} likes` : null, action: () => toggleAddonLike(a) });
   if (!a.installed) items.push({ label: "Install", icon: "download", sub: a.installable ? (a.available ? "Version " + a.available : null) : `Needs Loungepad ${a.needsLauncher}`, action: () => installAddon(a) });
   else if (a.update) items.push({ label: `Update to ${a.available}`, icon: "download", action: () => installAddon(a) });

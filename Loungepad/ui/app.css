@@ -1585,6 +1585,42 @@ body.overlay-mode #overlay-actions { background: color-mix(in srgb, var(--bg) 74
 .addon-like-row .ov-icon { width: 26px; height: 26px; }
 .app-tile:has(.addon-counts) { gap: 6px; }
 .app-sub.muted { opacity: 0.6; }
+/* An add-on's page: the header (addonHeroEl). Not focusable; the rows under it are the actions. */
+.addon-hero {
+  display: flex; gap: 32px; align-items: flex-start; flex: 0 0 auto;
+  padding: 30px 36px 32px; margin-bottom: 6px; border-radius: 20px;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 9%, var(--card)), var(--card) 60%);
+  border: 1px solid color-mix(in srgb, var(--edge) 8%, transparent);
+}
+.addon-hero-icon {
+  flex: 0 0 120px; height: 120px; border-radius: 28px;
+  background: color-mix(in srgb, var(--ink) 7%, transparent) center / 64% no-repeat;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--edge) 8%, transparent);
+}
+.addon-hero-icon.mono span { font-size: 54px; font-weight: 700; color: color-mix(in srgb, var(--ink) 70%, transparent); }
+.addon-hero-body { display: flex; flex-direction: column; gap: 10px; min-width: 0; padding-top: 4px; }
+.addon-hero-title { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.addon-hero-name { font-size: 40px; font-weight: 650; letter-spacing: -0.015em; line-height: 1.1; }
+.addon-hero-meta { font-family: "IBM Plex Mono", monospace; font-size: 15px; letter-spacing: 0.08em; text-transform: uppercase; color: color-mix(in srgb, var(--ink) 45%, transparent); }
+.addon-hero-desc { margin: 4px 0 0; max-width: 1040px; font-size: 21px; line-height: 1.45; color: color-mix(in srgb, var(--ink) 80%, transparent); }
+.addon-hero-facts { display: flex; flex-wrap: wrap; gap: 10px 26px; margin-top: 6px; }
+.addon-fact { display: inline-flex; align-items: center; gap: 8px; font-size: 18px; color: color-mix(in srgb, var(--ink) 62%, transparent); }
+.addon-fact b { font-weight: 600; color: var(--ink); }
+.addon-fact .ov-icon { width: 20px; height: 20px; }
+.addon-fact.liked, .addon-fact.liked b { color: var(--accent); }
+.addon-fact.liked .ov-icon { fill: currentColor; }
+.addon-hero-note { font-size: 16px; color: color-mix(in srgb, var(--ink) 42%, transparent); }
+.addon-hero-warn { font-size: 17px; color: var(--danger, #e06060); }
+.addon-pill {
+  display: inline-flex; align-items: center; height: 30px; padding: 0 13px; border-radius: 15px;
+  font-size: 14px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+  color: color-mix(in srgb, var(--ink) 70%, transparent); background: color-mix(in srgb, var(--ink) 10%, transparent);
+}
+.addon-pill.good { color: #6fcf97; background: color-mix(in srgb, #6fcf97 15%, transparent); }
+.addon-pill.accent { color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.addon-pill.warn { color: #ffbd3f; background: color-mix(in srgb, #ffbd3f 15%, transparent); }
+.addon-pill.danger { color: var(--danger, #e06060); background: color-mix(in srgb, var(--danger, #e06060) 15%, transparent); }
 .addon-row-icon { width: 44px; height: 44px; border-radius: 12px; background: color-mix(in srgb, var(--ink) 6%, transparent) center / 70% no-repeat; }
 .set-text.danger { color: var(--danger, #e06060); }
 
