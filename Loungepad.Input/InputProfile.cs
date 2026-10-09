@@ -121,4 +121,22 @@ internal static class MachineInputSettings
         try { return JsonSerializer.Deserialize<List<string>>(json) ?? new(); }
         catch (JsonException) { return Array.Empty<string>(); }
     }
+
+    /// <summary>
+    /// How the launcher's pipe connections began and ended: the last eight, newest first, with
+    /// their times (registry value Clients). A launcher reconnecting every few seconds showed only
+    /// as the worker's mode flapping in the health record, and both sides swallow the exception
+    /// on purpose (Oct 8 2026).
+    /// </summary>
+    public static void NoteClient(string note)
+    {
+        using var key = Registry.LocalMachine.CreateSubKey(RegistryPath);
+        var history = new List<string> { $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} {note}" };
+        if (key.GetValue("Clients") is string previous && previous.Length <= 16384)
+        {
+            try { history.AddRange(JsonSerializer.Deserialize<List<string>>(previous) ?? new()); }
+            catch (JsonException) { }
+        }
+        key.SetValue("Clients", JsonSerializer.Serialize(history.Take(8)), RegistryValueKind.String);
+    }
 }

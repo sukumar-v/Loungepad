@@ -418,7 +418,7 @@ the tick reads only slots that answered, and the probe's worst time rides in hea
 `XInputProbeMaxMs` with `XInputSlots`: if that number is tens of milliseconds while `TickMaxMs`
 is 8, the diagnosis is confirmed and the cure is already in.
 
-### The watch: 13 ms ticks with nothing connected, 25-48 ms connected; the dispatcher's priority, not XInput (Oct 8, 21:00-23:00)
+### The watch: 13 ms ticks with nothing connected, 25-48 ms connected; Process.SessionId on every tick, not XInput (Oct 8, 21:00-23:40)
 
 `--health-watch 420` ran across the user's install of the `089770B1…` agent and the four
 scenarios. Per heartbeat (about a second each) it recorded:
@@ -446,37 +446,55 @@ at the same priority as the tick; the two take turns and the tick rate halves. (
 would need a reply more than 250 ms late while the worker still counts the launcher as
 connected; with handling at a millisecond that window does not open.)
 
-Why about 13 ms an operation: the pump posted the tick at `DispatcherPriority.Input`, and in
-WPF everything below `Loaded` is a *background* priority. The dispatcher dequeues a background
-operation only when it finds the thread's Win32 message queue empty and otherwise comes back on
-a message timer, which is the system clock's 10-15.6 ms and is itself delivered only when nothing
-else is queued. In the test process the queue was empty, so `--dispatcher-cadence-probe` and
-`--agent-loop-probe` ran at 8.00 ms at every priority and never reproduced it. Nor does
-`--dispatcher-cadence-probe busy` (23:30), which adds a second thread posting the launcher's
-requests every 8 ms at the same priority: Input ticks beside Input requests still 8.00 ms, 499
-ticks, request queue wait 0.11 ms mean, 2.6 max. So the queue state that slows the worker is
-specific to that process (SYSTEM, uiAccess, started on a desktop, the hook thread, the quiet
-HID readers) and is not identified; the fix does not depend on it, and the new health fields
-will say whether the time is the queue, the tick body or the clock.
+The first theory, and the 23:20 build that tested it: the pump posted the tick at
+`DispatcherPriority.Input`, a WPF *background* priority (everything below `Loaded` is), which
+the dispatcher runs only when it finds the thread's Win32 queue empty and otherwise defers to a
+message timer. That build posted the tick at `Send` and the requests at `Normal`, opted the
+worker out of power throttling (`ProcessPower.KeepResponsive`) and added to `AgentHealth` the
+fields that would decide: `QueueMeanMs`/`QueueMaxMs` (from posting a tick to running it),
+`WorkMaxMs` (the whole tick body) and `WaitMeanMs` (how long the clock really waited).
+`--dispatcher-cadence-probe busy` (a second thread posting the launcher's requests every 8 ms at
+the same priority) ran at 8.00 ms in a user process, which should have been the hint.
 
-The build in "Latest local build":
+What the fields said (23:23-23:27, agent `E3AD9A6E…`, the user pushing the stick): **`queue`
+0.03-0.05 ms mean** (13-15 ms max when a request ran first), **`work` 26-28 ms max**, **`wait`
+0.00**, `mean` 13.5-14.5 ms. The time was in the tick body, in the one call the earlier fields
+left out: `DesktopApi.IsCurrent` read `Process.GetCurrentProcess().SessionId`, and .NET answers
+that by walking every process on the system (`NtQuerySystemInformation`): **14.6 ms a call on
+this PC**, measured in PowerShell against 0.013 ms for `Process.Id`. Every tick made that call;
+every pipe request made it again in `Handle`, which is the doubling when connected; the health
+write made it a third time once a second, which is the 27 ms max. The test probes never made it
+(they called `Open()` without the session check), so they ran at 8 ms.
 
-- posts the tick at `DispatcherPriority.Send` and handles pipe requests at `Normal`, both
-  foreground priorities: a posted message, processed in turn, never gated on an empty queue;
-- opts the worker out of power throttling (`ProcessPower.KeepResponsive`: `SetProcessInformation`
-  with `ProcessPowerThrottling`, EcoQoS off and timer-resolution requests always honoured), since
-  Windows 11 may treat a process that never shows a window as background;
-- adds to `AgentHealth` what decides the next step without another theory: `QueueMeanMs` and
-  `QueueMaxMs` (from posting a tick to running it), `WorkMaxMs` (the whole tick body, including
-  the per-tick desktop check and the once-a-second device refresh and health write, which the
-  earlier fields left out) and `WaitMeanMs` (how long the clock really waited between ticks).
-  `--health-watch` prints them as `queue=mean/max work= wait=`.
+The 23:20 build also made the launcher's connection flap. With the tick at `Send` and a 14 ms
+body there was no idle time: a `Normal` request waited behind back-to-back ticks past the
+launcher's 500 ms limit, the launcher dropped the pipe and reconnected (connected spells of
+about a second every 3-22 s in the watch, `ready` resetting at each handover, no `Errors`
+entry because both sides swallow pipe exceptions on purpose). The user felt it as three new
+faults: the pointer speeding up and slowing down (once a reply is 250 ms old the launcher moves
+the pointer itself while the worker, quiet for 250 ms, returns to its own mapping -- two movers,
+then one), the D-pad moving focus twice as fast (the worker's own mapping types arrow keys for
+the D-pad while the launcher steps the highlight) and the legend flickering between keyboard
+and gamepad (those typed arrows are keyboard events to the page). The stutter itself was gone
+at 14 ms ticks.
 
-Reading the next watch: `mean` near 8 with `wait` near 7 and `queue` under 1, in both modes, is
-the fix confirmed. `mean` still 13-23 with `queue` and `work` near 0 means the waitable timer
-itself is coarse in that process and the next change is the clock, not the dispatcher. `work` in
-the tens of milliseconds names the tick body (the desktop check, the device refresh) instead.
-Nothing about the mapping, the pad selection or the policy changed, and the launcher did not.
+The build in "Latest local build" (23:40):
+
+- `DesktopApi.CurrentSession` reads the session once (`ProcessIdToSessionId`) and every former
+  `Process.SessionId` read in the agent uses it; the suite now times the desktop check (under
+  2 ms required, 0.006 ms measured);
+- the tick and the pipe requests are both posted at `Normal`, the same foreground priority, so
+  they take turns; `Input` stays out;
+- the worker records how each client connection began and ended in the registry value `Clients`
+  (last eight, with times; `--health-watch` prints changes), so the next flap names its exception;
+- the power-throttling opt-out and the queue/work/wait fields stay. Nothing about the mapping,
+  the pad selection or the policy changed, and the launcher did not (the 23:20 `dist` launcher
+  is current).
+
+Reading the next watch: `mean` 8, `work` under 1 and `wait` about 7 in both modes; the mode
+staying `launcher connected` for as long as Loungepad is open, `ready` staying true, and
+`Clients` showing one `connected` and no `ended` until Loungepad is closed. Then the user's
+three symptoms should be gone with the stutter, and only then is feel worth asking about.
 
 ### Installer reset machine preferences during upgrade
 
@@ -542,9 +560,10 @@ Older GUID build directories and extracted service folders can be stale.
 | --- | --- |
 | Signed launcher (Advanced category, two switches; Oct 8 23:20) | `dist\v1.8.0\Loungepad.exe` (SHA-256 `9FDB348F90DFD09C6F7F1FB20EB67353CCB123D668C08734B0E40B5DB9D30831`) |
 | Launcher ZIP | `dist\v1.8.0\Loungepad-v1.8.0-win-x64.zip` (`AA5E63004DC8D332DDDDC4218BC8D80442A27B106662FA319E2B959567FF8F16`) |
-| Service ZIP (dispatcher priorities, power-throttling opt-out, queue/work/wait in health; Oct 8 23:20) | `dist\Loungepad.InputService-v1.8.0-x64.zip` (`F7FC77D905C683F648C508B42F75B10E2AAD687BD7913D9E929B629CC3B1C3C1`) |
-| **Latest signed service package source** | `artifacts\input-service\b3e70fbdfd7e41cdaf4e4334789c99fa\package` (agent exe `E3AD9A6E7DBC11FCA52D17BDFE191A6372376ACBD6E565BA65FBD46011B5AFEA`; every binary and the catalog signed, Valid with timestamp) |
-| User's follow-up package (two switches, uninstall cleanup; 22:22), **installed as of 23:10**, ticks 23 ms in background mode | `artifacts\input-service\4b6fe9856bcd4a0abacf4a8d2adde6a1\package` (agent dll `F131B3F3…`) |
+| Service ZIP (session id read once, tick and requests at Normal, Clients record; Oct 8 23:45) | `dist\Loungepad.InputService-v1.8.0-x64.zip` (`E11563B139BEC793AD761136D057C31ED6B26F4146E242CCDC00F2FEF50E2AC8`) |
+| **Latest signed service package source** | `artifacts\input-service\3c3f1d4b7e95470192672a480d1fda3a\package` (agent exe `DA4EBC8B8E1399CD7F6F487D494120E45C2CF4C9814E90D1BBF6D64C38E8AAEC`; every binary and the catalog signed, Valid with timestamp, `Test-FileCatalog` Valid) |
+| 23:20 package (tick at Send: starves the pipe, flapping connection), **installed as of 23:45** | `artifacts\input-service\b3e70fbdfd7e41cdaf4e4334789c99fa\package` (agent exe `E3AD9A6E…`) |
+| User's follow-up package (two switches, uninstall cleanup; 22:22), ticks 23 ms in background mode | `artifacts\input-service\4b6fe9856bcd4a0abacf4a8d2adde6a1\package` (agent dll `F131B3F3…`) |
 | 21:05 package (start-up fix, XInput probe off the tick, sticky errors) | `artifacts\input-service\ee572043bd704feabbd3bd63c8cc6aaf\package` (agent `089770B1…`, catalog Valid) |
 | 20:40 package, **installed as of this writing and never runs a worker** | `artifacts\input-service\1d00d017ee434cabba5b5a2cd932107d\package` (agent `A325A8EC…`) |
 | Exact-absolute-move package (20:00) | `artifacts\input-service\d75062cdd8934b3a8b0c12721604a533\package` (agent `4B28EB7A…`) |
@@ -562,13 +581,13 @@ launcher ZIP `F7604E35502DFB93E3A2C79F6A40144287F008331848426B4900188BEFFF3D9B`;
 with a timestamp, file version 1.8.0.0, 29 shipped files embedded. (Earlier launchers: 19:30
 `32304263…`, 18:20 `5FBFA8FD…`, 17:26 `E706A173…`.)
 
-**Installed as of 23:10: the user's 22:22 follow-up service (`4b6fe985…`)**, which has the two
-switches but still posts its tick at `Input`; its worker was ticking at 23 ms with the launcher
-closed. The 23:20 package is NOT installed yet and no launcher was running. To install it, in an
-administrator PowerShell:
+**Installed as of 23:45: the 23:20 service (`b3e70fbd…`, agent `E3AD9A6E…`)**, whose tick at
+`Send` starves the pipe and makes the launcher reconnect every few seconds while the 14 ms body
+lasts (see "The watch"). The 23:45 package is NOT installed yet; the 23:20 `dist` launcher is
+running and is current. To install, in an administrator PowerShell:
 
 ```powershell
-cd 'C:\Users\Sukumar\Projects\Windows\Loungepad\artifacts\input-service\b3e70fbdfd7e41cdaf4e4334789c99fa\package'
+cd 'C:\Users\Sukumar\Projects\Windows\Loungepad\artifacts\input-service\3c3f1d4b7e95470192672a480d1fda3a\package'
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install-input-service.ps1 -SourcePath .
 ```
 
@@ -631,9 +650,9 @@ passing end-to-end test or assume observer ordering relative to the SYSTEM hook.
    switches and profile) and run the new `dist\v1.8.0\Loungepad.exe`. Then
    `dotnet run --project tests/Loungepad.Input.Tests --no-build -- --health-watch 120` while
    the stick is pushed on the desktop with the launcher open and again with it closed: `mean`
-   near 8, `queue` under 1 and `wait` near 7 in both modes is the dispatcher fix confirmed (see
-   "The watch" above for the other two readings and what each one means). Only then ask about
-   feel. Until the service is updated the new launcher moves the pointer through the pipe as
+   near 8, `work` under 1 and `wait` near 7 in both modes, the mode staying `launcher connected`
+   while Loungepad is open and `Clients` showing no `ended` until it closes, is the fix confirmed
+   (see "The watch" above). Only then ask about feel. Until the service is updated the new launcher moves the pointer through the pipe as
    before (with the in-flight guard), and the old launcher with the new service gets the old
    behaviour too: nothing is dead and nothing doubles, whichever is updated first.
 2. Then the user's physical results: smooth motion at the same speed on the desktop, in Task

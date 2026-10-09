@@ -71,14 +71,15 @@ internal sealed class DesktopWorker
         _injector.ReleaseMouse();
         // DispatcherTimer uses the coarse Windows message timer. Drive the STA dispatcher
         // from a precise clock instead; await every tick so slow work cannot queue a burst.
-        // The tick is posted at Send, a foreground priority. At Input it was a WPF background
-        // operation (everything below Loaded is): the dispatcher runs one of those only when it
-        // finds the thread's Win32 queue empty, and otherwise comes back on a message timer. In
-        // the installed worker that cost about 13 ms per operation (Oct 8 2026: 13 ms ticks with
-        // nothing connected, 25-48 ms once the launcher's pipe requests, handled at the same
-        // priority, took turns with them; 8.00 ms in a test process whose queue was empty). How
-        // long each tick sat in the queue, how long its body ran and how long the clock really
-        // waited are in the health record, so the next slow pointer is measured where it happens.
+        // The tick and the pipe requests (Serve) are posted at the same foreground priority,
+        // Normal, so they take turns. Posted at Send the tick starved the requests for as long
+        // as its body ran back to back (Oct 8 2026, 23:23: a 14 ms body left no idle time, the
+        // launcher's replies missed its 500 ms limit and it reconnected every few seconds), and
+        // at Input, a WPF background priority, an operation can wait for an empty Win32 queue.
+        // How long each tick sat in the queue, how long its body ran and how long the clock
+        // really waited are in the health record. That is how the 14 ms body was found: 0.03 ms
+        // of queue, 27 ms of work, and the work was Process.SessionId on every desktop check
+        // (DesktopApi.CurrentSession).
         var pump = Task.Factory.StartNew(() =>
         {
             try
@@ -105,7 +106,7 @@ internal sealed class DesktopWorker
                             _queueSum += queued; _queueMax = Math.Max(_queueMax, queued);
                             _workMax = Math.Max(_workMax, Ms(began)); _waitSum += wait; _waits++;
                         }
-                    }, DispatcherPriority.Send, _stop.Token).Task.GetAwaiter().GetResult();
+                    }, DispatcherPriority.Normal, _stop.Token).Task.GetAwaiter().GetResult();
                 }
             }
             catch (OperationCanceledException) when (_stop.IsCancellationRequested) { }
@@ -197,7 +198,7 @@ internal sealed class DesktopWorker
         if (now < _nextHealth) return;
         _nextHealth = now + 1000;
         MachineInputSettings.ReportError(null);
-        MachineInputSettings.ReportAgent(new(now, Process.GetCurrentProcess().SessionId, Environment.ProcessId,
+        MachineInputSettings.ReportAgent(new(now, (int)DesktopApi.CurrentSession, Environment.ProcessId,
             _desktop, _remoteActive ? "launcher connected" : "background input",
             _latest?.XInputPresent == true || _latest?.Hid.Present == true, _gate.Armed,
             _navigation?.BlockedCount ?? 0,
@@ -243,15 +244,16 @@ internal sealed class DesktopWorker
         {
             try
             {
-                using var pipe = Protocol.Server(Protocol.AgentPipe(Process.GetCurrentProcess().SessionId), user);
+                using var pipe = Protocol.Server(Protocol.AgentPipe((int)DesktopApi.CurrentSession), user);
                 await pipe.WaitForConnectionAsync(_stop.Token);
                 if (!DesktopApi.GetNamedPipeClientProcessId(pipe.SafePipeHandle, out uint pid)
                     || !DesktopApi.ProcessIdToSessionId(pid, out uint session)
-                    || session != Process.GetCurrentProcess().SessionId)
+                    || session != DesktopApi.CurrentSession)
                     throw new UnauthorizedAccessException("Input client is not in this console session");
                 bool authorized = false;
                 pipe.RunAsClient(() => { using var identity = WindowsIdentity.GetCurrent(); authorized = identity.User == user; });
                 if (!authorized) throw new UnauthorizedAccessException("Input client is not the console user");
+                MachineInputSettings.NoteClient($"connected: pid {pid}");
                 while (pipe.IsConnected && !_stop.IsCancellationRequested)
                 {
                     using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
@@ -260,15 +262,21 @@ internal sealed class DesktopWorker
                     if (request.Version != Protocol.Version || request.Events is null || request.Events.Length > 128)
                         throw new IOException("Unsupported input protocol");
                     request.Profile?.Validate();
-                    // Normal, a foreground priority: at Input each request waited for the
-                    // dispatcher to find its Win32 queue empty, about 13 ms, and the ticks waited
-                    // behind them (see the pump).
+                    // The same priority as the tick (see the pump): a lower one starved behind
+                    // back-to-back ticks, a background one can wait for an empty Win32 queue.
                     var reply = await _dispatcher.InvokeAsync(() => Handle(request), DispatcherPriority.Normal, timeout.Token);
                     await Protocol.Write(pipe, reply, timeout.Token);
                 }
+                if (!_stop.IsCancellationRequested) MachineInputSettings.NoteClient("ended: client disconnected");
             }
             catch (OperationCanceledException) when (_stop.IsCancellationRequested) { return; }
-            catch (Exception) { /* a malformed/disconnected client cannot stop physical secure input */ }
+            catch (Exception ex)
+            {
+                // A malformed or disconnected client cannot stop physical secure input. Why it ended
+                // is kept (Clients in the registry): a client reconnecting every few seconds showed
+                // only as the mode flapping in the health record (Oct 8 2026).
+                MachineInputSettings.NoteClient($"ended: {ex.GetType().Name}: {ex.Message}");
+            }
             if (!_stop.IsCancellationRequested)
             {
                 await _dispatcher.InvokeAsync(RelinquishRemote);

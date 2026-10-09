@@ -95,6 +95,7 @@ internal static class Program
             }
             Profiles();
             Features();
+            DesktopCheckCost();
             NavigationFilter();
             Handoff();
             Mapping();
@@ -114,6 +115,20 @@ internal static class Program
     {
         if (!condition) throw new Exception("FAIL: " + name);
         _checks++; Console.WriteLine("PASS: " + name);
+    }
+
+    // The worker runs the desktop check on every tick and every pipe request, so it has to cost
+    // microseconds. It cost 14 ms while it read Process.SessionId, which walks every process on the
+    // system (Oct 8 2026): 13 of the worker's 14 ms tick, found by the health record's WorkMaxMs.
+    private static void DesktopCheckCost()
+    {
+        try { using var desktop = DesktopApi.Open(); }
+        catch { Console.WriteLine("skip: no input desktop to time the desktop check against"); return; }
+        DesktopApi.IsCurrent("Default");
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        for (int i = 0; i < 50; i++) DesktopApi.IsCurrent("Default");
+        double each = sw.Elapsed.TotalMilliseconds / 50;
+        Check(each < 2, $"the desktop check costs {each:F3} ms a call, not a process walk");
     }
 
     // A pad on the cable and on Bluetooth at once is one pad, two of the same model are two.

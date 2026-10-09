@@ -45,9 +45,16 @@ internal static class DesktopApi
             throw new InvalidOperationException("Worker was launched on the wrong desktop");
     }
 
+    /// <summary>This process's session, read once. Process.SessionId walks every process on the
+    /// system on each read (NtQuerySystemInformation; 14.6 ms on this PC, Oct 8 2026), and the
+    /// desktop check below called it on every tick and on every pipe request: 13 of the worker's
+    /// 14 ms tick, with capture, mapping and injection under a millisecond.</summary>
+    public static readonly uint CurrentSession = ReadSession();
+    private static uint ReadSession() => ProcessIdToSessionId((uint)Environment.ProcessId, out uint session) ? session : (uint)Process.GetCurrentProcess().SessionId;
+
     public static bool IsCurrent(string name)
     {
-        try { using var desktop = Open(); return desktop.Name == name && Process.GetCurrentProcess().SessionId == WTSGetActiveConsoleSessionId(); }
+        try { using var desktop = Open(); return desktop.Name == name && CurrentSession == WTSGetActiveConsoleSessionId(); }
         catch { return false; }
     }
 
@@ -65,13 +72,13 @@ internal static class DesktopApi
 
     public static SecurityIdentifier? ConsoleUser()
     {
-        if (!WTSQueryUserToken((uint)Process.GetCurrentProcess().SessionId, out var token)) return null;
+        if (!WTSQueryUserToken(CurrentSession, out var token)) return null;
         using (token) { using var identity = new WindowsIdentity(token.DangerousGetHandle()); return identity.User; }
     }
 
     public static bool? SignedInAndUnlocked()
     {
-        uint session = (uint)Process.GetCurrentProcess().SessionId;
+        uint session = CurrentSession;
         // No authenticated console user means the pre-login/sign-in screen.
         if (!WTSQuerySessionInformation(IntPtr.Zero, session, 5, out var user, out _)) return null; // WTSUserName
         try { if (string.IsNullOrEmpty(Marshal.PtrToStringUni(user))) return false; }

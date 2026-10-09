@@ -46,18 +46,21 @@ to avoid flashing the Windows loading cursor.
 
 Input polling uses a process-local high-resolution waitable timer on an 8 ms schedule, with
 no global timer-resolution changes or busy spinning. The worker posts one tick at a time to
-its STA dispatcher at `DispatcherPriority.Send`, and handles the launcher's pipe requests at
-`Normal`: both are foreground priorities. `Input` and everything below `Loaded` are WPF
-background priorities, which the dispatcher runs only when it finds the thread's Win32 queue
-empty and otherwise defers to a message timer; posted that way, the installed worker's ticks
-ran about 13 ms apart with nothing connected and 25-48 ms apart once the launcher's requests
-took turns with them (Oct 8 2026). The worker also opts out of Windows power throttling
-(`ProcessPower`), so a process that never shows a window keeps its timer resolution. Its
-health record reports, per second, how long ticks waited in the dispatcher queue, how long
-the longest tick body ran and how long the clock really waited, so a slow pointer is read
-from the registry as queue, body or clock. Movement uses `Stopwatch` timing rather than the
-coarse `TickCount64` clock, which remains suitable for health and timeout checks. The
-launcher wakes its IPC loop immediately when new synthetic input is queued.
+its STA dispatcher, and the launcher's pipe requests are handled there too, both at
+`DispatcherPriority.Normal`: the same foreground priority, so the two take turns (a higher
+priority for the tick starved the requests while the tick body was slow, and `Input` is a WPF
+background priority that waits for an empty Win32 queue). The tick body has to stay in the
+microseconds: the per-tick desktop check once read `Process.SessionId`, which walks every
+process on the system (14 ms here), and that alone made the worker tick every 13 ms with
+nothing connected and every 25-48 ms with the launcher's requests interleaved (Oct 8 2026);
+the session is read once (`DesktopApi.CurrentSession`). The worker also opts out of Windows
+power throttling (`ProcessPower`). Its health record reports, per second, how long ticks
+waited in the dispatcher queue, how long the longest tick body ran and how long the clock
+really waited, so a slow pointer is read from the registry as queue, body or clock, and the
+`Clients` value records how each launcher connection began and ended. Movement uses
+`Stopwatch` timing rather than the coarse `TickCount64` clock, which remains suitable for
+health and timeout checks. The launcher wakes its IPC loop immediately when new synthetic
+input is queued.
 
 On Default, the agent captures controllers while the launcher is connected, and the launcher's
 existing policy decides what the pad does: buttons, the keyboard toggle, combos, bindings and

@@ -440,7 +440,7 @@ internal static class MotionProbes
     public static void HealthWatch(int seconds)
     {
         Console.WriteLine($"Watching the agent for {seconds} s. Repeat the scenarios now.");
-        string? lastKey = null, lastError = null, lastErrors = null; long lastTick = -1;
+        string? lastKey = null, lastError = null, lastErrors = null, lastClients = null; long lastTick = -1;
         var sw = Stopwatch.StartNew();
         using var tick = new MillisecondTimer();
         while (sw.Elapsed.TotalSeconds < seconds)
@@ -451,6 +451,8 @@ internal static class MotionProbes
             if (error != lastError) { Console.WriteLine($"{stamp} LastError: {(error is null ? "(cleared)" : error)}"); lastError = error; }
             string? errors = key?.GetValue("Errors") as string;
             if (errors != lastErrors && errors is not null) { Console.WriteLine($"{stamp} Errors: {errors}"); lastErrors = errors; }
+            string? clients = key?.GetValue("Clients") as string;
+            if (clients != lastClients && clients is not null) { Console.WriteLine($"{stamp} Clients: {clients}"); lastClients = clients; }
             var health = MachineInputSettings.Agent();
             if (health is null)
             {

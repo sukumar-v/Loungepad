@@ -10,7 +10,7 @@ internal static class Program
     [STAThread]
     public static void Main(string[] args)
     {
-        if (!WindowsIdentity.GetCurrent().IsSystem || Process.GetCurrentProcess().SessionId != DesktopApi.WTSGetActiveConsoleSessionId())
+        if (!WindowsIdentity.GetCurrent().IsSystem || DesktopApi.CurrentSession != DesktopApi.WTSGetActiveConsoleSessionId())
             throw new UnauthorizedAccessException("Only the LocalSystem service may start the console input agent");
         if (args.Length == 2 && args[0] == "--desktop" && args[1] is "Default" or "Winlogon")
         {

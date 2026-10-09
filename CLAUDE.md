@@ -2371,20 +2371,29 @@ Stop the scrolled grid from clipping through the All games header
   one call whose cost depends on the process. It was the suspect for the slow Default worker until
   the same health record showed the probe at 0.1 ms beside 13 ms ticks (next bullet): a
   measurement that clears a suspect is worth as much as one that convicts.
-- **The worker posts its tick to the WPF dispatcher at `Send` and pipe requests at `Normal`, never
-  `Input`** (Oct 8 2026, 23:00). `Input` and everything below `Loaded` are WPF *background*
-  priorities: the dispatcher runs one only when it finds the thread's Win32 queue empty and
-  otherwise waits for a message timer, which in the installed worker was about 13 ms an operation
-  -- 13 ms ticks with nothing connected, 25-48 ms once the launcher's 125 requests a second took
-  turns with them (`--health-watch`), and 8.00 ms in a test process whose queue was empty, which
-  is why `--dispatcher-cadence-probe` and `--agent-loop-probe` never reproduced it -- nor did
-  `--dispatcher-cadence-probe busy`, a second producer at the same priority, so the queue state
-  is the worker process's own and the health fields, not another probe, are what name it. The user's
-  "smoother with Loungepad closed" was this, not two movers: the launcher never moves the pointer
-  while a reply claims it. `AgentHealth` carries `QueueMeanMs`/`QueueMaxMs` (posting to running),
-  `WorkMaxMs` (the whole tick body) and `WaitMeanMs` (what the clock really waited), so a slow
-  tick is read as queue, body or clock from the registry; `ProcessPower.KeepResponsive` opts the
-  worker out of Windows 11 power throttling, which can coarsen a windowless process's timers.
+- **Never read `Process.GetCurrentProcess().SessionId` on a hot path: .NET answers it by walking
+  every process on the system** (`NtQuerySystemInformation`; 14.6 ms a call on this PC, Oct 8 2026,
+  against 0.013 ms for `Process.Id`). The worker's per-tick desktop check made that call, and so
+  did every pipe request and the health write: 13 of a 14 ms tick with nothing connected, 25-48 ms
+  once the launcher's requests took turns with it, and 8.00 ms in every test probe, which called
+  `Open()` without the session check. `DesktopApi.CurrentSession` reads it once
+  (`ProcessIdToSessionId`) and the suite times the check (under 2 ms; 0.006 measured). Found by
+  adding `QueueMeanMs`/`QueueMaxMs`, `WorkMaxMs` and `WaitMeanMs` to `AgentHealth`: queue 0.03 ms,
+  work 27 ms, wait 0 said "the body", after a dispatcher-priority theory had been built, shipped
+  and disproved in one evening. Measure the body before theorising about the scheduler. The
+  user's "smoother with Loungepad closed" was the requests doubling that call, not two movers:
+  the launcher never moves the pointer while a reply claims it.
+- **The tick and the pipe requests are posted to the worker's dispatcher at the same foreground
+  priority, `Normal`.** Posting the tick at `Send` while its body took 14 ms starved the requests:
+  no idle time, replies past the launcher's 500 ms limit, the launcher reconnecting every few
+  seconds (23:23). The user felt that as three new faults: the pointer speeding up and slowing
+  down (the launcher moves the pointer itself once a reply is 250 ms old while the worker, quiet
+  for 250 ms, returns to its own mapping -- two movers, then one), the D-pad stepping focus twice
+  (the worker's own mapping types arrow keys) and the legend flickering between keyboard and
+  gamepad (those arrows are keyboard events to the page). `Clients` in the registry records how
+  each connection began and ended, since both sides swallow pipe exceptions on purpose, and
+  `--health-watch` prints it. `Input` is a WPF background priority (it waits for an empty Win32
+  queue) and stays out; `ProcessPower.KeepResponsive` opts the worker out of power throttling.
 - **Packaging needs the dist launcher closed** (`package.ps1` deletes `dist\v1.8.0`, which it runs
   from) and the two scripts sequential (`package-input-service.ps1`, then `package.ps1`; both sign).
   `-NoRestore` only works while the last restore was for `win-x64`: a plain `dotnet build
