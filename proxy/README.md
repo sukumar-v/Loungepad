@@ -27,6 +27,24 @@ account is on Workers Paid ($5 a month) since Oct 8 2026, which raises both a lo
 The practical ceiling is IGDB's, not Cloudflare's: 4 requests/second across the whole credential,
 shared by everyone. The cache is what keeps you under it.
 
+## Where it lives
+
+The service is the Worker `loungepad-metadata-service`, answering `https://api.loungepad.app` (a
+Custom Domain on the loungepad.app zone, made by `wrangler deploy` from the `routes` entry). From
+1.9.0 the launcher only knows that address, so the Worker behind it can be renamed, rewritten or
+moved somewhere else with nothing shipped.
+
+Builds up to 1.8.0 have the old address baked in: `consolify-metadata.s-varmagt.workers.dev`. That
+Worker is now `legacy/forwarder.js`, which hands every request to the new one through a service
+binding, client address and headers intact. Delete it once nobody runs a build from before 1.9.0:
+
+```powershell
+npx wrangler delete --name consolify-metadata
+```
+
+`/v1/addons/*` is handed on the same way to `loungepad-addons-stats` (`../addons-stats`), the add-on
+downloads and likes; see the Loungepad repository's docs/ADDONS.md.
+
 ## Getting the credentials
 
 IGDB is not signed up for at igdb.com -- API access goes through Twitch, who own it. You need a
@@ -119,7 +137,7 @@ npx wrangler deploy --config proxy/wrangler.toml
 ```
 
 ```bash
-curl "https://consolify-metadata.<your-subdomain>.workers.dev/v1/health"
+curl "https://api.loungepad.app/v1/health"
 ```
 
 (The worker still carries the app's old name, Consolify, because a worker's name is its URL and

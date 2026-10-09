@@ -90,7 +90,7 @@ ctx.enterAddon('extension:howlongtobeat');
 assert.equal(ctx.addonsUi.level, 'addon');
 rows = ctx.addonsSettingsRows();
 const names = rows.filter(r => !r.section).map(r => r.name);
-deepEqual(names, ['HowLongToBeat', 'Can reach', 'Enabled', 'Status', 'Fetch now', 'Match the release year', 'Restart', 'Open developer tools', 'Remove', 'Extensions folder']);
+deepEqual(names, ['HowLongToBeat', 'Can reach', 'Like', 'Enabled', 'Status', 'Fetch now', 'Match the release year', 'Restart', 'Open developer tools', 'Remove', 'Extensions folder']);
 assert.equal(rows.find(r => r.name === 'Can reach').valueHtml.includes('howlongtobeat.com'), true);
 assert.match(rows.find(r => r.name === 'Fetch now').hint, /10 asked, 8 answered, 1 failed/);
 rows.find(r => r.name === 'Enabled').action();
@@ -126,9 +126,9 @@ deepEqual(sent.pop(), { cmd: 'addonInstallFile', how: 'folder' });
 // The short menu.
 ctx.S.settings.theme = 'loungepad';
 ctx.addonQuickMenu(items[1]);
-deepEqual(choice.items.map(i => i.label), ['Open', 'Update to 1.1.0', 'Use this theme', 'Remove']);
+deepEqual(choice.items.map(i => i.label), ['Open', 'Like', 'Update to 1.1.0', 'Use this theme', 'Remove']);
 ctx.addonQuickMenu(items[2]);
-deepEqual(choice.items.map(i => i.label), ['Open', 'Install']);
+deepEqual(choice.items.map(i => i.label), ['Open', 'Like', 'Install']);
 ctx.addonQuickMenu(items[0]);
 deepEqual(choice.items.map(i => i.label), ['Open'], 'a bundled theme in use: only Open');
 
@@ -169,6 +169,44 @@ assert.equal(items[2].busy, 'downloading');
 assert.equal(items[2].progress, 55);
 ctx.onAddonProgress({ key: 'theme:arcade', state: 'done', percent: 100 });
 assert.equal(items[2].busy, null);
+
+// Counts, sorting and likes.
+assert.equal(ctx.fmtCount(0), '0');
+assert.equal(ctx.fmtCount(999), '999');
+assert.equal(ctx.fmtCount(1234), '1.2k');
+assert.equal(ctx.fmtCount(5000), '5k');
+assert.equal(ctx.fmtCount(48500), '48k');
+assert.equal(ctx.fmtCount(2350000), '2.3M');
+const pool = [
+  { key: 'extension:b', name: 'Bravo', downloads: 10, likes: 5 },
+  { key: 'extension:a', name: 'alpha', downloads: 10, likes: 9 },
+  { key: 'extension:c', name: 'Charlie', downloads: 99 },
+  { key: 'extension:d', name: 'Delta' },
+];
+ctx.addonsUi.sort = 'az';
+deepEqual(ctx.sortAddons(pool).map(a => a.name), ['alpha', 'Bravo', 'Charlie', 'Delta']);
+ctx.addonsUi.sort = 'downloads';
+deepEqual(ctx.sortAddons(pool).map(a => a.name), ['Charlie', 'alpha', 'Bravo', 'Delta'], 'ties by name, no counts last');
+ctx.addonsUi.sort = 'likes';
+deepEqual(ctx.sortAddons(pool).map(a => a.name), ['alpha', 'Bravo', 'Charlie', 'Delta']);
+ctx.addonsUi.sort = 'az';
+const liked = { key: 'extension:x', name: 'X', available: '1.0.0', likes: 4, downloads: 9, liked: false };
+ctx.toggleAddonLike(liked);
+deepEqual(sent.pop(), { cmd: 'addonLike', key: 'extension:x', on: true });
+assert.equal(liked.liked, true); assert.equal(liked.likes, 5);
+ctx.toggleAddonLike(liked);
+deepEqual(sent.pop(), { cmd: 'addonLike', key: 'extension:x', on: false });
+assert.equal(liked.likes, 4);
+ctx.toggleAddonLike({ key: 'theme:loungepad', name: 'Loungepad', bundled: true });
+assert.equal(sent.length, 0, 'an add-on the repository does not list cannot be liked');
+assert.match(toasts.pop(), /Only add-ons from the repository/);
+assert.match(ctx.addonCountsHtml(liked), /<b>4<\/b>/);
+assert.equal(ctx.addonCountsHtml({ key: 'theme:loungepad' }), '', 'no counts, nothing drawn');
+ctx.enterAddon('theme:arcade');
+assert(ctx.addonsSettingsRows().some(r => r.name === 'Like'), 'a repository add-on has a Like row');
+ctx.addonsUi = { level: 'addon', kind: 'theme', key: 'theme:loungepad', sort: 'az' };
+assert(!ctx.addonsSettingsRows().some(r => r.name === 'Like'), 'a bundled theme has none');
+ctx.addonsUi = { level: 'grid', kind: 'theme', key: null, sort: 'az' };
 
 // Wiring in app.js and index.html.
 assert.match(appJs, /\{ id: "addons",\s+label: "Add-ons" \}/);

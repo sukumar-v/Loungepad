@@ -1,0 +1,17 @@
+# The old name, forwarding everything to loungepad-metadata-service (forwarder.js). Deploy it only
+# after the new worker answers /v1/facts with its credentials set: from that moment every build up
+# to 1.8.0 is served by the new worker.
+#
+#   npx wrangler deploy --config proxy/legacy/wrangler.toml
+name = "consolify-metadata"
+main = "forwarder.js"
+compatibility_date = "2024-11-01"
+workers_dev = true
+
+[[services]]
+binding = "TARGET"
+service = "loungepad-metadata-service"
+
+# The cache's daily clean-up runs on the new worker now; an empty list takes this worker's off.
+[triggers]
+crons = []

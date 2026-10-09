@@ -1508,7 +1508,7 @@ let overlayTargetProcess = "";           // the exe behind the window a menu ope
 let overlayTargetIsGame = false;         // that window is the running game's (the wheel's Close spoke)
 let overlayOverLauncher = false;         // opened over Loungepad itself: the Close spoke exits Loungepad
 /* Settings → Add-ons' level (addons.js), declared here for the same reason as the actions state. */
-let addonsUi = { level: "grid", kind: "theme", key: null };
+let addonsUi = { level: "grid", kind: "theme", key: null, sort: "az" };
 // The sheets and the screen activity.js draws. Declared here rather than there for the same
 // reason as the three above: app.js reads them while it boots.
 let achState = null;                     // { gameId, idx, filter, sort, set, head, reveal, from }
@@ -4743,6 +4743,8 @@ function setSettingsTab(id) {
   // Always the grid on the way in, never a list left open from last time.
   if (changed && id === "actions") actionsTabReset();
   if (changed && id === "addons") addonsTabReset();
+  // The counts, if the host's copy is over five minutes old; it answers with an addons push.
+  if (changed && id === "addons") send({ cmd: "addonsOpened" });
   renderSettings();
   // Only when the rows are a different category's, never on the re-render every move costs.
   if (changed) pulse($("settingsScroll"));
@@ -4859,7 +4861,7 @@ function renderSettings() {
   if (footEl) footEl.innerHTML = settingsPane === "nav"
     ? foot(["A", "Open"], ["B", "Back"], ["DpadV", "Category"])
     : settingsTab === "addons" ? (addonsUi.level === "grid"
-        ? foot(["A", "Open"], ["Y", "Options"], ["LB", "Themes"], ["RB", "Extensions"], ["B", "Categories"])
+        ? foot(["A", "Open"], ["Y", "Options"], ["X", "Sort: " + addonSortLabel()], ["LB", "Themes"], ["RB", "Extensions"], ["B", "Categories"])
         : foot(["A", aLabel], ["B", "Back"]))
     : settingsTab !== "actions" ? foot(["A", aLabel], ["B", "Categories"])
     : actionsUi.level === "apps" ? foot(["A", "Open"], ["B", "Categories"])
@@ -5055,6 +5057,11 @@ function settingsInput(btn) {
       break;
 
     // The shoulders turn Settings → Add-ons' tabs, Themes and Extensions, and do nothing else here.
+    // The add-ons grid's sort: A to Z, most downloaded, most liked.
+    case "X":
+      if (settingsTab === "addons" && addonsUi.level === "grid") openAddonSort();
+      break;
+
     case "LB": case "RB":
       if (settingsTab === "addons" && addonsUi.level === "grid") addonsSwitchKind(btn === "LB" ? -1 : 1);
       break;
@@ -7205,6 +7212,9 @@ const mockAddons = (() => {
     { key: "extension:protondb", id: "protondb", kind: "extension", name: "ProtonDB", description: "Each Steam game's ProtonDB tier, for a library that also runs on a Deck", author: "deckhand",
       installed: false, available: "1.1.0", installable: false, needsLauncher: "1.10.0", hosts: ["www.protondb.com"] },
   ];
+  // The counts the service would give each repository add-on (AddonService.ApplyCounts).
+  const counts = { "theme:night-shelf": [412, 38], "theme:arcade": [1890, 214], "extension:howlongtobeat": [5230, 611], "extension:opencritic": [96, 7], "extension:protondb": [2400, 180] };
+  items.forEach(a => { const c = counts[a.key]; if (c) { a.downloads = c[0]; a.likes = c[1]; a.liked = a.key === "extension:howlongtobeat"; } });
   const catalogue = { url: "https://raw.githubusercontent.com/sukumar-v/loungepad-addons/main/index.json", fetchedAt: new Date(Date.now() - 2 * 3600000).toISOString(), error: null, count: 4, busy: false, stale: false };
   return { items, catalogue, passRunning: false, payload: () => ({ items, catalogue, launcher: "1.9.0", passRunning: mockAddons.passRunning }) };
 })();
@@ -7857,6 +7867,12 @@ function mockHandle(msg) {
       toast(`Installed ${a.name} ${a.version}`);
       handleHostMessage({ type: "addons", addons: mockAddons.payload() });
     }, 1700);
+  } else if (msg.cmd === "addonLike") {
+    const a = mockAddons.items.find(x => x.key === msg.key);
+    if (a && a.liked !== !!msg.on) { a.liked = !!msg.on; a.likes = Math.max(0, (a.likes || 0) + (msg.on ? 1 : -1)); }
+    setTimeout(() => handleHostMessage({ type: "addons", addons: mockAddons.payload() }), 200);
+  } else if (msg.cmd === "addonsOpened") {
+    handleHostMessage({ type: "addons", addons: mockAddons.payload() });
   } else if (msg.cmd === "addonInstallFile") {
     toast(`(preview) the ${msg.how === "folder" ? "folder" : "zip"} dialog would open on the TV`);
   } else if (msg.cmd === "addonRemove") {

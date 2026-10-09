@@ -328,6 +328,21 @@ public class UiBridge
             case "addonsRefresh":
                 _ = Task.Run(() => _addons.RefreshCatalogueAsync(force: true));
                 break;
+            // Settings → Add-ons came on screen: the counts, if the last read is over five minutes old.
+            case "addonsOpened":
+                _ = Task.Run(() => _addons.RefreshCountsAsync(force: false));
+                break;
+            case "addonLike":
+            {
+                var key = msg["key"]?.GetValue<string>() ?? "";
+                var on = msg["on"]?.GetValue<bool>() ?? true;
+                _ = Task.Run(async () =>
+                {
+                    try { await _addons.SetLikedAsync(key, on); }
+                    catch (Exception ex) { _window.Dispatcher.Invoke(() => PushToast(ex.Message)); }
+                });
+                break;
+            }
             case "addonInstall":
                 _ = InstallAddonAsync(msg["key"]?.GetValue<string>() ?? "");
                 break;

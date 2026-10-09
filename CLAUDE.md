@@ -2583,3 +2583,26 @@ Stop the scrolled grid from clipping through the All games header
   against the live site (22 checks).
 - **A and Y, not B, on a tile.** The user's ask said B opens the menu; B is the one cancel key
   everywhere (Oct 1 2026), so A opens the add-on's page and Y is the short menu, as on the library.
+- **Downloads and likes are `addons-stats/`** (`loungepad-addons-stats`, D1 `loungepad-addons-stats`,
+  Oct 9 2026), reached only through the metadata service's `ADDONS` service binding at
+  `api.loungepad.app/v1/addons/*`: `workers_dev = false`, no URL of its own. **No device or user id,
+  ever** (the user's rule): a like is kept in `addons.json` (`Liked`) and the service hears only +1
+  or −1. One like, one unlike and one download per address per add-on per UTC day, held as a
+  SHA-256 of a random per-day salt + address + action + key (`marks`); the cron deletes old salts,
+  so a mark cannot be traced once its day is over. A write with no `CF-Connecting-IP` is refused,
+  which is what proves the header survives the binding (checked live: the second like from this
+  PC answered `counted: false`). Only keys in the repository's `index.json` are counted.
+  `node tools\addons-stats-harness.mjs` is its check (26). **Clear test rows after a live test**
+  (`wrangler d1 execute loungepad-addons-stats --remote --command "DELETE FROM marks; DELETE FROM
+  counts; DELETE FROM salts;"`), or the user's own like from the same address is refused that day.
+- **The metadata service is `loungepad-metadata-service` at `api.loungepad.app`** (Custom Domain,
+  Oct 9 2026; `MetadataProxyClient.DefaultEndpoint` from 1.9.0). `consolify-metadata` becomes
+  `proxy/legacy/forwarder.js`, a service binding to it that keeps the caller's address -- **but only
+  once the new worker has its three secrets** (`IGDB_CLIENT_ID`, `IGDB_CLIENT_SECRET`, `SGDB_KEY`,
+  per worker; the user sets them, they are API keys). Until then the old worker is untouched and
+  serves 1.8.0 and older; the new one shares its D1 cache, so it answers hits already. Check with
+  `wrangler secret list --name loungepad-metadata-service` before deploying the forwarder.
+- **This PC's resolver cached `api.loungepad.app` as missing** for a while after the first lookup
+  (made before the domain existed): curl and .NET failed with "could not resolve" while public DNS
+  answered. Test with `--resolve api.loungepad.app:443:104.21.28.128`, or a `ConnectCallback` in
+  .NET; never look a new name up before it exists.

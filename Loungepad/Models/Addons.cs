@@ -112,6 +112,16 @@ public class PassSummary
 public class AddonsFile
 {
     public Dictionary<string, AddonRecord> Installed { get; set; } = new();
+    /// <summary>The add-ons this PC has liked, by key. Kept here and nowhere else: the service only
+    /// counts, and nothing it receives says who liked what (the user's rule, Oct 9 2026).</summary>
+    public HashSet<string> Liked { get; set; } = new();
+}
+
+/// <summary>An add-on's two public numbers, from the service's /v1/addons/stats.</summary>
+public class AddonCounts
+{
+    public long Downloads { get; set; }
+    public long Likes { get; set; }
 }
 
 /// <summary>One entry of the repository's index.json.</summary>

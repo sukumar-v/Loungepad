@@ -28,6 +28,7 @@ const ICONS = {
   gamepad: '<path d="M7 11h4M9 9v4M15.5 12h.01M18 10h.01"/><rect x="2" y="6" width="20" height="12" rx="5"/>',
   checkCircle: '<circle cx="12" cy="12" r="9"/><path d="m8.5 12 2.5 2.5 4.5-5"/>',
   download: '<path d="M12 3v11M8 10.5l4 4 4-4M4 20h16"/>',
+  heart: '<path d="M12 20.5s-7.5-4.6-7.5-10.3A4.2 4.2 0 0 1 12 7.6a4.2 4.2 0 0 1 7.5 2.6c0 5.7-7.5 10.3-7.5 10.3z"/>',
   star: '<path d="M12 3l2.7 5.5 6 .9-4.35 4.2 1.03 6L12 16.8 6.62 19.6l1.03-6L3.3 9.4l6-.9L12 3z"/>',
   eye: '<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/>',
   // Stats: a cup for the achievements, and bars for the playtime.

@@ -64,7 +64,10 @@ public partial class MainWindow : Window
         _settings.Load();
         InputLog.Sink = Log.Info;
         _library.Load();
-        _addons = AddonService.ForApp(() => _settings.Settings.AddonsIndexUrl);
+        _addons = AddonService.ForApp(() => _settings.Settings.AddonsIndexUrl,
+            // The counts live on the metadata service (api.loungepad.app/v1/addons), so they follow
+            // its endpoint setting; emptying that turns them off along with the service itself.
+            () => string.IsNullOrWhiteSpace(_settings.Settings.MetadataEndpoint) ? MetadataProxyClient.DefaultEndpoint : _settings.Settings.MetadataEndpoint);
         _addons.Load();
         _addons.Sweep();
         _extensions = new ExtensionRuntime(_addons, _library, () => _settings.Settings, Dispatcher, Paths.ExtensionDataDir);

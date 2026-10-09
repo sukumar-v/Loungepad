@@ -52,10 +52,11 @@ public class MetadataProxyClient : IFactsProvider, IArtProvider
     /// to empty to turn the proxy tier off entirely; a user can override it in Settings, and their
     /// own credentials take priority over it either way. See proxy/README.md.
     ///
-    /// The host still carries the app's old name. It is the deployed worker's name, and renaming
-    /// a worker deploys a second one with no secrets set; see the note in proxy/wrangler.toml.
+    /// A domain of our own since 1.9.0, so the service behind it can be renamed or moved without
+    /// a launcher release. Builds up to 1.8.0 have the old workers.dev address, which is now a
+    /// forwarder to the same worker (proxy/legacy); see the note in proxy/wrangler.toml.
     /// </summary>
-    public const string DefaultEndpoint = "https://consolify-metadata.s-varmagt.workers.dev";
+    public const string DefaultEndpoint = "https://api.loungepad.app";
 
     private readonly HttpClient _http;
     private readonly string _endpoint;

@@ -17,6 +17,7 @@ repository, which anyone can contribute to with a pull request.
 
 - [Settings → Add-ons](#settings--add-ons)
 - [The add-ons repository](#the-add-ons-repository)
+- [Downloads and likes](#downloads-and-likes)
 - [Writing an extension](#writing-an-extension)
 - [The extension API](#the-extension-api)
 - [What an extension can and cannot do](#what-an-extension-can-and-cannot-do)
@@ -102,6 +103,35 @@ What the repository is trusted for: the maintainer is the one deciding what goes
 the index protect an install against a damaged or substituted download, not against the
 repository itself -- which is the same trust the launcher's own updater places in its releases.
 What limits the damage a bad extension could do is the sandbox below, not the review.
+
+## Downloads and likes
+
+Every add-on the repository lists shows two numbers on its tile: a heart with its likes and an arrow
+with its downloads. **X** on the grid sorts by name, by downloads or by likes. **Like** on an
+add-on's page, or in its **Y** menu, adds or takes back a like.
+
+Nothing identifies a person or a PC. A like is kept on the PC that gave it, in `addons.json`, and the
+service is only told "+1" or "−1" for an add-on. A download is counted when an install from the
+repository passes its hash checks; installs from a file are not counted.
+
+To stop one place counting over and over, the service allows one like, one unlike and one download
+per address per add-on per day. It never stores the address: it keeps a hash of it mixed with a
+random salt for that day, and deletes the salt the next day, after which nothing can tie the hash
+back to an address. People sharing an address (a household, a mobile network) get one like per
+add-on per day between them. Without accounts the numbers can be inflated by anyone determined
+enough; the limit makes that slow, not impossible.
+
+The service is a Cloudflare Worker of its own, `addons-stats/` in the Loungepad repository, reached
+at `https://api.loungepad.app/v1/addons/` through the metadata service:
+
+| | |
+|---|---|
+| `GET /v1/addons/stats` | `{ counts: { "<kind>:<id>": { downloads, likes } } }` |
+| `POST /v1/addons/download` | `{ key }`, after a verified install |
+| `POST /v1/addons/like` | `{ key, on }`: `on: false` takes a like back. Likes never go below zero |
+
+Every request needs the launcher's `X-Loungepad-Client: 1` header, and only keys the repository's
+index lists are accepted.
 
 ## Writing an extension
 

@@ -1575,6 +1575,15 @@ body.overlay-mode #overlay-actions { background: color-mix(in srgb, var(--bg) 74
 }
 .addon-badge.quiet { color: color-mix(in srgb, var(--ink) 70%, transparent); background: color-mix(in srgb, var(--ink) 10%, transparent); }
 .app-sub.accent { color: var(--accent); }
+/* The heart and the download arrow with their counts, under the tile's line (addonCountsHtml). */
+.addon-counts { display: flex; gap: 16px; margin-top: 2px; }
+.addon-count { display: inline-flex; align-items: center; gap: 5px; font-family: "IBM Plex Mono", monospace; font-size: 14px; color: color-mix(in srgb, var(--ink) 55%, transparent); }
+.addon-count .ov-icon { width: 16px; height: 16px; }
+.addon-count.liked, .addon-like-row.liked { color: var(--accent); }
+.addon-count.liked .ov-icon, .addon-like-row.liked .ov-icon { fill: currentColor; }
+.addon-like-row { display: inline-flex; align-items: center; gap: 10px; }
+.addon-like-row .ov-icon { width: 26px; height: 26px; }
+.app-tile:has(.addon-counts) { gap: 6px; }
 .app-sub.muted { opacity: 0.6; }
 .addon-row-icon { width: 44px; height: 44px; border-radius: 12px; background: color-mix(in srgb, var(--ink) 6%, transparent) center / 70% no-repeat; }
 .set-text.danger { color: var(--danger, #e06060); }

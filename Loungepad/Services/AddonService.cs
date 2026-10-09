@@ -56,6 +56,12 @@ public sealed class AddonDto
     /// <summary>The repository's version, when it lists this add-on.</summary>
     public string? Available { get; set; }
     public bool Update { get; set; }
+    /// <summary>The repository's counts, or null when the service has not answered (or this add-on
+    /// is not one it counts: a bundled theme, a zip or folder install of something unlisted).</summary>
+    public long? Downloads { get; set; }
+    public long? Likes { get; set; }
+    /// <summary>This PC liked it (kept in addons.json, never sent as an identity).</summary>
+    public bool Liked { get; set; }
     /// <summary>Whether this launcher may install what the repository has.</summary>
     public bool Installable { get; set; }
     public string? NeedsLauncher { get; set; }
@@ -107,6 +113,13 @@ public class AddonService
 
     private readonly string _themesDir, _extensionsDir, _recordsFile, _cacheDir, _themeBackups, _extBackups;
     private readonly Func<string?> _indexUrl;
+    /// <summary>The metadata service's base URL, which also answers /v1/addons/* (addons-stats/).
+    /// Null or empty turns the counts off.</summary>
+    private readonly Func<string?> _statsBase;
+    private Dictionary<string, AddonCounts>? _counts;
+    private DateTime _countsAt;
+    private bool _countsBusy;
+    public static readonly TimeSpan CountsFreshness = TimeSpan.FromMinutes(5);
     private readonly AddonVersion _launcher;
     private readonly HttpClient _http;
     private readonly object _gate = new();
@@ -122,8 +135,9 @@ public class AddonService
     public event Action<AddonProgress>? Progress;
 
     public AddonService(string themesDir, string extensionsDir, string recordsFile, string cacheDir,
-        string themeBackups, string extensionBackups, Func<string?> indexUrl, Version launcher, HttpClient? http = null)
+        string themeBackups, string extensionBackups, Func<string?> indexUrl, Version launcher, HttpClient? http = null, Func<string?>? statsBase = null)
     {
+        _statsBase = statsBase ?? (() => null);
         _themesDir = themesDir;
         _extensionsDir = extensionsDir;
         _recordsFile = recordsFile;
@@ -136,9 +150,10 @@ public class AddonService
     }
 
     /// <summary>The real folders.</summary>
-    public static AddonService ForApp(Func<string?> indexUrl) => new(
+    public static AddonService ForApp(Func<string?> indexUrl, Func<string?> statsBase) => new(
         Paths.ThemesDir, Paths.ExtensionsDir, Paths.AddonsFile, Paths.AddonsCacheDir,
-        Path.Combine(Paths.DataDir, "theme-backups"), Paths.ExtensionBackupsDir, indexUrl, UpdateService.Current);
+        Path.Combine(Paths.DataDir, "theme-backups"), Paths.ExtensionBackupsDir, indexUrl, UpdateService.Current,
+        statsBase: statsBase);
 
     private static HttpClient MakeHttp(Version launcher)
     {
@@ -433,6 +448,7 @@ public class AddonService
             catch (Exception ex) { Log.Info($"Add-ons: could not cache the index: {ex.Message}"); }
             Log.Info($"Add-ons: index read from {url}, {clean.Addons.Count} add-on(s)");
             await CacheCatalogueIconsAsync(clean, ct);
+            await RefreshCountsAsync(force: true, ct);
             return true;
         }
         catch (Exception ex)
@@ -590,6 +606,9 @@ public class AddonService
             var installed = Commit(staging, entry.Id, entry.Kind, manifest, new AddonRecord { Source = "catalogue" });
             Report(key, "done", 100);
             Log.Info($"Add-ons: installed {key} {manifest.Version} from the repository");
+            // Counted only here: an install from the repository whose every file matched its hash.
+            // An update counts too, once a day per address at most (the service decides).
+            _ = ReportDownloadAsync(key);
             return installed;
         }
         catch (Exception ex)
@@ -808,6 +827,9 @@ public class AddonService
         var available = Available;
         Dictionary<string, AddonProgress> busy;
         lock (_gate) busy = new Dictionary<string, AddonProgress>(_busy);
+        Dictionary<string, AddonCounts>? counts;
+        HashSet<string> liked;
+        lock (_gate) { counts = _counts; liked = new HashSet<string>(_records.Liked); }
 
         foreach (var a in installed)
         {
@@ -831,6 +853,7 @@ public class AddonService
                 Status = a.Kind == AddonKind.Extension ? status?.Invoke(a) : null,
             };
             if (busy.TryGetValue(a.Key, out var p)) { dto.Busy = p.State; dto.Progress = p.Percent; }
+            if (entry is not null) ApplyCounts(dto, counts, liked);
             list.Add(dto);
         }
         foreach (var e in available)
@@ -846,9 +869,134 @@ public class AddonService
                 Hosts = e.Permissions?.Hosts ?? new(),
             };
             if (busy.TryGetValue(key, out var p)) { dto.Busy = p.State; dto.Progress = p.Percent; }
+            ApplyCounts(dto, counts, liked);
             list.Add(dto);
         }
         return list.OrderBy(d => d.Kind == AddonKind.Theme ? 0 : 1).ThenBy(d => d.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
+    }
+
+    // ---- downloads and likes (addons-stats/) ----
+
+    private static void ApplyCounts(AddonDto dto, Dictionary<string, AddonCounts>? counts, HashSet<string> liked)
+    {
+        dto.Liked = liked.Contains(dto.Key);
+        if (counts is null) return;
+        var c = counts.TryGetValue(dto.Key, out var found) ? found : new AddonCounts();
+        dto.Downloads = c.Downloads;
+        dto.Likes = c.Likes;
+    }
+
+    private string? StatsUrl(string path)
+    {
+        var b = _statsBase()?.Trim().TrimEnd('/');
+        if (string.IsNullOrEmpty(b) || !Uri.TryCreate(b, UriKind.Absolute, out var u)) return null;
+        if (u.Scheme != "https" && !u.IsLoopback) return null;
+        return b + path;
+    }
+
+    private static HttpRequestMessage StatsRequest(HttpMethod method, string url, object? body = null)
+    {
+        var req = new HttpRequestMessage(method, url);
+        req.Headers.TryAddWithoutValidation(MetadataProxyClient.ClientHeader, MetadataProxyClient.ClientHeaderValue);
+        if (body is not null)
+            req.Content = new StringContent(JsonSerializer.Serialize(body), System.Text.Encoding.UTF8, "application/json");
+        return req;
+    }
+
+    /// <summary>Read every add-on's counts. Unforced, a copy younger than five minutes is kept.
+    /// A failure keeps the last numbers: they are only ever decoration.</summary>
+    public async Task<bool> RefreshCountsAsync(bool force, CancellationToken ct = default)
+    {
+        var url = StatsUrl("/v1/addons/stats");
+        if (url is null) return false;
+        lock (_gate)
+        {
+            if (_countsBusy || (!force && _counts is not null && DateTime.UtcNow - _countsAt < CountsFreshness)) return false;
+            _countsBusy = true;
+        }
+        try
+        {
+            using var res = await _http.SendAsync(StatsRequest(HttpMethod.Get, url), ct);
+            if (!res.IsSuccessStatusCode) { Log.Info($"Add-ons: counts answered HTTP {(int)res.StatusCode}"); return false; }
+            using var doc = JsonDocument.Parse(await res.Content.ReadAsStringAsync(ct));
+            var map = new Dictionary<string, AddonCounts>();
+            if (doc.RootElement.TryGetProperty("counts", out var c) && c.ValueKind == JsonValueKind.Object)
+                foreach (var p in c.EnumerateObject())
+                    map[p.Name] = new AddonCounts { Downloads = ReadCount(p.Value, "downloads"), Likes = ReadCount(p.Value, "likes") };
+            lock (_gate) { _counts = map; _countsAt = DateTime.UtcNow; }
+            Changed?.Invoke();
+            return true;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
+        {
+            Log.Info($"Add-ons: counts not read: {ex.Message}");
+            return false;
+        }
+        finally { lock (_gate) _countsBusy = false; }
+    }
+
+    private static long ReadCount(JsonElement o, string name) =>
+        o.ValueKind == JsonValueKind.Object && o.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt64(out var n) ? Math.Max(0, n) : 0;
+
+    /// <summary>Take the service's answer to a write as the add-on's counts from now on.</summary>
+    private void TakeCounts(string key, string json)
+    {
+        using var doc = JsonDocument.Parse(json);
+        var c = new AddonCounts { Downloads = ReadCount(doc.RootElement, "downloads"), Likes = ReadCount(doc.RootElement, "likes") };
+        lock (_gate) { (_counts ??= new())[key] = c; }
+    }
+
+    private async Task ReportDownloadAsync(string key)
+    {
+        var url = StatsUrl("/v1/addons/download");
+        if (url is null) return;
+        try
+        {
+            using var res = await _http.SendAsync(StatsRequest(HttpMethod.Post, url, new { key }));
+            if (res.IsSuccessStatusCode) { TakeCounts(key, await res.Content.ReadAsStringAsync()); Changed?.Invoke(); }
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
+        {
+            Log.Info($"Add-ons: download of {key} not counted: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Like an add-on, or take the like back. This PC's answer is kept in addons.json first, so the
+    /// heart is right whatever the service says; the service counts at most one like and one unlike
+    /// per address per add-on per day, and answers with the counts after. Only add-ons the
+    /// repository lists can be liked.
+    /// </summary>
+    public async Task SetLikedAsync(string key, bool on)
+    {
+        var colon = key.IndexOf(':');
+        if (colon < 0 || CatalogueEntry(key[..colon], key[(colon + 1)..]) is null)
+            throw new InvalidOperationException("Only add-ons from the repository can be liked");
+        bool changed;
+        lock (_gate) changed = on ? _records.Liked.Add(key) : _records.Liked.Remove(key);
+        if (!changed) return;
+        // Shown at once: the count moves with the heart, and the service's answer replaces it.
+        lock (_gate)
+            if (_counts is not null)
+            {
+                if (!_counts.TryGetValue(key, out var c)) _counts[key] = c = new AddonCounts();
+                c.Likes = Math.Max(0, c.Likes + (on ? 1 : -1));
+            }
+        SaveRecords();
+        Changed?.Invoke();
+        var url = StatsUrl("/v1/addons/like");
+        if (url is null) return;
+        try
+        {
+            using var res = await _http.SendAsync(StatsRequest(HttpMethod.Post, url, new { key, on }));
+            if (res.IsSuccessStatusCode) TakeCounts(key, await res.Content.ReadAsStringAsync());
+            else Log.Info($"Add-ons: like of {key} answered HTTP {(int)res.StatusCode}");
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
+        {
+            Log.Info($"Add-ons: like of {key} not sent: {ex.Message}");
+        }
+        Changed?.Invoke();
     }
 
     // ---- files ----

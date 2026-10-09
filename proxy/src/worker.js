@@ -48,6 +48,12 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
+    // Add-on downloads and likes live in a worker of their own (addons-stats/), with no URL of
+    // its own: handed the request as it arrived, header and client address included. A service
+    // binding call is not billed as a second request.
+    if (url.pathname.startsWith("/v1/addons/"))
+      return env.ADDONS ? env.ADDONS.fetch(request) : json({ error: "not found" }, 404);
+
     if (request.method !== "GET") return json({ error: "method not allowed" }, 405);
     if (url.pathname === "/v1/health") return json({ ok: true });
     if (request.headers.get(CLIENT_HEADER) !== CLIENT_VALUE) return json({ error: "forbidden" }, 403);

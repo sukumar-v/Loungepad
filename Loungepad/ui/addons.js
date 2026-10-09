@@ -39,7 +39,56 @@ function activeExtensions() { return addonItems("extension").filter(a => a.insta
 
 /* ---- Settings → Add-ons ---- */
 
-function addonsTabReset() { addonsUi = { level: "grid", kind: addonsUi.kind || "theme", key: null }; }
+function addonsTabReset() { addonsUi = { level: "grid", kind: addonsUi.kind || "theme", key: null, sort: addonsUi.sort || "az" }; }
+
+/* ---- sorting, and the counts ----
+   A to Z, or by what the repository's users did: the most downloaded, the most liked. An add-on
+   with no counts (a bundled theme, something installed from a file) sorts as zero, then by name. */
+const ADDON_SORTS = [
+  { id: "az", label: "A to Z", icon: "sortAsc" },
+  { id: "downloads", label: "Most downloaded", icon: "download" },
+  { id: "likes", label: "Most liked", icon: "heart" },
+];
+function addonSortLabel() { return (ADDON_SORTS.find(s => s.id === (addonsUi.sort || "az")) || ADDON_SORTS[0]).label; }
+function sortAddons(list) {
+  const by = addonsUi.sort || "az";
+  const name = (a, b) => String(a.name || "").localeCompare(String(b.name || ""), undefined, { sensitivity: "base" });
+  if (by === "az") return [...list].sort(name);
+  return [...list].sort((a, b) => ((b[by] || 0) - (a[by] || 0)) || name(a, b));
+}
+function openAddonSort() {
+  openChoice("Sort add-ons", ADDON_SORTS.map(s => ({
+    label: s.label, icon: s.icon, checked: s.id === (addonsUi.sort || "az"), radio: true,
+    action: () => { addonsUi.sort = s.id; settingsIdx = 0; renderSettings(); pulse($("settingsScroll")); },
+  })));
+}
+
+/* 1234 → "1.2k": the tile has room for a few characters. */
+function fmtCount(n) {
+  n = Math.max(0, Number(n) || 0);
+  if (n < 1000) return String(n);
+  if (n < 10000) return (Math.floor(n / 100) / 10).toString().replace(/\.0$/, "") + "k";
+  if (n < 1000000) return Math.floor(n / 1000) + "k";
+  return (Math.floor(n / 100000) / 10).toString().replace(/\.0$/, "") + "M";
+}
+function hasCounts(a) { return typeof a.likes === "number" || typeof a.downloads === "number"; }
+/* The heart and the download arrow with their numbers, for a tile and for the add-on's page. */
+function addonCountsHtml(a) {
+  if (!hasCounts(a)) return "";
+  return `<span class="addon-count${a.liked ? " liked" : ""}">${iconSvg("heart")}<b>${fmtCount(a.likes)}</b></span>` +
+    `<span class="addon-count">${iconSvg("download")}<b>${fmtCount(a.downloads)}</b></span>`;
+}
+
+/* Like it, or take the like back. The heart moves at once; the host keeps the answer on this PC
+   and sends the service only +1 or -1, which it counts at most once a day per address. */
+function toggleAddonLike(a) {
+  if (!a || !a.available) { toast("Only add-ons from the repository can be liked"); return; }
+  const on = !a.liked;
+  a.liked = on;
+  if (typeof a.likes === "number") a.likes = Math.max(0, a.likes + (on ? 1 : -1));
+  send({ cmd: "addonLike", key: a.key, on });
+  renderSettings();
+}
 function addonsGridMode() { return settingsTab === "addons" && addonsUi.level === "grid"; }
 function addonsLevelTag() { return `|${addonsUi.level}:${addonsUi.kind}:${addonsUi.key}`; }
 
@@ -53,8 +102,8 @@ function addonsSettingsRows() {
   }
   const kind = addonsUi.kind;
   const items = addonItems(kind);
-  const installed = items.filter(a => a.installed);
-  const available = items.filter(a => !a.installed);
+  const installed = sortAddons(items.filter(a => a.installed));
+  const available = sortAddons(items.filter(a => !a.installed));
   const rows = [];
   // A header is a section to everything that counts rows (it is not focusable), drawn by its
   // own builder rather than as a heading.
@@ -81,7 +130,7 @@ function availableHeading(available) {
 function enterAddon(key) {
   const a = addonByKey(key);
   if (!a) return;
-  addonsUi = { level: "addon", kind: a.kind, key };
+  addonsUi = { level: "addon", kind: a.kind, key, sort: addonsUi.sort };
   settingsPane = "rows";
   settingsIdx = 0;
   renderSettings();
@@ -105,7 +154,7 @@ function addonsBack() {
 
 function addonsSetKind(kind) {
   if (!ADDON_KINDS.some(k => k.id === kind) || addonsUi.kind === kind) return;
-  addonsUi = { level: "grid", kind, key: null };
+  addonsUi = { level: "grid", kind, key: null, sort: addonsUi.sort };
   settingsPane = "rows";
   settingsIdx = 0;
   renderSettings();
@@ -155,7 +204,8 @@ function addonTileHtml(row) {
   const badge = a.update && a.installable ? `<span class="addon-badge">Update</span>`
     : addonInUse(a) ? `<span class="addon-badge quiet">In use</span>` : "";
   const sub = addonTileSub(a);
-  return `${icon}${badge}<div class="app-name">${esc(a.name)}</div><div class="app-sub${sub.accent ? " accent" : ""}${sub.muted ? " muted" : ""}">${esc(sub.text)}</div>`;
+  const counts = hasCounts(a) ? `<div class="addon-counts">${addonCountsHtml(a)}</div>` : "";
+  return `${icon}${badge}<div class="app-name">${esc(a.name)}</div><div class="app-sub${sub.accent ? " accent" : ""}${sub.muted ? " muted" : ""}">${esc(sub.text)}</div>${counts}`;
 }
 
 /* The line under the name: what state the add-on is in, in a few words. */
@@ -209,6 +259,13 @@ function addonPageRows(a) {
     valueHtml: `<span class="set-text">${esc(a.hosts && a.hosts.length ? a.hosts.join(", ") : "Nothing")}</span>`,
   });
   if (a.error) rows.push({ name: "Cannot load", hint: a.error, warn: "Reinstall it, or remove it below", type: "html", valueHtml: "" });
+  if (a.available) rows.push({
+    name: a.liked ? "You like this" : "Like", type: "html",
+    hint: (hasCounts(a) ? `${a.likes} ${a.likes === 1 ? "person likes" : "people like"} it, ${a.downloads} ${a.downloads === 1 ? "download" : "downloads"}. ` : "")
+      + "A like is kept on this PC; the add-ons service only counts it",
+    valueHtml: `<span class="addon-like-row${a.liked ? " liked" : ""}">${iconSvg("heart")}<span>${a.liked ? "Liked" : "Like"}</span></span>`,
+    action: () => toggleAddonLike(a),
+  });
 
   // What to do with it.
   if (!a.installed) {
@@ -381,6 +438,7 @@ function refreshAddons() {
 
 function addonQuickMenu(a) {
   const items = [{ label: "Open", icon: "info", sub: a.description || null, action: () => enterAddon(a.key) }];
+  if (a.available) items.push({ label: a.liked ? "Unlike" : "Like", icon: "heart", sub: hasCounts(a) ? `${fmtCount(a.likes)} likes` : null, action: () => toggleAddonLike(a) });
   if (!a.installed) items.push({ label: "Install", icon: "download", sub: a.installable ? (a.available ? "Version " + a.available : null) : `Needs Loungepad ${a.needsLauncher}`, action: () => installAddon(a) });
   else if (a.update) items.push({ label: `Update to ${a.available}`, icon: "download", action: () => installAddon(a) });
   if (a.kind === "theme" && a.installed && !addonInUse(a))

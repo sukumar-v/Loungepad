@@ -1,0 +1,32 @@
+# Add-on downloads and likes (src/worker.js). No URL of its own: the metadata service
+# (proxy/, loungepad-metadata-service) answers https://api.loungepad.app and hands /v1/addons/* to
+# this worker through a service binding, which carries the caller's request as it arrived.
+name = "loungepad-addons-stats"
+main = "src/worker.js"
+compatibility_date = "2024-11-01"
+workers_dev = false
+preview_urls = false
+
+#   npx wrangler d1 create loungepad-addons-stats
+#   npx wrangler d1 migrations apply loungepad-addons-stats --remote --config addons-stats/wrangler.toml
+[[d1_databases]]
+binding = "DB"
+database_name = "loungepad-addons-stats"
+database_id = "5b3b7ff3-479e-4f26-8ba6-725dfb66b6c8"
+
+# Per address, on writes only: the marks already stop double counting, this stops a loop.
+# namespace_id is any number unique within the account (the metadata service uses 1001).
+[[ratelimits]]
+name = "WRITE_LIMIT"
+namespace_id = "1002"
+simple = { limit = 30, period = 60 }
+
+# Once a day: drop the marks past their day and every salt but today's.
+[triggers]
+crons = ["23 0 * * *"]
+
+[observability]
+enabled = true
+[observability.logs]
+enabled = true
+invocation_logs = false
