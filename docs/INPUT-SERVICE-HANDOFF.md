@@ -308,6 +308,41 @@ one it writes nothing to `loungepad.log`; the 18:24 one, started by `Start-Proce
 shell, logged normally. A search of every profile for another `loungepad.log` written in the
 last 90 minutes found none. Still unexplained.
 
+### Still jumpy with the exact move: the agent's tick itself runs every 40-70 ms (Oct 8, 20:30)
+
+The user installed the exact-move service (agent `4B28EB7A…`), pushed the stick, still jumpy,
+and asked for a better way to debug than feel. With the user pushing the stick on request:
+
+- `--agent-loop-probe` (the agent's standalone loop reproduced in the test process against the
+  real pad: the same reader in quiet mode, the machine profile, the same mapper, the same 8 ms
+  pump into an STA dispatcher, every SendInput recorded instead of sent): **749 ticks at 8.00 ms**
+  (max 8.6), capture 0.09 ms, mapping 0.01 ms, 567 pointer moves asked for 8.07 ms apart. The code
+  path is fine in an ordinary process.
+- `--pointer-trace 15 wait` of the real agent at the same time (launcher running, mode "launcher
+  connected"): **a move every 44 ms on average (38-68, one 132), in 35-70 px jumps**, two to
+  three moves per 100 ms. The same with no launcher at 20:18 (background mode, 36 ms, 41 px).
+  The largest steps are exactly **70 px = 1400 px/s × the mapper's 50 ms clamp on dt**, so the
+  agent's own tick is 40-70 ms apart; it is not 8 ms ticks with moves going missing.
+- The earlier good trace (19:50, agent `E5FD64A2…`, launcher connected) was 7.6 ms / 10-12 px:
+  a worker that ticked properly. The user had reported jitter at 19:00 against that same agent
+  in background mode, so the slow tick is not tied to one build or one mode; it may be per
+  worker instance or per environment.
+- `--dispatcher-cadence-probe inject` (the pump through a dispatcher, the agent's absolute move
+  injected from each tick): 8.00 ms at every priority. The worker owns no windows (EnumWindows
+  for its pid: none), so nothing under the pointer feeds its queue.
+
+So something a tick calls takes tens of milliseconds only inside the SYSTEM worker. The
+candidates are the calls whose cost can depend on the process: `XInputGetState` on four empty
+slots (XInput 1.4 goes through GameInput on this build), `OpenInputDesktop` (three times a
+tick: Tick, the sink on every send, and `Handle`), `SendInput`, `GetCursorPos`. The build in
+"Latest local build" does three things: the worker's `AgentHealth` now carries, per health
+period, `TickMeanMs`, `TickMaxMs`, `CaptureMaxMs`, `MapMaxMs`, `SendMaxMs`, `SendShort` (sends
+that injected fewer events than asked) and `Ticks` (**read them while the stick is pushed**:
+`(Get-ItemProperty 'HKLM:\SOFTWARE\Loungepad\Input').AgentHealth`); an empty XInput slot is
+asked again every 500 ms instead of every tick; and the input sink uses the desktop check the
+tick already made instead of opening the desktop again per send (`_desktopCurrent`). The
+numbers decide what is next; nothing about the mapping changed.
+
 ### Installer reset machine preferences during upgrade
 
 PowerShell `New-Item -Force` against an existing registry key cleared its values,
@@ -372,8 +407,9 @@ Older GUID build directories and extracted service folders can be stale.
 | --- | --- |
 | Signed launcher (exact absolute move, Oct 8 20:00) | `dist\v1.8.0\Loungepad.exe` |
 | Launcher ZIP | `dist\v1.8.0\Loungepad-v1.8.0-win-x64.zip` |
-| Service ZIP (exact absolute move, Oct 8 20:00) | `dist\Loungepad.InputService-v1.8.0-x64.zip` |
-| Latest signed service package source | `artifacts\input-service\d75062cdd8934b3a8b0c12721604a533\package` |
+| Service ZIP (tick timing in the health record, Oct 8 20:40) | `dist\Loungepad.InputService-v1.8.0-x64.zip` |
+| Latest signed service package source | `artifacts\input-service\1d00d017ee434cabba5b5a2cd932107d\package` (agent `A325A8EC…`, catalog Valid) |
+| Exact-absolute-move package (20:00), **installed as of this writing** | `artifacts\input-service\d75062cdd8934b3a8b0c12721604a533\package` (agent `4B28EB7A…`) |
 | Build logs | `artifacts\input-service-exact-*-build.log`, `artifacts\launcher-exact-*-build.log` |
 | One-pad-per-controller package (19:30), **installed as of this writing** | `artifacts\input-service\d1a072bfa11c4c049bd4d6b527d7183f\package` (agent `E5FD64A2…`) |
 | Pointer-fix package (18:20) | `artifacts\input-service\ae79aa8ac9fd4caf98710160132e5b8b\package` (agent `B0336553…`) |

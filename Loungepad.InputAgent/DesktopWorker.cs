@@ -19,18 +19,37 @@ internal sealed class DesktopWorker
     private GamepadNavigationFilter? _navigation;
     private InputProfile _profile = new();
     private long _lastClient, _nextDevices, _nextHealth;
-    private bool _remoteActive, _remoteMove, _remoteWheel;
+    private bool _remoteActive, _remoteMove, _remoteWheel, _desktopCurrent;
     private AgentReply? _latest;
     private readonly NeutralInputGate _gate = new();
     private int _xboxIndex;
     private readonly NativeMethods.XINPUT_GAMEPAD[] _previous = new NativeMethods.XINPUT_GAMEPAD[4];
+    private readonly long[] _xboxRetryAt = new long[4];
+    // Where a tick's time went over the current health period. The real agent moved the pointer
+    // every 40-70 ms while the same loop in an ordinary process ticked every 8 (Oct 8 2026), and
+    // nothing short of these numbers could say which call was slow in a SYSTEM process.
+    private long _tickStarted; private int _ticks;
+    private double _tickSum, _tickMax, _captureMax, _mapMax, _sendMax; private int _sendShort;
 
     public DesktopWorker(string desktop) => _desktop = desktop;
+
+    private static double Ms(long from) => (Stopwatch.GetTimestamp() - from) * 1000.0 / Stopwatch.Frequency;
 
     public void Run()
     {
         _dispatcher = Dispatcher.CurrentDispatcher;
-        NativeMethods.InputSink = inputs => DesktopApi.IsCurrent(_desktop) ? _injector.SendLocal(inputs) : 0;
+        // The desktop is checked once per tick (Tick's first line); opening it again for every
+        // injected move was one more trip into the kernel per move for nothing a tick could not
+        // have told us a few milliseconds earlier.
+        NativeMethods.InputSink = inputs =>
+        {
+            if (!_desktopCurrent) return 0;
+            long started = Stopwatch.GetTimestamp();
+            uint sent = _injector.SendLocal(inputs);
+            _sendMax = Math.Max(_sendMax, Ms(started));
+            if (sent != inputs.Length) _sendShort++;
+            return sent;
+        };
         _profile = MachineInputSettings.Load();
         _hid.RefreshDirectDevices();
         _hid.SetQuiet(true);
@@ -86,7 +105,11 @@ internal sealed class DesktopWorker
 
     private void Tick()
     {
-        if (!DesktopApi.IsCurrent(_desktop)) { _stop.Cancel(); _dispatcher.BeginInvokeShutdown(DispatcherPriority.Send); return; }
+        long started = Stopwatch.GetTimestamp();
+        if (_tickStarted != 0) { double gap = (started - _tickStarted) * 1000.0 / Stopwatch.Frequency; _tickSum += gap; _tickMax = Math.Max(_tickMax, gap); _ticks++; }
+        _tickStarted = started;
+        _desktopCurrent = DesktopApi.IsCurrent(_desktop);
+        if (!_desktopCurrent) { _stop.Cancel(); _dispatcher.BeginInvokeShutdown(DispatcherPriority.Send); return; }
         long now = Environment.TickCount64;
         if (now >= _nextDevices) { _nextDevices = now + 1000; _hid.RefreshDirectDevices(); }
         if (_desktop == "Default" && _remoteActive && now - _lastClient <= 250)
@@ -97,14 +120,25 @@ internal sealed class DesktopWorker
             // touch travel is left in the reader for the next reply: the touchpad is still the
             // launcher's.
             if ((_remoteMove || _remoteWheel) && _gate.Armed)
-                _mapper!.MovePointer(Capture(drainTouch: false), Now(), _remoteMove, _remoteWheel);
+            {
+                long captured = Stopwatch.GetTimestamp();
+                var reading = Capture(drainTouch: false);
+                _captureMax = Math.Max(_captureMax, Ms(captured));
+                long mapped = Stopwatch.GetTimestamp();
+                _mapper!.MovePointer(reading, Now(), _remoteMove, _remoteWheel);
+                _mapMax = Math.Max(_mapMax, Ms(mapped));
+            }
             ReportHealth(now);
             return;
         }
         if (_remoteActive) RelinquishRemote();
+        long capture = Stopwatch.GetTimestamp();
         var snapshot = Capture();
+        _captureMax = Math.Max(_captureMax, Ms(capture));
         if (!snapshot.XInputPresent && !snapshot.Hid.Present) _mapper!.ResetInput();
+        long map = Stopwatch.GetTimestamp();
         if (_gate.Accept(snapshot)) _mapper!.Update(snapshot, Now());
+        _mapMax = Math.Max(_mapMax, Ms(map));
         ReportHealth(now);
     }
 
@@ -116,7 +150,11 @@ internal sealed class DesktopWorker
         MachineInputSettings.ReportAgent(new(now, Process.GetCurrentProcess().SessionId, Environment.ProcessId,
             _desktop, _remoteActive ? "launcher connected" : "background input",
             _latest?.XInputPresent == true || _latest?.Hid.Present == true, _gate.Armed,
-            _navigation?.BlockedCount ?? 0));
+            _navigation?.BlockedCount ?? 0,
+            TickMeanMs: _ticks == 0 ? 0 : Math.Round(_tickSum / _ticks, 2), TickMaxMs: Math.Round(_tickMax, 2),
+            CaptureMaxMs: Math.Round(_captureMax, 2), MapMaxMs: Math.Round(_mapMax, 2), SendMaxMs: Math.Round(_sendMax, 2),
+            SendShort: _sendShort, Ticks: _ticks));
+        _ticks = 0; _tickSum = _tickMax = _captureMax = _mapMax = _sendMax = 0; _sendShort = 0;
     }
 
     private void RelinquishRemote()
@@ -128,11 +166,17 @@ internal sealed class DesktopWorker
     {
         bool present = false;
         NativeMethods.XINPUT_STATE xbox = default;
+        long now = Environment.TickCount64;
         for (int i = 0; i < 4; i++)
         {
+            // An empty slot is asked again every half second, not every tick: XInput re-probes a
+            // disconnected slot, and four of those on every tick is the one call in this loop
+            // whose cost can depend on the process it runs in.
+            if (_xboxRetryAt[i] > now) continue;
             try
             {
-                if (NativeMethods.XInputGetStateAny(i, out var state) != 0) continue;
+                if (NativeMethods.XInputGetStateAny(i, out var state) != 0) { _xboxRetryAt[i] = now + 500; continue; }
+                _xboxRetryAt[i] = 0;
                 if (!state.Gamepad.Equals(_previous[i])) _xboxIndex = i;
                 _previous[i] = state.Gamepad;
                 if (!present || i == _xboxIndex) { xbox = state; present = true; }

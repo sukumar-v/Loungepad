@@ -2351,6 +2351,14 @@ Stop the scrolled grid from clipping through the All games header
   moved the pointer. `--pointer-sweep` drives the real pointer from the shared mover at 8 ms through
   the absolute move, a relative move and SetCursorPos and compares the steps; after the fix all
   three are 11-12 px, sd 0.66. Measure injection with those two before suspecting a loop.
+- **When the pointer still jumps, measure the agent's tick, not the mapping** (Oct 8 2026). The
+  agent's loop run in the test process against the real pad (`--agent-loop-probe`, SendInput
+  recorded) ticked at 8.00 ms with 0.1 ms of work; the real SYSTEM worker moved the pointer every
+  38-68 ms in 35-70 px jumps (`--pointer-trace 15 wait`), and 70 px is exactly 1400 px/s × the
+  mapper's 50 ms dt clamp, which says the tick itself was that slow. `AgentHealth` now carries
+  per-second `TickMeanMs`/`TickMaxMs`/`CaptureMaxMs`/`MapMaxMs`/`SendMaxMs`/`SendShort`/`Ticks`;
+  read them from the registry while the stick is pushed before theorising. A trace whose moves
+  come every 1-2 ms with 1-30 px steps is the mouse, not the stick: `wait` mode skips those.
 - **Packaging needs the dist launcher closed** (`package.ps1` deletes `dist\v1.8.0`, which it runs
   from) and the two scripts sequential (`package-input-service.ps1`, then `package.ps1`; both sign).
   The service install needs UAC -- `install-input-service.ps1 -SourcePath <package>` in an admin

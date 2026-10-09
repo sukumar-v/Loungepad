@@ -60,22 +60,33 @@ internal static class MotionProbes
     /// arrived and how even the steps were. Move only the controller stick while it runs.</summary>
     public static void PointerTrace(int seconds, bool waitForMotion = false)
     {
+        using var tick = new MillisecondTimer();
+        var armed = Stopwatch.StartNew();
+        while (true)
+        {
+            if (waitForMotion)
+            {
+                Console.WriteLine($"Waiting up to 10 minutes for the pointer to move, then tracing it for {seconds} s. A mouse moves the pointer every millisecond or so; the stick's moves come every 8 ms, and only a run shaped like that counts.");
+                NativeMethods.GetCursorPos(out var start);
+                while (armed.Elapsed.TotalMinutes < 10)
+                {
+                    if (NativeMethods.GetCursorPos(out var p) && (p.X != start.X || p.Y != start.Y)) break;
+                    tick.Wait();
+                }
+                if (armed.Elapsed.TotalMinutes >= 10) { Console.WriteLine("the pointer never moved like a stick"); return; }
+                Console.WriteLine($"motion seen after {armed.Elapsed.TotalSeconds:F0} s");
+            }
+            var runs = Record(seconds, tick);
+            bool stickLike = runs.Any(r => r.Count >= 20 && Median(Intervals(r)) >= 6);
+            if (!waitForMotion || stickLike || armed.Elapsed.TotalMinutes >= 10) { Report(runs, waitForMotion); return; }
+            Console.WriteLine($"that was a mouse ({runs.Sum(r => r.Count)} changes, none spaced like the stick); waiting again");
+        }
+    }
+
+    private static List<List<(double T, int X, int Y)>> Record(int seconds, MillisecondTimer tick)
+    {
         var moves = new List<(double T, int X, int Y)>();
         int lastX = int.MinValue, lastY = int.MinValue;
-        using var tick = new MillisecondTimer();
-        if (waitForMotion)
-        {
-            Console.WriteLine($"Waiting up to 5 minutes for the pointer to move, then tracing it for {seconds} s.");
-            NativeMethods.GetCursorPos(out var start);
-            var waited = Stopwatch.StartNew();
-            while (waited.Elapsed.TotalMinutes < 5)
-            {
-                if (NativeMethods.GetCursorPos(out var p) && (p.X != start.X || p.Y != start.Y)) break;
-                tick.Wait();
-            }
-            if (waited.Elapsed.TotalMinutes >= 5) { Console.WriteLine("the pointer never moved"); return; }
-            Console.WriteLine($"motion seen after {waited.Elapsed.TotalSeconds:F0} s");
-        }
         var sw = Stopwatch.StartNew();
         Console.WriteLine($"Tracing the pointer for {seconds} s: push the left stick steadily (a slow push, then a fast one, then diagonal). Do not touch the mouse.");
         while (sw.Elapsed.TotalSeconds < seconds)
@@ -95,15 +106,26 @@ internal static class MotionProbes
             if (runs.Count == 0 || m.T - runs[^1][^1].T > 150) runs.Add(new());
             runs[^1].Add(m);
         }
-        foreach (var run in runs.Where(r => r.Count >= 20))
+        return runs;
+    }
+
+    private static List<double> Intervals(List<(double T, int X, int Y)> run)
+    {
+        var intervals = new List<double>();
+        for (int i = 1; i < run.Count; i++) intervals.Add(run[i].T - run[i - 1].T);
+        return intervals;
+    }
+
+    private static double Median(List<double> values) => values.Count == 0 ? 0 : values.OrderBy(v => v).ElementAt(values.Count / 2);
+
+    private static void Report(List<List<(double T, int X, int Y)>> runs, bool stickOnly)
+    {
+        foreach (var run in runs.Where(r => r.Count >= 20 && (!stickOnly || Median(Intervals(r)) >= 6)))
         {
-            var intervals = new List<double>();
+            var intervals = Intervals(run);
             var steps = new List<double>();
             for (int i = 1; i < run.Count; i++)
-            {
-                intervals.Add(run[i].T - run[i - 1].T);
                 steps.Add(Math.Sqrt(Math.Pow(run[i].X - run[i - 1].X, 2) + Math.Pow(run[i].Y - run[i - 1].Y, 2)));
-            }
             double duration = run[^1].T - run[0].T;
             Console.WriteLine($"run at {run[0].T / 1000:F1} s: {run.Count} moves over {duration:F0} ms, from ({run[0].X},{run[0].Y}) to ({run[^1].X},{run[^1].Y})");
             Console.WriteLine($"  intervals ms: {Describe(intervals)}; over 12 ms: {intervals.Count(i => i > 12)}, over 20 ms: {intervals.Count(i => i > 20)}, over 40 ms: {intervals.Count(i => i > 40)}");
@@ -122,8 +144,9 @@ internal static class MotionProbes
     /// worker's does on the way to a move (read the pointer, open the input desktop). Measures the
     /// spacing of the ticks as they run on the dispatcher, for the priority the worker uses and
     /// for Send.</summary>
-    public static void DispatcherCadence()
+    public static void DispatcherCadence(bool inject = false)
     {
+        NativeMethods.GetCursorPos(out var home);
         foreach (var priority in new[] { DispatcherPriority.Input, DispatcherPriority.Normal, DispatcherPriority.Send })
         {
             var intervals = new List<double>();
@@ -134,7 +157,7 @@ internal static class MotionProbes
                 using var stop = new CancellationTokenSource(4000);
                 var pump = new Thread(() =>
                 {
-                    long last = 0;
+                    long last = 0; int step = 0;
                     try
                     {
                         using var cadence = new InputCadence();
@@ -148,6 +171,9 @@ internal static class MotionProbes
                                 last = now;
                                 NativeMethods.GetCursorPos(out _);
                                 using var desktop = DesktopApi.Open();
+                                // The agent's own move: an absolute SendInput from the dispatcher
+                                // tick, a pixel back and forth so the pointer stays put overall.
+                                if (inject) NativeMethods.MoveCursorBy((++step & 1) == 0 ? 1 : -1, 0);
                                 work.Add((Stopwatch.GetTimestamp() - now) * 1000.0 / Stopwatch.Frequency);
                             }, priority, stop.Token).Task.GetAwaiter().GetResult();
                         }
@@ -162,8 +188,9 @@ internal static class MotionProbes
             thread.SetApartmentState(ApartmentState.STA);
             thread.Start();
             thread.Join();
-            Console.WriteLine($"dispatcher ticks at {priority}: {intervals.Count} ticks; spacing ms {Describe(intervals)}; over 10 ms: {intervals.Count(i => i > 10)}, over 16 ms: {intervals.Count(i => i > 16)}; tick work ms max {work.DefaultIfEmpty(0).Max():F3}");
+            Console.WriteLine($"dispatcher ticks at {priority}{(inject ? " with injected moves" : "")}: {intervals.Count} ticks; spacing ms {Describe(intervals)}; over 10 ms: {intervals.Count(i => i > 10)}, over 16 ms: {intervals.Count(i => i > 16)}; tick work ms max {work.DefaultIfEmpty(0).Max():F3}");
         }
+        if (inject) NativeMethods.SetCursorPos(home.X, home.Y);
     }
 
     /// <summary>
@@ -276,6 +303,105 @@ internal static class MotionProbes
 
         static void Send(int nx, int ny) => NativeMethods.SendInputLocal(new[] { new NativeMethods.INPUT { type = NativeMethods.INPUT_MOUSE, u = new() { mi = new()
             { dx = nx, dy = ny, dwFlags = NativeMethods.MOUSEEVENTF_MOVE | NativeMethods.MOUSEEVENTF_ABSOLUTE | NativeMethods.MOUSEEVENTF_VIRTUALDESK } } } });
+    }
+
+    /// <summary>
+    /// The agent's standalone loop, reproduced in this process against the real pad: the same
+    /// reader in quiet mode, the same machine profile, the same mapper, the same 8 ms pump
+    /// posting one tick at a time to an STA dispatcher, with every SendInput recorded instead
+    /// of sent -- so the real pointer never moves and the real agent is not fought. Reports the
+    /// tick spacing, the cost of the capture and of the mapping, and the spacing of the moves
+    /// the mapper asked for. Push the stick while it runs.
+    /// </summary>
+    public static void AgentLoop()
+    {
+        var ticks = new List<double>(); var captureMs = new List<double>(); var mapMs = new List<double>();
+        var sends = new List<double>(); int sendCalls = 0, movePixels = 0;
+        string? failure = null;
+        var thread = new Thread(() =>
+        {
+            var dispatcher = Dispatcher.CurrentDispatcher;
+            var original = NativeMethods.InputSink;
+            try
+            {
+                using var hid = new HidGamepadReader();
+                hid.RefreshDirectDevices();
+                hid.SetQuiet(true);
+                var injector = new InputInjector();
+                var profile = MachineInputSettings.Load();
+                using var mapper = new SecureMapper(profile, injector);
+                var gate = new NeutralInputGate();
+                var previous = new NativeMethods.XINPUT_GAMEPAD[4];
+                int xboxIndex = 0;
+                NativeMethods.InputSink = inputs =>
+                {
+                    sendCalls++;
+                    foreach (var i in inputs) if (i.type == NativeMethods.INPUT_MOUSE && (i.u.mi.dwFlags & NativeMethods.MOUSEEVENTF_MOVE) != 0)
+                        sends.Add(Stopwatch.GetTimestamp() * 1000.0 / Stopwatch.Frequency);
+                    return (uint)inputs.Length;
+                };
+                using var stop = new CancellationTokenSource(6000);
+                long last = 0;
+                var pump = new Thread(() =>
+                {
+                    try
+                    {
+                        using var cadence = new InputCadence();
+                        while (!stop.IsCancellationRequested)
+                        {
+                            cadence.Wait();
+                            dispatcher.InvokeAsync(() =>
+                            {
+                                long t0 = Stopwatch.GetTimestamp();
+                                if (last != 0) ticks.Add((t0 - last) * 1000.0 / Stopwatch.Frequency);
+                                last = t0;
+                                bool present = false;
+                                NativeMethods.XINPUT_STATE xbox = default;
+                                for (int i = 0; i < 4; i++)
+                                {
+                                    try
+                                    {
+                                        if (NativeMethods.XInputGetStateAny(i, out var state) != 0) continue;
+                                        if (!state.Gamepad.Equals(previous[i])) xboxIndex = i;
+                                        previous[i] = state.Gamepad;
+                                        if (!present || i == xboxIndex) { xbox = state; present = true; }
+                                    }
+                                    catch (DllNotFoundException) { break; }
+                                }
+                                var snapshot = new AgentReply(Protocol.Version, true, present, xbox, hid.Snapshot(), true);
+                                long t1 = Stopwatch.GetTimestamp();
+                                captureMs.Add((t1 - t0) * 1000.0 / Stopwatch.Frequency);
+                                if (!snapshot.XInputPresent && !snapshot.Hid.Present) mapper.ResetInput();
+                                if (gate.Accept(snapshot))
+                                {
+                                    var pad = snapshot.Hid.Present ? snapshot.Hid.Pad : snapshot.Xbox.Gamepad;
+                                    movePixels += Math.Abs(pad.sThumbLX) > 6000 || Math.Abs(pad.sThumbLY) > 6000 ? 1 : 0;
+                                    mapper.Update(snapshot, Stopwatch.GetTimestamp() * 1000.0 / Stopwatch.Frequency);
+                                }
+                                mapMs.Add((Stopwatch.GetTimestamp() - t1) * 1000.0 / Stopwatch.Frequency);
+                            }, DispatcherPriority.Input, stop.Token).Task.GetAwaiter().GetResult();
+                        }
+                    }
+                    catch (OperationCanceledException) { }
+                    dispatcher.BeginInvokeShutdown(DispatcherPriority.Send);
+                });
+                pump.Start();
+                Dispatcher.Run();
+                pump.Join();
+            }
+            catch (Exception ex) { failure = ex.ToString(); }
+            finally { NativeMethods.InputSink = original; }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        thread.Join();
+        if (failure is not null) { Console.WriteLine("agent loop failed: " + failure); return; }
+        var sendGaps = new List<double>();
+        for (int i = 1; i < sends.Count; i++) sendGaps.Add(sends[i] - sends[i - 1]);
+        Console.WriteLine($"agent loop in this process: {ticks.Count} ticks; spacing ms {Describe(ticks)}; over 10 ms: {ticks.Count(t => t > 10)}, over 16 ms: {ticks.Count(t => t > 16)}");
+        Console.WriteLine($"  capture ms {Describe(captureMs)}");
+        Console.WriteLine($"  mapping ms {Describe(mapMs)}");
+        Console.WriteLine($"  ticks with the stick pushed: {movePixels}; SendInput calls: {sendCalls}; pointer moves asked for: {sends.Count}; spacing of moves ms {Describe(sendGaps)}");
     }
 
     private static string Describe(List<double> values)
