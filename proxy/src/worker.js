@@ -285,15 +285,21 @@ async function igdbGames(env, token, clause, limit) {
 }
 
 async function igdbQuery(env, token, body) {
-  return fetch("https://api.igdb.com/v4/games", {
+  const send = (t) => fetch("https://api.igdb.com/v4/games", {
     method: "POST",
     headers: {
       "Client-ID": env.IGDB_CLIENT_ID,
-      "Authorization": `Bearer ${token}`,
+      "Authorization": `Bearer ${t}`,
       "Content-Type": "text/plain",
     },
     body,
   });
+  const res = await send(token);
+  if (res.status !== 401) return res;
+  // A token IGDB no longer takes: revoked, or issued to another application. Ask Twitch for a new
+  // one, once, rather than failing every lookup until the stored one expires.
+  console.log("igdb: token refused, fetching a new one");
+  return send(await igdbToken(env, true));
 }
 
 function shape(hit) {
@@ -380,9 +386,19 @@ const igdbImage = (id, size) => `https://images.igdb.com/igdb/image/upload/t_${s
  * string under "igdb:token", which the JSON read of the fallback cannot take, so it is under a new
  * key here and the first request after the move mints one.)
  */
-async function igdbToken(env) {
-  const cached = await cacheGet(env, "twitch:token");
-  if (cached) return cached;
+/**
+ * The cache key carries the client id: a token is only good with the application it was issued
+ * to, and the cache is shared. When the service moved to a new Twitch application (Oct 9 2026) the
+ * old application's token, stored under a bare "twitch:token", was handed to IGDB with the new
+ * client id, and every uncached lookup answered 401 until it expired.
+ */
+const tokenKey = (env) => `twitch:token:${env.IGDB_CLIENT_ID}`;
+
+async function igdbToken(env, fresh = false) {
+  if (!fresh) {
+    const cached = await cacheGet(env, tokenKey(env));
+    if (cached) return cached;
+  }
 
   const res = await fetch("https://id.twitch.tv/oauth2/token", {
     method: "POST",
@@ -400,7 +416,7 @@ async function igdbToken(env) {
 
   // A minute early, so a token cannot expire between our check and IGDB's. The token is in hand
   // whether or not the write takes, so a refused one is not a failure (cachePut logs it).
-  await cachePut(env, "twitch:token", data.access_token, Math.max(60, (data.expires_in || 3600) - 60));
+  await cachePut(env, tokenKey(env), data.access_token, Math.max(60, (data.expires_in || 3600) - 60));
   return data.access_token;
 }
 

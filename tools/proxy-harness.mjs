@@ -63,6 +63,7 @@ globalThis.fetch = async (url, init = {}) => {
   const body = (b, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { "Content-Type": "application/json" } });
   if (u.startsWith("https://id.twitch.tv/")) { upstream.twitch++; return body({ access_token: "tok", expires_in: 5000000 }); }
   if (u.startsWith("https://api.igdb.com/")) {
+    if (init.headers && init.headers.Authorization === "Bearer stale") { upstream.igdb++; return body({ message: "invalid token" }, 401); }
     upstream.igdb++;
     const q = String(init.body);
     const m = q.match(/search "([^"]+)"/);
@@ -101,7 +102,7 @@ check("first ask is a MISS 200", r.status === 200 && r.cache === "MISS" && r.bod
 let k = row("facts:v7:known game");
 check("answer stored with a 30-day expiry", k && Math.abs(k.expires - (now() + 30 * D)) < 5, k && `${k.expires - now()}s`);
 check("one row written for the answer, plus the token", trace.d1Writes === 2, `writes=${trace.d1Writes}`);
-check("token stored in D1", !!row("twitch:token"));
+check("token stored in D1 under its client id", !!row("twitch:token:id"));
 const before = { ...upstream };
 r = await get("/v1/facts?title=known%20%20GAME");
 check("second ask is a HIT with no upstream call", r.status === 200 && r.cache === "HIT" && upstream.igdb === before.igdb && upstream.twitch === before.twitch);
@@ -176,6 +177,14 @@ const logs = []; const log = console.log; console.log = (...x) => logs.push(x.jo
 await worker.scheduled({ cron: "17 4 * * *" }, env, { waitUntil() {} });
 console.log = log;
 check("cron removes expired rows only", !row("facts:v7:gone1") && !row("facts:v7:gone2") && db.prepare("SELECT count(*) n FROM cache").get().n === live, logs.join(" "));
+
+// A stored token IGDB refuses (another application's, or revoked): one new token, then the answer.
+const tok = row("twitch:token:id");
+db.prepare("UPDATE cache SET value = ? WHERE key = ?").run(tok.value.replace(/tok/, "stale"), "twitch:token:id");
+const twitchBefore = upstream.twitch;
+r = await get("/v1/facts?title=Known%20Game&platform=6");
+check("a refused token is replaced once and the lookup answers", r.status === 200 && r.body.name === "Known Game" && upstream.twitch === twitchBefore + 1, `twitch=${upstream.twitch - twitchBefore}`);
+check("the new token is stored", !row("twitch:token:id").value.includes("stale"));
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
