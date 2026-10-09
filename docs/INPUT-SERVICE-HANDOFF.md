@@ -273,6 +273,41 @@ resting Xbox pad's wobble take the mapping from the DualSense in hand a few time
 both are connected, which the next test does. On a simultaneous change the pad in hand keeps
 the pointer, as in the launcher. Two checks cover it (68 → 70).
 
+### Still "jumps like a mouse on a VDI" with one pad: the absolute move landed a pixel off (Oct 8, 19:45)
+
+The user installed the one-pad-per-controller service (agent `E5FD64A2…`) and reported the
+pointer still stuttering a lot on both desktops, "like using the mouse on a VDI", and asked
+for a better way to debug than feel. Two probes that need no controller:
+
+- `--pointer-sweep` drives the real pointer from the shared mover at the agent's 8 ms cadence,
+  a full push right for a second and back for a second three times, through three injection
+  methods in turn, while a thread records what the pointer did. The intervals were the same
+  for all three (p50 7.6 ms, p95 9.1); the steps were not. **The absolute move the agent sends:
+  steps 0 to 13 px, sd 3.97, mean 9.41 (16% slower than asked), and 61 extra pointer changes
+  that were vertical wobble on a purely horizontal push.** A relative move and SetCursorPos:
+  steps 11 to 12 px, sd 0.65.
+- `--absolute-mapping-probe` sends one absolute move per column across a row and one per row
+  down a column, with three candidate formulas, and reads the pointer back after each. The
+  formula `MoveCursorTo` used, `(x * 65535 + 32767) / (width - 1)`, **landed 1186 of 2560
+  columns and 689 of 1440 rows on the wrong pixel and put the row a pixel off on every column
+  move.** `(x * 65536 + 32768) / width` landed every pixel of both sweeps exactly, and so did
+  the ceiling `(x * 65536 + width - 1) / width`: Windows floors `n * width / 65536`.
+
+Read back by the next tick, the missed pixel was lost motion and the wobble was jitter, at
+125 Hz, under every absolute move the launcher has ever made -- the old 15.6 ms loop hid it
+behind bigger steps. `MoveCursorTo` now aims at the middle of the pixel's 65536-unit range
+(the formula in the launcher, the agent and the launcher's local path are one, in
+`Loungepad.Input`'s copy of NativeMethods). After the fix the sweep's absolute pass is
+indistinguishable from the other two: 653 changes, steps 11 to 12, sd 0.66, no wobble. One
+check asserts every column of the current screen lands on the pixel Windows will floor it to
+(70 → 71). Both packages rebuilt. Not yet confirmed by hand.
+
+Also noted: Sunshine is running but has no stream open (only its own web UI connection), the
+launcher of 19:22 was started by explorer, unelevated, as the console user, and like the 17:35
+one it writes nothing to `loungepad.log`; the 18:24 one, started by `Start-Process` from a
+shell, logged normally. A search of every profile for another `loungepad.log` written in the
+last 90 minutes found none. Still unexplained.
+
 ### Installer reset machine preferences during upgrade
 
 PowerShell `New-Item -Force` against an existing registry key cleared its values,
@@ -335,32 +370,32 @@ Older GUID build directories and extracted service folders can be stale.
 
 | Item | Path relative to workspace |
 | --- | --- |
-| Signed launcher (one pad per controller, Oct 8 19:30) | `dist\v1.8.0\Loungepad.exe` |
+| Signed launcher (exact absolute move, Oct 8 20:00) | `dist\v1.8.0\Loungepad.exe` |
 | Launcher ZIP | `dist\v1.8.0\Loungepad-v1.8.0-win-x64.zip` |
-| Service ZIP (one pad per controller, Oct 8 19:30) | `dist\Loungepad.InputService-v1.8.0-x64.zip` |
-| Latest signed service package source | `artifacts\input-service\d1a072bfa11c4c049bd4d6b527d7183f\package` |
-| Build logs | `artifacts\input-service-onepad-*-build.log`, `artifacts\launcher-onepad-*-build.log` |
-| Pointer-fix service package (18:20), **installed as of this writing** | `artifacts\input-service\ae79aa8ac9fd4caf98710160132e5b8b\package` (agent `B0336553…`) |
-| 17:26 service package, the one before | `artifacts\input-service\a104da0444294117b6ba5555dcf4dfde\package` (agent `83504FAD…`) |
+| Service ZIP (exact absolute move, Oct 8 20:00) | `dist\Loungepad.InputService-v1.8.0-x64.zip` |
+| Latest signed service package source | `artifacts\input-service\d75062cdd8934b3a8b0c12721604a533\package` |
+| Build logs | `artifacts\input-service-exact-*-build.log`, `artifacts\launcher-exact-*-build.log` |
+| One-pad-per-controller package (19:30), **installed as of this writing** | `artifacts\input-service\d1a072bfa11c4c049bd4d6b527d7183f\package` (agent `E5FD64A2…`) |
+| Pointer-fix package (18:20) | `artifacts\input-service\ae79aa8ac9fd4caf98710160132e5b8b\package` (agent `B0336553…`) |
+| 17:26 package | `artifacts\input-service\a104da0444294117b6ba5555dcf4dfde\package` (agent `83504FAD…`) |
 
-Latest service ZIP SHA-256: `BAC537D513B8544DA2ADC0FEFFD9C4978FE43C9975D4FE0B277E9BEAAEC4229F`;
-its agent exe `E5FD64A2A0ACEEDC958D8141A4497142DA93F402E41D2029BB6E8F6E4576D0EA`. Every binary
-and the catalog verified: signature Valid with a timestamp, `Test-FileCatalog` Valid. All three
+Latest service ZIP SHA-256: `5531A9F6EAE9034CC6A2CFB77EB8FE4D75F13CDFD52C1E57A0DD467A0EA48974`;
+its agent exe `4B28EB7AE4D89CE06A309316B0A41E35F0A966E274B239DB249DDB9548DDE6AB`. Every binary
+and the catalog verified: signature Valid with a timestamp, `Test-FileCatalog` Valid. All four
 agents report file version 1.8.0.0, so the hash is how to tell them apart.
-Latest launcher SHA-256: `3230426EBA15F8E10ED205AC41914C8EBBBFAC9B00D8BEB71723CA2B41957A64`;
-launcher ZIP `0FFDCDFD13AF8E03059AD0DAFC77D491AC1A4C8DE91637596EA750FE754A7C8C`; signature Valid
-with a timestamp, file version 1.8.0.0, 29 shipped files embedded. (The 18:20 launcher was
-`5FBFA8FD…`, the 17:26 one `E706A173…`.)
+Latest launcher SHA-256: `28680676982227034067B24C8CEFBD0AC0828EF219BDD9531D445E0859C17D05`;
+launcher ZIP `F7604E35502DFB93E3A2C79F6A40144287F008331848426B4900188BEFFF3D9B`; signature Valid
+with a timestamp, file version 1.8.0.0, 29 shipped files embedded. (Earlier launchers: 19:30
+`32304263…`, 18:20 `5FBFA8FD…`, 17:26 `E706A173…`.)
 
-**Installed as of this writing: the 18:20 service (agent `B0336553…`)**, which the user installed
-with UAC after cancelling one prompt at 18:26 (while that prompt was up the old service put a
-fresh worker on Winlogon, pid 129840, controller present, ready, no error, and came back to
-Default when it closed). The one-pad-per-controller package is NOT installed yet. No launcher
-was running at 19:00 (the 18:24 one, pid 136372, is gone without a log line; the user closed it
-or it was closed for the install). To install the latest, in an administrator PowerShell:
+**Installed as of this writing: the 19:30 service (agent `E5FD64A2…`)**, installed by the user
+with UAC. The exact-absolute-move package is NOT installed yet. The launcher the user started
+from `dist\v1.8.0` at 19:22 was closed through its window for packaging (280 ms) and the new one
+started from the same path afterwards. To install the latest service, in an administrator
+PowerShell:
 
 ```powershell
-cd 'C:\Users\Sukumar\Projects\Windows\Loungepad\artifacts\input-service\d1a072bfa11c4c049bd4d6b527d7183f\package'
+cd 'C:\Users\Sukumar\Projects\Windows\Loungepad\artifacts\input-service\d75062cdd8934b3a8b0c12721604a533\package'
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install-input-service.ps1 -SourcePath .
 ```
 

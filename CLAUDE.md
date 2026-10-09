@@ -2343,6 +2343,14 @@ Stop the scrolled grid from clipping through the All games header
   The agent's pad selection (`SecureMapper.SelectPad`) measures movement against an anchor past
   `StickPointer.StickNoise` (1600, shared with GamepadService's `Moved`), not reading to reading,
   or a resting Xbox pad's wobble steals the pointer from the DualSense in hand.
+- **An absolute mouse move lands on pixel floor(n * width / 65536), so aim at
+  (x * 65536 + 32768) / width.** `MoveCursorTo` used `(x * 65535 + 32767) / (width - 1)` and
+  landed 1186 of 2560 columns and 689 of 1440 rows a pixel off, plus the row a pixel off on every
+  horizontal move (`--absolute-mapping-probe`, Oct 8 2026, 2560x1440). Read back the next tick, that
+  was 16% lost motion and a vertical wobble at 125 Hz: "jumps like a mouse on a VDI" once the agent
+  moved the pointer. `--pointer-sweep` drives the real pointer from the shared mover at 8 ms through
+  the absolute move, a relative move and SetCursorPos and compares the steps; after the fix all
+  three are 11-12 px, sd 0.66. Measure injection with those two before suspecting a loop.
 - **Packaging needs the dist launcher closed** (`package.ps1` deletes `dist\v1.8.0`, which it runs
   from) and the two scripts sequential (`package-input-service.ps1`, then `package.ps1`; both sign).
   The service install needs UAC -- `install-input-service.ps1 -SourcePath <package>` in an admin

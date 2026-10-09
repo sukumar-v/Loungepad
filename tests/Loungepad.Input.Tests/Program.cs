@@ -42,14 +42,24 @@ internal static class Program
                 MotionProbes.Hid();
                 return 0;
             }
-            if (args.Length == 2 && args[0] == "--pointer-trace" && int.TryParse(args[1], out int traceSeconds))
+            if (args.Length is 2 or 3 && args[0] == "--pointer-trace" && int.TryParse(args[1], out int traceSeconds))
             {
-                MotionProbes.PointerTrace(traceSeconds);
+                MotionProbes.PointerTrace(traceSeconds, waitForMotion: args.Length == 3 && args[2] == "wait");
+                return 0;
+            }
+            if (args is ["--absolute-mapping-probe"])
+            {
+                MotionProbes.AbsoluteMapping();
                 return 0;
             }
             if (args is ["--dispatcher-cadence-probe"])
             {
                 MotionProbes.DispatcherCadence();
+                return 0;
+            }
+            if (args is ["--pointer-sweep"])
+            {
+                MotionProbes.PointerSweep();
                 return 0;
             }
             if (args is ["--input-timing-probe"])
@@ -184,7 +194,9 @@ internal static class Program
             NativeMethods.MoveCursorBy(3, 0);
             int left = GetSystemMetrics(SM_XVIRTUALSCREEN), width = GetSystemMetrics(SM_CXVIRTUALSCREEN);
             int aim = Math.Clamp(at.X + 6, left, left + width - 1);
-            int expected = Math.Clamp((int)(((aim - left) * 65535.0 + 32767.0) / (width - 1)), 0, 65535);
+            int expected = Math.Clamp((int)(((long)(aim - left) * 65536 + 32768) / width), 0, 65535);
+            Check(Enumerable.Range(0, width).All(x => (int)((long)(((long)x * 65536 + 32768) / width) * width / 65536) == x),
+                "the absolute aim lands every column on the pixel Windows will floor it to");
             Check(output.Count == 2 && output[1].u.mi.dx == expected, "a move aimed while the last one is still in flight carries on from where that one was heading");
         }
         finally { NativeMethods.InputSink = original; }

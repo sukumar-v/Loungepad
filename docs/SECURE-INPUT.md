@@ -258,9 +258,16 @@ Bluetooth instance while a wired instance of the same pad is present (same vendo
 two different serials), so one physical pad is one reading. Read as two, the stick alternated
 between the cable's copy and the radio's lagging one a few hundred times a second, and every push
 came out as a sawtooth. `--dispatcher-cadence-probe` reproduces the worker's tick mechanism and
-measures the spacing of ticks on the dispatcher. `--pointer-trace <seconds>` records every change
-of the real pointer's position at about 1 ms and describes each run of motion (spacing of moves,
-size of steps); move only the controller stick while it runs. None of the three injects input.
+measures the spacing of ticks on the dispatcher. `--pointer-trace <seconds> [wait]` records every
+change of the real pointer's position at about 1 ms and describes each run of motion (spacing of
+moves, size of steps); move only the controller stick while it runs, and with `wait` it starts
+recording at the first movement. None of the three injects input. Two more do move the real
+pointer, with no clicks or keys: `--pointer-sweep` drives it from the shared stick mover at the
+agent's 8 ms cadence through the absolute move the agent sends, a relative move and SetCursorPos,
+and compares the spacing and the size of the steps each produced; `--absolute-mapping-probe`
+sends one absolute move per column and per row with candidate formulas and counts the ones that
+landed on the wrong pixel. Windows floors `n * width / 65536`, and the formula that lands every
+pixel is `(x * 65536 + 32768) / width`; the old one missed nearly half the columns.
 
 `--navigation-hook-stall-probe` is the check for the navigation filter's thread. It is opt-in
 because it injects one inert gamepad virtual key (`VK_GAMEPAD_RIGHT_THUMBSTICK_LEFT`, 0xDA) a few

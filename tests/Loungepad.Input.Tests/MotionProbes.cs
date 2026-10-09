@@ -58,12 +58,25 @@ internal static class MotionProbes
     /// <summary>Records every change of the real pointer's position for the given number of
     /// seconds at about 1 ms resolution, then describes each run of motion: how evenly the moves
     /// arrived and how even the steps were. Move only the controller stick while it runs.</summary>
-    public static void PointerTrace(int seconds)
+    public static void PointerTrace(int seconds, bool waitForMotion = false)
     {
         var moves = new List<(double T, int X, int Y)>();
-        var sw = Stopwatch.StartNew();
         int lastX = int.MinValue, lastY = int.MinValue;
         using var tick = new MillisecondTimer();
+        if (waitForMotion)
+        {
+            Console.WriteLine($"Waiting up to 5 minutes for the pointer to move, then tracing it for {seconds} s.");
+            NativeMethods.GetCursorPos(out var start);
+            var waited = Stopwatch.StartNew();
+            while (waited.Elapsed.TotalMinutes < 5)
+            {
+                if (NativeMethods.GetCursorPos(out var p) && (p.X != start.X || p.Y != start.Y)) break;
+                tick.Wait();
+            }
+            if (waited.Elapsed.TotalMinutes >= 5) { Console.WriteLine("the pointer never moved"); return; }
+            Console.WriteLine($"motion seen after {waited.Elapsed.TotalSeconds:F0} s");
+        }
+        var sw = Stopwatch.StartNew();
         Console.WriteLine($"Tracing the pointer for {seconds} s: push the left stick steadily (a slow push, then a fast one, then diagonal). Do not touch the mouse.");
         while (sw.Elapsed.TotalSeconds < seconds)
         {
@@ -151,6 +164,118 @@ internal static class MotionProbes
             thread.Join();
             Console.WriteLine($"dispatcher ticks at {priority}: {intervals.Count} ticks; spacing ms {Describe(intervals)}; over 10 ms: {intervals.Count(i => i > 10)}, over 16 ms: {intervals.Count(i => i > 16)}; tick work ms max {work.DefaultIfEmpty(0).Max():F3}");
         }
+    }
+
+    /// <summary>
+    /// Moves the real pointer the way the agent does, with no controller in the loop: a full
+    /// stick push to the right for a second and back for a second, three times, from the shared
+    /// mover at the agent's 8 ms cadence, through each of three injection methods in turn -- the
+    /// absolute move the agent uses, a relative move, and SetCursorPos -- while another thread
+    /// records what the pointer did. Watch the pointer during each pass. No clicks or keys.
+    /// </summary>
+    public static void PointerSweep()
+    {
+        NativeMethods.GetCursorPos(out var home);
+        foreach (var (name, move) in new (string, Action<int, int>)[]
+        {
+            ("absolute move (what the agent sends)", NativeMethods.MoveCursorBy),
+            ("relative move", (dx, dy) => NativeMethods.SendInputLocal(new[] { new NativeMethods.INPUT { type = NativeMethods.INPUT_MOUSE,
+                u = new() { mi = new() { dx = dx, dy = dy, dwFlags = NativeMethods.MOUSEEVENTF_MOVE } } } })),
+            ("SetCursorPos", (dx, dy) => { NativeMethods.GetCursorPos(out var p); NativeMethods.SetCursorPos(p.X + dx, p.Y + dy); }),
+        })
+        {
+            Console.WriteLine($"--- {name}: watch the pointer ---");
+            Thread.Sleep(1500);
+            var moves = new List<(double T, int X, int Y)>();
+            using var stop = new CancellationTokenSource();
+            var sampler = new Thread(() =>
+            {
+                using var tick = new MillisecondTimer();
+                var sw = Stopwatch.StartNew();
+                int lx = int.MinValue, ly = int.MinValue;
+                while (!stop.IsCancellationRequested)
+                {
+                    if (NativeMethods.GetCursorPos(out var p) && (p.X != lx || p.Y != ly)) { moves.Add((sw.Elapsed.TotalMilliseconds, p.X, p.Y)); lx = p.X; ly = p.Y; }
+                    tick.Wait();
+                }
+            }) { IsBackground = true };
+            sampler.Start();
+            var mover = new StickPointer.Mover();
+            using (var cadence = new InputCadence())
+            {
+                long last = Stopwatch.GetTimestamp();
+                for (int pass = 0; pass < 6; pass++)
+                {
+                    short lx = (short)(pass % 2 == 0 ? 32767 : -32767);
+                    for (int i = 0; i < 125; i++)
+                    {
+                        cadence.Wait();
+                        long now = Stopwatch.GetTimestamp();
+                        double dt = (now - last) / (double)Stopwatch.Frequency;
+                        last = now;
+                        var (dx, dy) = mover.Step(lx, 0, dt, .18, 1, 1.8, 1);
+                        if (dx != 0 || dy != 0) move(dx, dy);
+                    }
+                }
+            }
+            Thread.Sleep(50);
+            stop.Cancel(); sampler.Join();
+            var intervals = new List<double>(); var steps = new List<double>();
+            for (int i = 1; i < moves.Count; i++) { intervals.Add(moves[i].T - moves[i - 1].T); steps.Add(Math.Abs(moves[i].X - moves[i - 1].X)); }
+            Console.WriteLine($"  {moves.Count} pointer changes; intervals ms {Describe(intervals)}; over 12 ms: {intervals.Count(i => i > 12)}; steps px {Describe(steps)}");
+            NativeMethods.SetCursorPos(home.X, home.Y);
+        }
+        Console.WriteLine("Pointer put back where it was.");
+    }
+
+    /// <summary>
+    /// Which pixel does Windows put the pointer on for an absolute, virtual-desktop move? Sends
+    /// one move per column across the primary row and one per row down a column, aimed with
+    /// the formula MoveCursorTo uses and with the alternative (the ceiling of x * 65536 / width),
+    /// and reads the pointer back after each. The pointer flies across the screen for a few
+    /// seconds and is put back. No clicks or keys.
+    /// </summary>
+    public static void AbsoluteMapping()
+    {
+        NativeMethods.GetCursorPos(out var home);
+        int vx = NativeMethods.GetSystemMetrics(NativeMethods.SM_XVIRTUALSCREEN), vy = NativeMethods.GetSystemMetrics(NativeMethods.SM_YVIRTUALSCREEN);
+        int vw = NativeMethods.GetSystemMetrics(NativeMethods.SM_CXVIRTUALSCREEN), vh = NativeMethods.GetSystemMetrics(NativeMethods.SM_CYVIRTUALSCREEN);
+        Console.WriteLine($"virtual screen {vw}x{vh} at ({vx},{vy})");
+        using var tick = new MillisecondTimer();
+        foreach (var (name, aim) in new (string, Func<int, int, int>)[]
+        {
+            ("current: (x * 65535 + 32767) / (w - 1)", (x, w) => (int)((x * 65535.0 + 32767.0) / (w - 1))),
+            ("ceiling: (x * 65536 + w - 1) / w", (x, w) => (int)((x * 65536L + w - 1) / w)),
+            ("centre of 65536 range: (x * 65536 + 32768) / w", (x, w) => (int)((x * 65536L + 32768) / w)),
+        })
+        {
+            int xMiss = 0, yMiss = 0, xChecked = 0, yChecked = 0; var missesAt = new List<string>();
+            int y0 = home.Y;
+            for (int x = 0; x < vw; x += 1)
+            {
+                Send(Math.Clamp(aim(x, vw), 0, 65535), Math.Clamp(aim(y0 - vy, vh), 0, 65535));
+                tick.Wait();
+                NativeMethods.GetCursorPos(out var p);
+                xChecked++;
+                if (p.X != vx + x) { xMiss++; if (missesAt.Count < 6) missesAt.Add($"x {vx + x}->{p.X}"); }
+                if (p.Y != y0) { yMiss++; }
+            }
+            int x0 = home.X; int yMissCol = 0, yCheckedCol = 0;
+            for (int y = 0; y < vh; y += 1)
+            {
+                Send(Math.Clamp(aim(x0 - vx, vw), 0, 65535), Math.Clamp(aim(y, vh), 0, 65535));
+                tick.Wait();
+                NativeMethods.GetCursorPos(out var p);
+                yCheckedCol++;
+                if (p.Y != vy + y) yMissCol++;
+            }
+            Console.WriteLine($"{name}: {xMiss} of {xChecked} columns landed on the wrong pixel, {yMiss} vertical wobbles during the row sweep; {yMissCol} of {yCheckedCol} rows wrong{(missesAt.Count > 0 ? "; e.g. " + string.Join(", ", missesAt) : "")}");
+        }
+        NativeMethods.SetCursorPos(home.X, home.Y);
+        Console.WriteLine("Pointer put back where it was.");
+
+        static void Send(int nx, int ny) => NativeMethods.SendInputLocal(new[] { new NativeMethods.INPUT { type = NativeMethods.INPUT_MOUSE, u = new() { mi = new()
+            { dx = nx, dy = ny, dwFlags = NativeMethods.MOUSEEVENTF_MOVE | NativeMethods.MOUSEEVENTF_ABSOLUTE | NativeMethods.MOUSEEVENTF_VIRTUALDESK } } } });
     }
 
     private static string Describe(List<double> values)
