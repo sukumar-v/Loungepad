@@ -110,6 +110,16 @@ foreach ($setup in 'install-input-service.ps1', 'uninstall-input-service.ps1') {
     if (-not $heap.Contains("shipped\setup\$setup$([char]0)")) { throw "Input service setup was not embedded: $setup" }
 }
 Write-Host "  $($shipped.Count) shipped files embedded" -ForegroundColor Green
+# release-notes\v<version>.md is the GitHub release's text and what Loungepad shows once after an
+# update. A build without it opens on the new version and says nothing about what changed.
+$notes = Join-Path $repo "release-notes\v$Version.md"
+if (-not (Test-Path $notes)) {
+    Write-Host "No release-notes\v$Version.md: this build shows no What's new after an update." -ForegroundColor Yellow
+} elseif (-not $heap.Contains("shipped\whatsnew.md$([char]0)")) {
+    throw "release-notes\v$Version.md exists but was not embedded as shipped\whatsnew.md"
+} else {
+    Write-Host "  Release notes embedded: release-notes\v$Version.md" -ForegroundColor Green
+}
 
 # Azure Artifact Signing. tools\signing.json names the account (see signing.example.json) and is
 # kept out of the repository, so a contributor's build is simply unsigned; where it exists, a
@@ -167,3 +177,9 @@ foreach ($out in $exeOut, $zip) {
 }
 Write-Host ''
 Write-Host "Attach both to the v$Version release under exactly these names." -ForegroundColor Cyan
+if (Test-Path $notes) { Write-Host "Paste release-notes\v$Version.md as the release's text: it ends with the download steps." -ForegroundColor Cyan }
+# Every release carries the input service at its own version: a first install downloads it from
+# this release, and so does the update offered to everyone whose service is older.
+$serviceZip = Join-Path $repo "dist\Loungepad.InputService-v$Version-x64.zip"
+if (Test-Path $serviceZip) { Write-Host "Attach dist\Loungepad.InputService-v$Version-x64.zip too." -ForegroundColor Cyan }
+else { Write-Host "No dist\Loungepad.InputService-v$Version-x64.zip: run tools\package-input-service.ps1 -Version $Version, or this release cannot install or update the input service." -ForegroundColor Yellow }

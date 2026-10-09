@@ -543,6 +543,130 @@ desktop itself whenever it is not connected, as it did before the service existe
 is lost and nothing doubles. If the user still sees the double with this build, ask how they
 clicked (mouse, stick + Cross, or a touchpad tap) and reproduce that path in the preview first.
 
+### The two reports of 00:30: XInput is blank behind a locked session, and the Settings highlight did not follow the pointer (Oct 9, 00:30-01:30)
+
+**The Xbox pad on the sign-in screen.** The user retried with the `3292e7e7…` build installed:
+the Xbox pad's stick and keyboard still did nothing on the sign-in screen while Windows' own
+gamepad navigation moved the focus and typed on its keyboard there, and the DualSense worked.
+`--xinput-lock-probe 900` ran in the user session across the lock (00:19:17-00:19:39): while
+`unlocked=False` the slot stayed connected (`slots=0001`), the packet counter kept advancing
+(70-74 changes a second with the stick in use), and **`maxStick` stayed 0 for every locked
+second** against 32767 before and after. XInput delivers the pad behind a locked session with
+every axis at rest. The Winlogon worker reads the Xbox pad through XInput and the DualSense
+through a direct HID read, which nothing blanks: `SelectPad` never saw the Xbox stick move and
+kept the DualSense. Over UAC the session is unlocked, so XInput is live there, which is why the
+same pad worked on that Winlogon desktop.
+
+Fix, in two steps. First the Winlogon worker read Xbox pads over their own HID interface
+(`HidGamepadReader.IncludeXbox`, the `IG_` devices the launcher leaves to XInput) through the
+same direct ReadFile the DualSense uses: layout `"xbox"`, buttons A, B, X, Y, LB, RB, View,
+Menu, LS, RS by HID button number, the D-pad as the hat, the right stick on Rx/Ry, both
+triggers on Z around its centre (left pulling up, right down -- DirectInput's reading of these
+pads, unverified here). The 01:30 build of that, installed by the user, changed nothing: in the
+morning's sign-ins every Winlogon worker reported `pad=xinput`, and `--hid-probe xbox 840` in
+the user session over fourteen minutes of use said why -- **XInput saw both triggers at 255,
+buttons 0xB71F and the stick at 32768; the direct read of the same pad's HID device saw LT 0,
+RT 0, no buttons, stick 0** (it opened without error and returned a handful of empty reports).
+An Xbox pad's HID reports reach a process only through Raw Input, which is how the launcher
+has always seen them (and why it skips `IG_`: XInput already had them). Second step, the build
+below: the Winlogon worker owns a message-only window (`RawInputSink`, an `HwndSource` under
+`HWND_MESSAGE` on the dispatcher thread) and `HidGamepadReader.ReadXboxThroughRawInput` keeps
+the Raw Input registration up through quiet mode for the Xbox pads only, the direct readers
+still owning everything else (a quiet reader is never started for an Xbox pad, and an Xbox
+pad's Raw Input copy is the only one taken, so nothing is read twice). `--hid-probe xbox <s>`
+hosts the same arrangement and prints the HID decode's trigger and button extremes beside
+XInput's for the same pulls. Known cost: while that registration is held Windows counts every
+registered pad's reports as user input, so a locked PC with a DualSense attached keeps its
+display awake -- on the Winlogon desktop only.
+
+The 10:20 build of that engaged -- the Winlogon worker switched to `pad=hid:xbox` two seconds
+into the user's lock-screen attempt and injected for three seconds -- and still nothing moved:
+`--hid-probe xbox 300` beside it saw every report but a **stick of 0** against XInput's full
+deflection. `--xbox-hid-dump` (new: the pad's descriptor as the reader parsed it, then every
+changed report beside its decode and XInput's reading of the same instant) said why in its
+first line: every axis declared `0..-1`. An unsigned 16-bit axis using all of its field
+(0..65535) comes back from hid.dll with a logical maximum of -1, the top value read as signed,
+and `Unit()` treated the inverted range as empty and returned nothing. `ReadCaps` now reads an
+inverted range as 0 to the field's full value. The dump then verified the whole decode against
+the device, out of order and all (the user's presses, 10:25): **every button's bit identical on
+both sides** (A, B, X, Y, LB, RB, View, Menu, LS, the four D-pad directions through the hat),
+**both triggers within one count and in the guessed direction** (left pulls Z up), **sticks
+within one count**. Nothing about the map was assumed any more.
+
+**The 10:35 build on the sign-in screen (the user, 10:40): "some progress"** -- the curtain
+ignores the pointer until the Xbox button (Windows' own) opens the PIN field, then the stick
+moves the pointer; but the stick also moves LogonUI's focus, so the Loungepad keyboard cannot
+type into the PIN field. The watch for that attempt: the Winlogon worker followed `hid:xbox`
+within a second on the curtain and injected every tick (the curtain ignores injected pointer
+movement; a DualSense's click woke it earlier, and the Xbox button does), the keyboard opened
+(a 108 ms tick) and typed, and **`suppressed` stayed 0 throughout** while the focus visibly
+followed the stick. The filter throws if its hook fails to install and `Errors` is empty, so
+the hook was up on the Winlogon desktop and saw no gamepad keystroke: LogonUI reads an
+Xbox-class pad in-process (GameInput; the shell on Default goes through the keyboard stream,
+which is where the 57 blocked events came from), and nothing a hook can do reaches it. A
+DualSense is invisible to Windows there, which is why it works in full.
+
+First decision (the 10:50 build): the keyboard alone stood down for Xbox-class pads while
+locked, the pointer and clicks stayed. The user (11:00): neither keyboard opened -- not ours
+(by design) and not Windows' own either, and the PIN had to be typed on a physical keyboard.
+Windows shows its on-screen keyboard for a gamepad's A on the PIN field, a gamepad-mode
+behaviour; the mouse click injected for the same A put LogonUI in mouse mode, where it shows
+none. Anything the worker adds there competes with Windows' flow.
+
+Decision, in the build below: **while the session is locked on Winlogon, the mapping stands
+down for Xbox-class pads entirely** -- no pointer, no clicks, no keyboard
+(`SecureMapper.WindowsOwnsXboxPads`, set by the worker once a second from
+`SignedInAndUnlocked`; `Update` relinquishes and returns for `xinput` and `hid:xbox`; health
+`Pad` carries "(locked: an Xbox pad is Windows' own, not mapped)"). Windows' own flow then
+runs untouched: Xbox button, A on the field, its keyboard, as it did before the service
+existed. A DualSense keeps the pointer, clicks and the Loungepad keyboard there. The Raw
+Input read of the Xbox pad on Winlogon still matters for the unlocked case, where XInput is
+live anyway; it is the lock-screen case it was built for that it now declines on purpose, so
+it could be dropped later without loss. The watch for the 10:50 attempt (11:09) also caught a
+Default worker dying at start-up as the lock screen came up -- `Errors`: "Desktop worker failed
+while initializing input worker: SendInput rejected controller input (Win32 5)", the start-up
+release of stuck buttons refused with ERROR_ACCESS_DENIED during the desktop switch -- and the
+supervisor restarting it within the second. That release is not fatal any more (logged to
+`Errors` as "start-up release skipped" and the worker carries on). Two designs for full
+support, neither tried: (1) take the foreground with the secure
+keyboard window while it is armed, so LogonUI, no longer the foreground app, gets no gamepad
+input, and hand the foreground back to LogonUI around each typed character (its last focused
+control, the PIN field, regains focus on activation) -- unknown whether LogonUI tolerates
+losing activation; (2) UI Automation: remember LogonUI's focused element when the keyboard
+opens and `SetFocus()` it before each character, with the keyboard walked by the right stick
+and typed with a trigger, inputs XAML's navigation ignores -- unverified that `SetFocus` works
+on a PasswordBox there. Hiding the pad from GameInput needs a filter driver (HidHide's kind)
+and is out of scope.
+
+With two HID pads present the reader's "last reporter" rule became "last mover"
+(`HidGamepadReader.Adopt`: an anchor per pad past `StickNoise`, touch counting as moving), or
+the DualSense's 250 reports a second would keep the reading from an Xbox pad being pushed.
+The mapper's choice rides in health as `Pad` (`xinput`, `hid:xbox`, `hid:playstation`, `none`;
+`--health-watch` prints it), so the sign-in screen is read from the registry: a Winlogon
+worker showing `pad=hid:xbox` while the Xbox stick is pushed is the fix working. Whether Raw
+Input delivers behind a locked session to a window on the Winlogon desktop is the remaining
+unknown; the direct DualSense read does, and Windows' own lock screen reads the pad.
+
+**The Settings highlight with the mouse.** The user's precise report: moving the pointer down
+the categories briefly highlighted an option on the right, and A then landed on either. Not
+two mappers after all: the page. `renderSettings` ended by putting the highlight on the pane's
+remembered item (`settingsPane`: the row at `settingsIdx`, or the active category), and a
+category's hover only moved the highlight without changing the pane, so the next repaint --
+and the pointer crossing the gap between two categories repaints (pointerOnItem), as does
+every family change and state push -- snapped it back to the option on the right; whichever
+side the last repaint left it on is what A pressed. Reproduced in the preview with real mouse
+moves through a gap (`computer` hover at page coordinates × 800/innerWidth), the earlier
+attempt having jumped straight between items. Now, with the pointer in charge
+(`hoverEnabled() && pointerOnItem`), `renderSettings` reads what is under the pointer
+(`elementFromPoint`, never the remembered key: a mouseenter that fired while hover was still
+disabled, on the first move after the D-pad, has not moved it), the pane and row index follow
+it, and the highlight is set to it after any rebuild; a category's hover sets the pane to
+`nav`; A on a hovered category opens it and leaves the highlight under the pointer, as a click
+does. From the D-pad nothing changed (Down walks the categories, Right enters the rows).
+Checked in the preview: row → gap → category → A opened the hovered category with nothing
+activated; category → gap → category held; D-pad Down/Right after that still walked and
+entered; the mouse returning to a row took it back.
+
 ### Installer reset machine preferences during upgrade
 
 PowerShell `New-Item -Force` against an existing registry key cleared its values,
@@ -603,12 +727,27 @@ published v1.8.0, so local successful installation does not prove that public fl
 These are historical checkpoint paths, not a reason to reinstall without investigation.
 Older GUID build directories and extracted service folders can be stale.
 
+**Released as v1.8.0 on Oct 9 2026**: the branch was committed, fast-forwarded into main, and the
+launcher, its zip and the input service package were rebuilt from main and published. The
+"uncommitted" marks in the table below describe the local builds as they were before that; the
+release's own assets are the ones on GitHub.
+
 | Item | Path relative to workspace |
 | --- | --- |
-| Signed launcher (Advanced category, two switches; Oct 8 23:20) | `dist\v1.8.0\Loungepad.exe` (SHA-256 `9FDB348F90DFD09C6F7F1FB20EB67353CCB123D668C08734B0E40B5DB9D30831`) |
-| Launcher ZIP | `dist\v1.8.0\Loungepad-v1.8.0-win-x64.zip` (`AA5E63004DC8D332DDDDC4218BC8D80442A27B106662FA319E2B959567FF8F16`) |
-| Service ZIP (the worker defers the Default desktop to a running launcher; Oct 9 00:35) | `dist\Loungepad.InputService-v1.8.0-x64.zip` (`1F73100A52ABB5945FDF6748EFC476D28744B85E26E9102FEAC3BB569D2B15BF`) |
-| **Latest signed service package source** | `artifacts\input-service\3292e7e752ce40b086ec80d18ca86416\package` (agent exe `EBA4B45A878664813BF965F9359EC6019EC82E89AB5A2D97879381F8992F5C1C`; every binary and the catalog signed, Valid with timestamp, `Test-FileCatalog` Valid) |
+| Signed launcher (Steam games and Big Picture; What's new; Restart now / Later; the input service updated with the launcher; Discord above Startup, Exit last; no Task Manager shortcut; Oct 9 13:10, **uncommitted**, not started) | `dist\v1.8.0\Loungepad.exe` (SHA-256 `5600ADF9A39D0F71C06E1E29FFF83D1ACDFB17AD1EFCB1A7B7295255A886F2B2`) |
+| Launcher ZIP | `dist\v1.8.0\Loungepad-v1.8.0-win-x64.zip` (`C2C3527B6305C7831ECA72A7F20D16B3FA27B233201BD350BF8110E889AB75C3`) |
+| 13:00 launcher (as above, with the Task Manager shortcut) | SHA-256 `AD062468…`, zip `623B007B…` (overwritten in `dist`) |
+| 12:35 launcher (Steam games, What's new, update prompt, Discord as General's last row) | SHA-256 `AE5E1227…`, zip `26C5A5F0…` (overwritten in `dist`) |
+| 12:00 launcher (Settings scroll fix, Big Picture only; its Steam game check never ran: the stamps started at long.MinValue and the first age overflowed) | SHA-256 `B3506E55…`, zip `D7727762…` (overwritten in `dist`) |
+| 01:35 launcher (Settings highlight follows the pointer) | SHA-256 `548A2437…`, zip `35030098…` (overwritten in `dist`) |
+| 23:20 launcher (Advanced category, two switches) | SHA-256 `9FDB348F…`, zip `AA5E6300…` (overwritten in `dist`) |
+| Service ZIP (an Xbox-class pad is Windows' own while locked: nothing mapped; the start-up release no longer fatal; Oct 9 11:20, **uncommitted**) | `dist\Loungepad.InputService-v1.8.0-x64.zip` (`D68CD060121FCB6B313BFB7D80451FDD27B88B9A9D5BC37C95F4F4C4F94640AE`) |
+| **Latest signed service package source** | `artifacts\input-service\259c3e476f5f4fe68700c9717d685cb4\package` (agent exe `7B7EC4D195DAA83C8DADEBEE3430FA2179216FCDC6BC325A175BC88DCEEDB5B5`; every binary and the catalog signed, Valid with timestamp, `Test-FileCatalog` Valid) |
+| 10:50 package (the keyboard alone stood down; a pointer click put LogonUI in mouse mode and Windows' keyboard stayed away), installed by the user at 11:05 | `artifacts\input-service\625d72096ad544a1b1ed5bb6458554f1\package` (agent exe `9863B223…`) |
+| 10:35 package (axis range read right, decode verified), **installed as of 10:50**: pointer on the PIN screen, keyboard fights LogonUI | `artifacts\input-service\b1e838e5dec3412eb1db337275434b89\package` (agent exe `88815284…`) |
+| 10:20 package (Raw Input sink; its sticks read 0 from the inverted axis range), installed by the user at 10:02 | `artifacts\input-service\b7d6980d96a74d8ca8c668fcfad9d1ad\package` (agent exe `CB106656…`; its first packaging run failed in signtool once and succeeded on the re-run) |
+| 01:30 package (Xbox pads over a direct HID read, which delivers nothing), **installed as of 10:20**, found not to engage in the morning's sign-ins | `artifacts\input-service\9be27adc0b454c3dad28b9448bff9c25\package` (agent exe `3E8B2793…`) |
+| 00:35 package (the worker defers the Default desktop to a running launcher), **installed as of 01:30** | `artifacts\input-service\3292e7e752ce40b086ec80d18ca86416\package` (agent exe `EBA4B45A…`) |
 | 23:45 package (session id read once, tick and requests at Normal, Clients record), **installed as of 00:35**: 8 ms ticks confirmed | `artifacts\input-service\3c3f1d4b7e95470192672a480d1fda3a\package` (agent exe `DA4EBC8B…`) |
 | 23:20 package (tick at Send: starves the pipe, flapping connection), **installed as of 23:45** | `artifacts\input-service\b3e70fbdfd7e41cdaf4e4334789c99fa\package` (agent exe `E3AD9A6E…`) |
 | User's follow-up package (two switches, uninstall cleanup; 22:22), ticks 23 ms in background mode | `artifacts\input-service\4b6fe9856bcd4a0abacf4a8d2adde6a1\package` (agent dll `F131B3F3…`) |
@@ -629,14 +768,15 @@ launcher ZIP `F7604E35502DFB93E3A2C79F6A40144287F008331848426B4900188BEFFF3D9B`;
 with a timestamp, file version 1.8.0.0, 29 shipped files embedded. (Earlier launchers: 19:30
 `32304263…`, 18:20 `5FBFA8FD…`, 17:26 `E706A173…`.)
 
-**Installed as of 00:35: the 23:45 service (`3c3f1d4b…`, agent `DA4EBC8B…`)**, measured at 8 ms
-ticks with a stable connection (see "The 23:45 build measured"). The 00:35 package is NOT
-installed yet; the 23:20 `dist` launcher is running and is current (the source change in
-App.xaml.cs since then names the same mutex through a constant and changes nothing). To install,
-in an administrator PowerShell:
+**Installed as of 11:20: the 10:50 service (`625d7209…`, agent `9863B223…`)**, with which
+neither keyboard opened on the sign-in screen; the 01:35 `dist` launcher (the Settings pointer
+fix, confirmed by the user) is running. The 11:20 package is NOT installed yet. The source
+behind both is **uncommitted** at the user's request until they confirm the sign-in screen too
+(then commit and push). To install, in an administrator PowerShell (an upgrade keeps the
+switches; a fresh install leaves both off until Settings → Advanced turns them on):
 
 ```powershell
-cd 'C:\Users\Sukumar\Projects\Windows\Loungepad\artifacts\input-service\3292e7e752ce40b086ec80d18ca86416\package'
+cd 'C:\Users\Sukumar\Projects\Windows\Loungepad\artifacts\input-service\259c3e476f5f4fe68700c9717d685cb4\package'
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install-input-service.ps1 -SourcePath .
 ```
 
@@ -704,13 +844,14 @@ passing end-to-end test or assume observer ordering relative to the SYSTEM hook.
    (see "The watch" above). Only then ask about feel. Until the service is updated the new launcher moves the pointer through the pipe as
    before (with the in-flight guard), and the old launcher with the new service gets the old
    behaviour too: nothing is dead and nothing doubles, whichever is updated first.
-2. The Xbox pad on the sign-in screen (report 1 under "The 23:45 build measured"): run
-   `dotnet run --project tests/Loungepad.Input.Tests --no-build -- --xinput-lock-probe 600`,
-   have the user power the pad on, lock the PC, push its stick for a few seconds, unlock, and
-   read the locked seconds' `packetChanges`. Zero means XInput withholds the pad behind the lock
-   screen (the DualSense's direct HID read is not gated) and the fix is a direct `IG_` HID read
-   on a locked Winlogon worker; changes mean pad selection, so add a health field for the pad
-   `SelectPad` follows. Then the user's physical results: smooth motion at the same speed on the
+2. The Xbox pad on the sign-in screen (see "The two reports of 00:30"): the decode is verified
+   against the device (`--xbox-hid-dump`), the pointer works once the Xbox button has opened
+   the PIN field, and the Loungepad keyboard stands down there by decision, since LogonUI reads
+   the pad itself. What is left is the user's confirmation of that state with the 10:50
+   package, and, if they want the keyboard with an Xbox pad on the sign-in screen, one of the
+   two untried designs recorded under "The two reports of 00:30". `--health-watch` must show
+   the locked Winlogon worker with `pad=hid:xbox (locked: Windows owns Xbox pads, keyboard
+   off)`. Then the user's physical results: smooth motion at the same speed on the
    desktop, in Task Manager, over UAC and on the sign-in screen, no extra highlight movement and
    no double A/Cross, with the wired DualSense and the Xbox pad on the wireless adapter (power
    the pad on against the adapter; it was paired over Bluetooth LE and absent from XInput), and

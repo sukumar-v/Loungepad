@@ -750,7 +750,8 @@ Stop the scrolled grid from clipping through the All games header
 - The preview opens the setup only with `?onboard` in the address (`/ui/index.html?onboard`); the
   mock's scan steps, launchers, Playnite, Vortex (connect → needs a restart → connected) and PIN
   (set after "Set up a PIN") are all simulated. In the real app it is Settings → General → First-time
-  setup: from the library, M, Right, then Up three times (Up off the first row wraps to Exit).
+  setup: from the library, M, Right, then Up three times (Up off the first row wraps to Exit, which
+  is kept the last row of General).
 - Verified in the windowed Debug build with keys (Sept 30 2026): every step renders over the real
   bridge with this PC's launchers, store counts, RetroArch playlists, PIN and Vortex 2.7. **Close a
   test instance with WM_CLOSE, not Stop-Process**: `LibraryStore.Save` is a plain WriteAllText, and a
@@ -917,6 +918,41 @@ Stop the scrolled grid from clipping through the All games header
 - Automatic updates download in the background and install at the NEXT start (`App.OnStartup`,
   before any window), because installing is a restart and the launcher is what is on the TV.
   Settings and the tray install at once, and refuse while a game is running.
+- **A finished background download asks "Restart now / Later"** (`askRestartForUpdate`; the
+  user's ask, Oct 9 2026). Later is the old behaviour, the next start. The question waits for a
+  quiet page (`busyForPrompt`: no game, setup, Power Wheel or other overlay), retrying every 5 s,
+  because a confirm under the guide's card or the wheel would take A out of sight.
+- **Release notes live in `release-notes\v<version>.md`** (Oct 9 2026; before that they were only
+  ever typed into GitHub). The file is the GitHub release's text and is built into the exe as
+  `shipped\whatsnew.md` (only that version's file; `package.ps1` warns when it is missing). It ends
+  with a short "Download and install" section for people who land on the release page (the user's
+  ask: the assets list confuses non-technical people); keep it at the end of every release.
+- **What's new opens once per version** (`UiBridge.PushWhatsNew`, `WhatsNewSeen` in settings.json):
+  on the first start of a version, updated or replaced by hand, never on a new install (the setup
+  is the introduction) and never for a version older than notes already shown. `WhatsNewSeen` is
+  host-only and deliberately NOT in `CopySettings`, so neither a page save nor a restore brings the
+  notes back. The page draws them on the couch guide's card (`showWhatsNew`, `notesHtml`: headings,
+  items, bold, code, links as text, everything escaped first) without the download section and
+  the changelog link; `openGuide` puts the guide's own title and text back.
+- **The Discord invite is `https://discord.gg/a6gngxS9b4`**: the README's badge and links, the
+  GitHub About text, the website footer, the issue chooser and Settings → General's Community
+  section, which sits above Startup & lock screen so Exit Loungepad stays the last row (the user's
+  call). `openDiscord`: the host holds the URL, parks, and opens it in the browser.
+- **The input service is updated along with the launcher, with Windows' approval** (Oct 9 2026, the
+  user's ask). The launcher installs the service published with its own release, so the installed
+  one is due an update whenever its exe's file version (`InputServiceSetup.InstalledVersion`;
+  `package-input-service.ps1 -Version` stamps it) is older than the launcher
+  (`InputServiceSetup.Bundled`). It cannot be silent: the installer runs elevated. So the first
+  start of a new version asks once (`PushSecureInputUpdate`, after the notes; only while a switch is
+  on; `SecureInputUpdateAsked` remembers the version, host-only), Settings → Advanced has an
+  "Update the input service" row until it is done, and turning a switch on with an outdated service
+  updates it in the same approval. The update is `InputServiceSetup.Install` again with the current
+  switches and profile: the installer stops the service, swaps its folder and starts it. A release
+  without the package (`InputServicePackageMissingException`, raised before anything is elevated)
+  falls back to switching the installed one. **So every release has to carry
+  `Loungepad.InputService-v<version>-x64.zip`**, or the update and every first install fail for
+  it; `package.ps1` warns when the matching zip is not in `dist`. An unsigned build never offers it
+  (`CanInstall`). Not exercised end to end: that needs two published releases.
 - Only a single-file build updates itself (`Assembly.Location` is empty there). A `dotnet build`
   or the multi-file `publish\` build says "development build" and never replaces itself with the
   release, so testing the updater needs `tools\package.ps1` output in a folder of its own.
@@ -984,6 +1020,10 @@ Stop the scrolled grid from clipping through the All games header
   3 s; after, the launcher was hidden and each window was in front. Task Manager was left out: it
   auto-elevates, and a test cannot close it again. Explorer pre-creates a hidden CabinetWClass
   window, so a test that only closes handles that did not exist before leaves the new one open.
+- **Task Manager is not a Power Wheel shortcut any more** (the user's call, Oct 9 2026). It
+  auto-elevates, and UIPI keeps an ordinary process's injected pointer and clicks out of an
+  elevated window, so without the input service the stick did nothing on it and the shortcut read
+  as broken. Removed from `SHORTCUTS` and from `WindowService.RunShortcut` alike.
 - `System.Drawing.Icon.ToBitmap` in Windows PowerShell (.NET Framework) cannot read PNG-compressed
   icon frames and returns noise, for the old icon as much as the new one. Check an .ico with WPF's
   `IconBitmapDecoder` (WIC), which is what the shell and the window use.
@@ -1729,6 +1769,14 @@ Stop the scrolled grid from clipping through the All games header
   scrollTop, like renderMenu, and so does `renderLibrary` now: a state push mid-browse (end of a
   scan or a metadata pass, a favourite toggled) used to drop the grid to the top and glide it back.
   **Any function that empties a scroller has to put scrollTop back before it returns.**
+- **`renderSettings` reveals the highlight only when it has moved** (`settingsRevealed`, the
+  Actions level plus the highlight's key; Oct 9 2026, the user: "scroll down, wait 3 seconds, it
+  scrolls back up to the last focused element"). Most repaints move nothing -- a state push, a
+  toggle flipped where it stands -- and each one used to pull a list scrolled away with the stick
+  or the wheel back to the highlight. The 3 seconds were the input service's status poll: its
+  health record is new on every heartbeat, so `ServiceInputClient` pushed `secureInput` every 2 s.
+  It now pushes only when the status Settings shows (`UiStatus`) differs from the last one pushed.
+  A highlight the pointer put there is never revealed: it is under the pointer already.
 - Accent, hints and the animation settings are per theme: the same bag as the theme's own options,
   under reserved ids (`LOOK_IDS`: accent, hide-hints, animations, animation-speed) that
   `themeSettingDefs` refuses. `AppSettings.AccentColor/HideLegend/AnimationsEnabled/AnimationSpeed`
@@ -1823,6 +1871,24 @@ Stop the scrolled grid from clipping through the All games header
   what XInput and Steam Input now go through, so it is not offered; HidHide is a third-party filter
   driver and documents Xbox pads staying visible. Over such a menu, A fires twice: Windows invokes
   the highlighted item and Loungepad clicks under the pointer.
+- **Steam's Big Picture, and any game Steam started, count as a focused game**
+  (`SteamForeground`, `SteamOwnsPad`, on by default; the user's report, Oct 9 2026: "both Steam
+  and Loungepad are trying to drive the inputs", then the same day: games started from Steam's
+  desktop window too). Big Picture reads the pad itself, so
+  the desktop mapping on top of it stepped focus twice (the D-pad's arrow keys), clicked wherever
+  the pointer had been left (A) and moved a pointer over a screen navigated by focus. There is no
+  way to make Big Picture stop reading the pad -- Steam Input's per-family switches are for games
+  -- so Loungepad is the one that stands down, as inside a game it launched: the menu combo stays,
+  the keyboard toggle follows `KeyboardInGame`, a pad screenshot over the game is F12. Big Picture
+  is a steamwebhelper.exe window titled in Steam's language: `SP_WindowTitle_BigPicture` read from
+  `steamui\localization\steamui_<Language>-json.js` ("Steam 大屏幕模式" in Simplified Chinese, and a
+  trailing space in Japanese), and Steam keeps no Big Picture flag in the registry on this PC. A
+  game is `RunningAppID` with the foreground process under `steamapps\common`, however it was
+  started; a game Steam runs from anywhere else (a non-Steam shortcut) is not recognised.
+  KeepFocus steps behind either instead of taking the foreground back. Checked with a scratch
+  harness built as steamwebhelper.exe whose never-shown windows stand in for Big Picture, and a
+  copy of it run from a `steamapps\common` folder for the game with `ReadRunningApp` replaced
+  (Steam's own registry values are never written by a test); not yet seen against real Steam.
 - The combo's legend sits below the wheel's 880px wrap (`bottom: -46px`) for both wheels, so the
   action wheel's pager can have the strip under the bottom spoke and the legend does not move
   between the two.
@@ -2291,8 +2357,9 @@ Stop the scrolled grid from clipping through the All games header
 
 ## Controller input on UAC and the sign-in screen: the input service (1.8.0)
 
-- **The feature is on the branch `secure-desktop-input`** (Oct 8 2026), off main at 75c1660; main has
-  none of it. `docs/INPUT-SERVICE-HANDOFF.md` is the running log and `docs/SECURE-INPUT.md` the design;
+- **The feature was built on the branch `secure-desktop-input`** (Oct 8 2026, off main at 75c1660),
+  fast-forwarded into main and released as 1.8.0 on Oct 9 2026. `docs/INPUT-SERVICE-HANDOFF.md` is
+  the running log and `docs/SECURE-INPUT.md` the design;
   read both first. Three projects: `Loungepad.Input` (shared, compiles NativeMethods, HidNative,
   HidGamepadReader and StickPointer from the launcher's tree by source -- the launcher `Compile Remove`s
   them and references the library), `Loungepad.Service` (LocalSystem, session 0, starts the agent in
@@ -2406,14 +2473,53 @@ Stop the scrolled grid from clipping through the All games header
   before blaming it**: `ui-preview` runs the same app.js, `activateSettingRow` and `handleInput`
   can be wrapped from `javascript_tool` to log what fires, and a real mouse click on a category
   there activated nothing with either input family in force, nor did hover-then-A.
-- **The Xbox pad on the sign-in screen is an open question** (Oct 9 2026): the DualSense works
-  there (a direct HID read), the Xbox pad works over UAC (also Winlogon) but not on the lock
-  screen, and the Winlogon worker's health says `slots=1`, so XInput reports it connected.
-  `--xinput-lock-probe <s>` prints per second whether the session is locked and whether the pad's
-  packet numbers change; run it, lock with the pad on, push the stick. Zero changes while locked
-  means XInput withholds the pad there and the fix is reading `IG_` HID pads directly on a locked
-  Winlogon worker; changes present means pad selection, and the next step is a health field for
-  which pad `SelectPad` follows.
+- **XInput is blank behind a locked session: the slot stays connected, the packet counter keeps
+  moving, every axis reads at rest** (`--xinput-lock-probe`, Oct 9 2026: `maxStick` 0 for every
+  locked second against 32767 either side). A direct HID read is not blanked, which is why the
+  DualSense worked on the sign-in screen and the Xbox pad did not, while the same pad worked over
+  UAC (Winlogon too, but unlocked). **An Xbox pad's HID reports come only through Raw Input**: a
+  direct ReadFile on its `IG_` device opens and returns nothing while XInput sees every press
+  (`--hid-probe xbox 840`, fourteen minutes of use, Oct 9 2026) -- which is why the launcher has
+  always seen Xbox pads in Raw Input and skips them there. The Winlogon worker therefore owns a
+  message-only window (`RawInputSink`) and `HidGamepadReader.ReadXboxThroughRawInput` keeps the
+  registration up through quiet mode for Xbox pads only, direct reads for the rest, nothing read
+  twice (layout `"xbox"`, `XboxMap`, the hat as the D-pad, both triggers on Z, the left pulling it
+  up -- every button, both triggers and both sticks verified against XInput's reading of the same
+  reports with `--xbox-hid-dump`, Oct 9 2026). **hid.dll reports an unsigned axis that uses its
+  whole field (16 bits, 0..65535) with a logical maximum of -1**; read as an empty range that was
+  a stick stuck at 0 on the sign-in screen while everything else of the pad worked, and
+  `ReadCaps` now reads an inverted range as 0 to the field's full value. `--xbox-hid-dump` prints
+  a pad's descriptor as parsed and each changed report beside its decode and XInput's reading, so
+  a map is read off the device, not assumed. The cost: with that registration up Windows counts the registered pads'
+  reports as input, so a locked PC with a DualSense attached keeps its display awake. With two HID
+  pads the reader's reading is the pad that moved last past `StickNoise`
+  (`HidGamepadReader.Adopt`), never the last to report: a DualSense reports every 4 ms untouched.
+  `AgentHealth.Pad` says which pad the mapper follows (`xinput`, `hid:xbox`, ...); on the sign-in
+  screen it must read `hid:xbox` while the Xbox stick is pushed.
+- **On the sign-in screen Windows reads an Xbox-class pad itself and no hook can take it away**
+  (Oct 9 2026): LogonUI walks its focus with the left stick and D-pad and invokes on A, and the
+  Winlogon worker's keyboard-hook filter, installed and alive, counted 0 while the focus moved --
+  LogonUI gets the pad in-process, unlike the shell on Default, whose gamepad keystrokes the same
+  filter blocks by the dozen. Keeping only the pointer there made it worse: Windows shows its
+  on-screen keyboard for a gamepad's A on the PIN field, and the mouse click injected for the same
+  A put LogonUI in mouse mode, where it shows none, so neither keyboard opened. So while the
+  session is locked the worker's mapping stands down for Xbox-class pads entirely
+  (`SecureMapper.WindowsOwnsXboxPads`: no pointer, no clicks, no keyboard; Windows' own flow runs
+  untouched) and the DualSense, invisible to Windows, keeps everything. The curtain ignores
+  injected pointer movement; the Xbox button or a click wakes it. Two untried designs for more are
+  in the handoff (foreground juggling, UI Automation refocus); hiding the pad from GameInput needs
+  a filter driver.
+- **In Settings the pointer decides the highlight, and `renderSettings` reads it from the pointer's
+  position** (Oct 9 2026; the user: "when the mouse is being used, the focus should be on the
+  mouse"). `renderSettings` used to end by moving the highlight to the pane's remembered item, and
+  a category's hover never changed the pane, so every repaint -- the pointer crossing the gap
+  between two categories flips `pointerOnItem` and repaints -- snapped the highlight from the
+  category to the option on the right, and A landed on whichever the last repaint had left. Now,
+  while `hoverEnabled() && pointerOnItem`, the element under the pointer (`elementFromPoint`, read
+  again after a rebuild; never the remembered key, since a mouseenter that fired while hover was
+  disabled has not moved it) sets the pane, the row index and the highlight; a category's hover
+  sets the pane to `nav`; A on a hovered category opens it and leaves the highlight there. Checked
+  in the preview with `computer` hovers through a gap, at page coordinates × 800/innerWidth.
 - **Packaging needs the dist launcher closed** (`package.ps1` deletes `dist\v1.8.0`, which it runs
   from) and the two scripts sequential (`package-input-service.ps1`, then `package.ps1`; both sign).
   `-NoRestore` only works while the last restore was for `win-x64`: a plain `dotnet build

@@ -23,6 +23,7 @@ Loungepad keyboard. See [setup and architecture](docs/SECURE-INPUT.md). Portable
 <p align="center">
   <a href="https://loungepad.app">loungepad.app</a> · <a href="https://loungepad.app/#trailer">▶ Watch the trailer</a>
   <br><br>
+  <a href="https://discord.gg/a6gngxS9b4"><img alt="Join the Discord" src="https://img.shields.io/badge/Discord-join%20the%20server-5865F2?logo=discord&logoColor=white"></a>
   <a href="https://github.com/sukumar-v/Loungepad/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/sukumar-v/Loungepad?label=latest&color=F0A253"></a>
   <img alt="Total downloads" src="https://img.shields.io/github/downloads/sukumar-v/Loungepad/total?color=1F1F24">
   <a href="LICENSE"><img alt="License: Apache 2.0" src="https://img.shields.io/badge/license-Apache--2.0-1F1F24"></a>
@@ -65,7 +66,7 @@ Most couch launchers stop once a game starts. Loungepad covers everything after 
 - **The left stick is the mouse**, the right stick scrolls, and A and B click, anywhere in Windows.
   A DualSense touchpad works like a laptop's.
 - **The Power Wheel.** Tap the Xbox button (PS or Home on other pads) anywhere, even mid-game, to
-  switch windows, close what's stuck, jump to Task Manager or Settings, or rest the TV. Hold it to
+  switch windows, close what's stuck, jump to File Explorer or Settings, or rest the TV. Hold it to
   bring Loungepad back.
 - **App shortcuts on your controller**, ready for browsers, Spotify, VLC, Discord, File Explorer
   and more, or add your own. Pick one from the Power Wheel or give it a button.
