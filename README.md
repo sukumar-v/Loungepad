@@ -10,9 +10,6 @@
   Your games and your whole desktop, driven from the couch with just a controller.
 </p>
 
-Optional UAC and sign-in screen controller support uses a separate signed service and the selected
-Loungepad keyboard. See [setup and architecture](docs/SECURE-INPUT.md). Portable builds work without it.
-
 <p align="center">
   <a href="https://github.com/sukumar-v/Loungepad/releases/latest">
     <img alt="Download Loungepad for Windows"
@@ -74,6 +71,10 @@ Most couch launchers stop once a game starts. Loungepad covers everything after 
   in Windows, with word suggestions.
 - **It rests like a console.** Put the controller down and the TV goes dark and the game pauses;
   any button brings both back.
+- **Even admin prompts and the sign-in screen (beta).** Turn it on in Settings → Advanced and the
+  controller works on UAC prompts and the lock screen too, so you can approve a prompt or sign in
+  without leaving the couch. It's an optional signed service that Windows asks you to approve once
+  ([how it works](docs/SECURE-INPUT.md)).
 
 <table>
   <tr>
