@@ -343,6 +343,40 @@ asked again every 500 ms instead of every tick; and the input sink uses the desk
 tick already made instead of opening the desktop again per send (`_desktopCurrent`). The
 numbers decide what is next; nothing about the mapping changed.
 
+### The 20:40 build never ran a worker (Oct 8, 21:00)
+
+The user installed the instrumented agent (`A325A8EC…`) and reported: nothing over UAC or Task
+Manager; the lock screen smooth; smooth on the desktop only while Loungepad is open, and after
+a click on the lock screen the password field appears and the pointer stops. The registry said
+why before any trace was needed: `LastError` = "Desktop worker failed while initializing input
+worker: Windows rejected controller input (Win32 0)" and **no `AgentHealth` at all** -- only the
+supervisor (pid 139768) was running. That build routed every injection through `_desktopCurrent`,
+a flag only the first tick sets, and `Run()` releases stuck buttons (an injection) before the
+first tick: the sink answered 0, `InputInjector.Send` threw, the worker exited, and the
+supervisor restarted it into the same failure for ever. A regression of my own, from the build
+meant to measure the problem.
+
+With no worker the launcher moved the pointer itself (`ServiceInputClient.Connected` false →
+local `MoveCursorBy`): fine on the desktop while Loungepad runs, blocked by UIPI over an elevated
+Task Manager, absent on the UAC desktop, and the smooth lock screen was the previous agent's
+Winlogon worker. The password-field stop is still unexplained and now recordable (below).
+
+Two things from that: the worker checks the desktop once before installing its sink, and errors
+are kept. `MachineInputSettings.ReportError` appends to `Errors` (the last eight, newest first,
+with the time), which health never clears -- `LastError` is still the current condition. The
+`--health-watch <seconds>` probe prints every change of worker, desktop, mode, controller and
+error and each heartbeat's timing while the scenarios are repeated.
+
+And the Default-only slowness has one suspect that fits every measurement. The 4B28EB7A worker
+was slow on Default (38-68 ms) and smooth on Winlogon (the lock screen); the same loop in a user
+process ticked at 8 ms with 0.09 ms captures. `XInputGetState` on an empty slot goes through
+GameInput on this Windows and can block for tens of milliseconds from a SYSTEM process on the
+interactive desktop, while on Winlogon it fails at once. The tick asked four empty slots every
+8 ms. Now the empty slots are probed from a thread of their own every 500 ms (`ProbeXInputSlots`),
+the tick reads only slots that answered, and the probe's worst time rides in health as
+`XInputProbeMaxMs` with `XInputSlots`: if that number is tens of milliseconds while `TickMaxMs`
+is 8, the diagnosis is confirmed and the cure is already in.
+
 ### Installer reset machine preferences during upgrade
 
 PowerShell `New-Item -Force` against an existing registry key cleared its values,
@@ -407,9 +441,10 @@ Older GUID build directories and extracted service folders can be stale.
 | --- | --- |
 | Signed launcher (exact absolute move, Oct 8 20:00) | `dist\v1.8.0\Loungepad.exe` |
 | Launcher ZIP | `dist\v1.8.0\Loungepad-v1.8.0-win-x64.zip` |
-| Service ZIP (tick timing in the health record, Oct 8 20:40) | `dist\Loungepad.InputService-v1.8.0-x64.zip` |
-| Latest signed service package source | `artifacts\input-service\1d00d017ee434cabba5b5a2cd932107d\package` (agent `A325A8EC…`, catalog Valid) |
-| Exact-absolute-move package (20:00), **installed as of this writing** | `artifacts\input-service\d75062cdd8934b3a8b0c12721604a533\package` (agent `4B28EB7A…`) |
+| Service ZIP (start-up fix, XInput probe off the tick, sticky errors, Oct 8 21:05) | `dist\Loungepad.InputService-v1.8.0-x64.zip` |
+| Latest signed service package source | `artifacts\input-service\ee572043bd704feabbd3bd63c8cc6aaf\package` (agent `089770B1…`, catalog Valid) |
+| 20:40 package, **installed as of this writing and never runs a worker** | `artifacts\input-service\1d00d017ee434cabba5b5a2cd932107d\package` (agent `A325A8EC…`) |
+| Exact-absolute-move package (20:00) | `artifacts\input-service\d75062cdd8934b3a8b0c12721604a533\package` (agent `4B28EB7A…`) |
 | Build logs | `artifacts\input-service-exact-*-build.log`, `artifacts\launcher-exact-*-build.log` |
 | One-pad-per-controller package (19:30), **installed as of this writing** | `artifacts\input-service\d1a072bfa11c4c049bd4d6b527d7183f\package` (agent `E5FD64A2…`) |
 | Pointer-fix package (18:20) | `artifacts\input-service\ae79aa8ac9fd4caf98710160132e5b8b\package` (agent `B0336553…`) |

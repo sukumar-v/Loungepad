@@ -94,10 +94,31 @@ internal static class MachineInputSettings
         using var key = Registry.LocalMachine.CreateSubKey(RegistryPath);
         key.DeleteValue("AgentHealth", false);
     }
+    /// <summary>
+    /// LastError is the current condition and is cleared by the next healthy heartbeat. Errors is
+    /// the record: the last eight, newest first, each with its time, never cleared by health. A
+    /// worker that failed at start-up and was restarted reported its error and the next worker's
+    /// first heartbeat wiped it, so a fault that came and went left nothing to read.
+    /// </summary>
     public static void ReportError(string? error)
     {
         using var key = Registry.LocalMachine.CreateSubKey(RegistryPath);
-        if (error is null) key.DeleteValue("LastError", false);
-        else key.SetValue("LastError", error, RegistryValueKind.String);
+        if (error is null) { key.DeleteValue("LastError", false); return; }
+        key.SetValue("LastError", error, RegistryValueKind.String);
+        var history = new List<string> { $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} {error}" };
+        if (key.GetValue("Errors") is string previous && previous.Length <= 16384)
+        {
+            try { history.AddRange(JsonSerializer.Deserialize<List<string>>(previous) ?? new()); }
+            catch (JsonException) { }
+        }
+        key.SetValue("Errors", JsonSerializer.Serialize(history.Take(8)), RegistryValueKind.String);
+    }
+
+    public static IReadOnlyList<string> Errors()
+    {
+        using var key = Registry.LocalMachine.OpenSubKey(RegistryPath);
+        if (key?.GetValue("Errors") is not string json || json.Length > 16384) return Array.Empty<string>();
+        try { return JsonSerializer.Deserialize<List<string>>(json) ?? new(); }
+        catch (JsonException) { return Array.Empty<string>(); }
     }
 }

@@ -2359,6 +2359,16 @@ Stop the scrolled grid from clipping through the All games header
   per-second `TickMeanMs`/`TickMaxMs`/`CaptureMaxMs`/`MapMaxMs`/`SendMaxMs`/`SendShort`/`Ticks`;
   read them from the registry while the stick is pushed before theorising. A trace whose moves
   come every 1-2 ms with 1-30 px steps is the mouse, not the stick: `wait` mode skips those.
+- **Read `HKLM\SOFTWARE\Loungepad\Input` before believing any symptom**: an empty `AgentHealth`
+  means no worker is running, whatever the service says, and `Errors` keeps the last eight errors
+  with their times (health clears only `LastError`). The 20:40 build on Oct 8 2026 never ran a worker
+  (its injection sink answered 0 before the first tick set the desktop flag, and the start-up release
+  of stuck buttons is an injection), and the launcher's own local pointer stood in so convincingly
+  that "works on the desktop only with Loungepad open, not over Task Manager or UAC" read as three
+  separate bugs. `--health-watch <s>` prints worker, desktop, mode, errors and each heartbeat's
+  timing while a scenario is repeated. Empty XInput slots are probed off the tick every 500 ms
+  (`ProbeXInputSlots`, worst time in health as `XInputProbeMaxMs`): asking them on the tick is the
+  one call whose cost depends on the process, and the leading suspect for the slow Default worker.
 - **Packaging needs the dist launcher closed** (`package.ps1` deletes `dist\v1.8.0`, which it runs
   from) and the two scripts sequential (`package-input-service.ps1`, then `package.ps1`; both sign).
   The service install needs UAC -- `install-input-service.ps1 -SourcePath <package>` in an admin

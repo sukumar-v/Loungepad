@@ -404,6 +404,45 @@ internal static class MotionProbes
         Console.WriteLine($"  ticks with the stick pushed: {movePixels}; SendInput calls: {sendCalls}; pointer moves asked for: {sends.Count}; spacing of moves ms {Describe(sendGaps)}");
     }
 
+    /// <summary>
+    /// Watches the installed agent through the registry five times a second: every change of
+    /// worker, desktop, mode, controller presence or error is printed as it happens, and each
+    /// health period's tick timing follows it. Run it while repeating whatever misbehaves.
+    /// Read-only; it moves nothing.
+    /// </summary>
+    public static void HealthWatch(int seconds)
+    {
+        Console.WriteLine($"Watching the agent for {seconds} s. Repeat the scenarios now.");
+        string? lastKey = null, lastError = null, lastErrors = null; long lastTick = -1;
+        var sw = Stopwatch.StartNew();
+        using var tick = new MillisecondTimer();
+        while (sw.Elapsed.TotalSeconds < seconds)
+        {
+            using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(MachineInputSettings.RegistryPath);
+            string stamp = $"{DateTime.Now:HH:mm:ss.f}";
+            string? error = key?.GetValue("LastError") as string;
+            if (error != lastError) { Console.WriteLine($"{stamp} LastError: {(error is null ? "(cleared)" : error)}"); lastError = error; }
+            string? errors = key?.GetValue("Errors") as string;
+            if (errors != lastErrors && errors is not null) { Console.WriteLine($"{stamp} Errors: {errors}"); lastErrors = errors; }
+            var health = MachineInputSettings.Agent();
+            if (health is null)
+            {
+                if (lastKey != "none") { Console.WriteLine($"{stamp} no worker health"); lastKey = "none"; }
+            }
+            else
+            {
+                string k = $"{health.ProcessId}|{health.Desktop}|{health.Mode}|{health.ControllerPresent}|{health.Ready}";
+                if (k != lastKey) { Console.WriteLine($"{stamp} worker {health.ProcessId} on {health.Desktop}, {health.Mode}, controller={health.ControllerPresent} ready={health.Ready}"); lastKey = k; }
+                if (health.Tick != lastTick)
+                {
+                    lastTick = health.Tick;
+                    Console.WriteLine($"{stamp}   ticks={health.Ticks} mean={health.TickMeanMs:F2} max={health.TickMaxMs:F2} capture={health.CaptureMaxMs:F2} map={health.MapMaxMs:F2} send={health.SendMaxMs:F2} short={health.SendShort} xinputProbe={health.XInputProbeMaxMs:F2} slots={health.XInputSlots} suppressed={health.SuppressedNavigationEvents}");
+                }
+            }
+            for (int i = 0; i < 200; i++) tick.Wait();
+        }
+    }
+
     private static string Describe(List<double> values)
     {
         if (values.Count == 0) return "none";

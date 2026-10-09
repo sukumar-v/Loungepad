@@ -24,10 +24,15 @@ internal sealed class DesktopWorker
     private readonly NeutralInputGate _gate = new();
     private int _xboxIndex;
     private readonly NativeMethods.XINPUT_GAMEPAD[] _previous = new NativeMethods.XINPUT_GAMEPAD[4];
-    private readonly long[] _xboxRetryAt = new long[4];
-    // Where a tick's time went over the current health period. The real agent moved the pointer
-    // every 40-70 ms while the same loop in an ordinary process ticked every 8 (Oct 8 2026), and
-    // nothing short of these numbers could say which call was slow in a SYSTEM process.
+    // Which XInput slots answered last time. Only those are read on the tick: asking an empty slot
+    // goes through GameInput on this Windows and can take tens of milliseconds in a SYSTEM process
+    // (the Default worker's tick ran every 40-70 ms with four of them, Oct 8 2026, while the
+    // Winlogon worker, where XInput fails at once, was smooth). The empty ones are probed from a
+    // thread of their own every 500 ms, and how long that took is in the health record.
+    private readonly bool[] _xboxConnected = new bool[4];
+    private double _xboxProbeMax;
+    // Where a tick's time went over the current health period. Nothing short of these numbers
+    // could say which call was slow in a SYSTEM process.
     private long _tickStarted; private int _ticks;
     private double _tickSum, _tickMax, _captureMax, _mapMax, _sendMax; private int _sendShort;
 
@@ -38,9 +43,12 @@ internal sealed class DesktopWorker
     public void Run()
     {
         _dispatcher = Dispatcher.CurrentDispatcher;
-        // The desktop is checked once per tick (Tick's first line); opening it again for every
-        // injected move was one more trip into the kernel per move for nothing a tick could not
-        // have told us a few milliseconds earlier.
+        // The desktop is checked once per tick (Tick's first line) and the result is what every
+        // injection consults. It is checked here first as well: the release of stuck buttons
+        // below is an injection, and a sink that answered 0 before the first tick made the worker
+        // throw at start-up, exit, and be restarted by the supervisor for ever (Oct 8 2026, the
+        // build of 20:40: no worker ran at all, and the launcher moved the pointer by itself).
+        _desktopCurrent = DesktopApi.IsCurrent(_desktop);
         NativeMethods.InputSink = inputs =>
         {
             if (!_desktopCurrent) return 0;
@@ -50,6 +58,7 @@ internal sealed class DesktopWorker
             if (sent != inputs.Length) _sendShort++;
             return sent;
         };
+        var xinputProbe = Task.Factory.StartNew(ProbeXInputSlots, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
         _profile = MachineInputSettings.Load();
         _hid.RefreshDirectDevices();
         _hid.SetQuiet(true);
@@ -95,6 +104,28 @@ internal sealed class DesktopWorker
             if (DesktopApi.IsCurrent(_desktop)) _injector.Release();
             try { server?.Wait(1500); } catch (AggregateException) { }
             try { pump.Wait(1500); } catch (AggregateException) { }
+            try { xinputProbe.Wait(1500); } catch (AggregateException) { }
+        }
+    }
+
+    /// <summary>Asks the XInput slots that did not answer last time whether a pad has arrived,
+    /// twice a second, off the tick. A connected slot is read on the tick itself.</summary>
+    private void ProbeXInputSlots()
+    {
+        while (!_stop.IsCancellationRequested)
+        {
+            for (int i = 0; i < 4 && !_stop.IsCancellationRequested; i++)
+            {
+                if (Volatile.Read(ref _xboxConnected[i])) continue;
+                long started = Stopwatch.GetTimestamp();
+                bool connected;
+                try { connected = NativeMethods.XInputGetStateAny(i, out _) == 0; }
+                catch (DllNotFoundException) { return; }
+                double took = Ms(started);
+                if (took > _xboxProbeMax) _xboxProbeMax = took;
+                if (connected) Volatile.Write(ref _xboxConnected[i], true);
+            }
+            try { Task.Delay(500, _stop.Token).GetAwaiter().GetResult(); } catch (OperationCanceledException) { return; }
         }
     }
 
@@ -153,8 +184,9 @@ internal sealed class DesktopWorker
             _navigation?.BlockedCount ?? 0,
             TickMeanMs: _ticks == 0 ? 0 : Math.Round(_tickSum / _ticks, 2), TickMaxMs: Math.Round(_tickMax, 2),
             CaptureMaxMs: Math.Round(_captureMax, 2), MapMaxMs: Math.Round(_mapMax, 2), SendMaxMs: Math.Round(_sendMax, 2),
-            SendShort: _sendShort, Ticks: _ticks));
-        _ticks = 0; _tickSum = _tickMax = _captureMax = _mapMax = _sendMax = 0; _sendShort = 0;
+            SendShort: _sendShort, Ticks: _ticks, XInputProbeMaxMs: Math.Round(_xboxProbeMax, 2),
+            XInputSlots: _xboxConnected.Count(c => c)));
+        _ticks = 0; _tickSum = _tickMax = _captureMax = _mapMax = _sendMax = 0; _sendShort = 0; _xboxProbeMax = 0;
     }
 
     private void RelinquishRemote()
@@ -166,17 +198,12 @@ internal sealed class DesktopWorker
     {
         bool present = false;
         NativeMethods.XINPUT_STATE xbox = default;
-        long now = Environment.TickCount64;
         for (int i = 0; i < 4; i++)
         {
-            // An empty slot is asked again every half second, not every tick: XInput re-probes a
-            // disconnected slot, and four of those on every tick is the one call in this loop
-            // whose cost can depend on the process it runs in.
-            if (_xboxRetryAt[i] > now) continue;
+            if (!Volatile.Read(ref _xboxConnected[i])) continue;   // empty slots are probed off the tick
             try
             {
-                if (NativeMethods.XInputGetStateAny(i, out var state) != 0) { _xboxRetryAt[i] = now + 500; continue; }
-                _xboxRetryAt[i] = 0;
+                if (NativeMethods.XInputGetStateAny(i, out var state) != 0) { Volatile.Write(ref _xboxConnected[i], false); continue; }
                 if (!state.Gamepad.Equals(_previous[i])) _xboxIndex = i;
                 _previous[i] = state.Gamepad;
                 if (!present || i == _xboxIndex) { xbox = state; present = true; }

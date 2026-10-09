@@ -67,6 +67,11 @@ internal static class Program
                 MotionProbes.AgentLoop();
                 return 0;
             }
+            if (args.Length == 2 && args[0] == "--health-watch" && int.TryParse(args[1], out int watchSeconds))
+            {
+                MotionProbes.HealthWatch(watchSeconds);
+                return 0;
+            }
             if (args is ["--input-timing-probe"])
             {
                 InputTimingProbe.Run();
