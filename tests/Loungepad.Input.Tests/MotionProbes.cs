@@ -144,13 +144,22 @@ internal static class MotionProbes
     /// worker's does on the way to a move (read the pointer, open the input desktop). Measures the
     /// spacing of the ticks as they run on the dispatcher, for the priority the worker uses and
     /// for Send.</summary>
-    public static void DispatcherCadence(bool inject = false)
+    /// <summary>The worker's tick mechanism in this process: the 8 ms clock posting one tick at a
+    /// time to an STA dispatcher, at each priority in turn. With <paramref name="busy"/>, a second
+    /// thread posts the launcher's requests as Serve does -- one no-op operation every 8 ms,
+    /// awaited -- at Input beside an Input tick (the arrangement up to Oct 8 2026) and at Normal
+    /// beside a Normal or Send tick (the arrangement since). A WPF background priority (Input and
+    /// below Loaded) is run only when the dispatcher finds its Win32 queue empty, so two background
+    /// producers can each find the other's posted message and wait for the message timer.</summary>
+    public static void DispatcherCadence(bool inject = false, bool busy = false)
     {
         NativeMethods.GetCursorPos(out var home);
         foreach (var priority in new[] { DispatcherPriority.Input, DispatcherPriority.Normal, DispatcherPriority.Send })
         {
             var intervals = new List<double>();
             var work = new List<double>();
+            var requestWaits = new List<double>();
+            var requestPriority = priority == DispatcherPriority.Input ? DispatcherPriority.Input : DispatcherPriority.Normal;
             var thread = new Thread(() =>
             {
                 var dispatcher = Dispatcher.CurrentDispatcher;
@@ -181,14 +190,32 @@ internal static class MotionProbes
                     catch (OperationCanceledException) { }
                     dispatcher.BeginInvokeShutdown(DispatcherPriority.Send);
                 });
+                var requests = busy ? new Thread(() =>
+                {
+                    try
+                    {
+                        using var cadence = new InputCadence();
+                        while (!stop.IsCancellationRequested)
+                        {
+                            cadence.Wait();
+                            long posted = Stopwatch.GetTimestamp();
+                            dispatcher.InvokeAsync(() => requestWaits.Add((Stopwatch.GetTimestamp() - posted) * 1000.0 / Stopwatch.Frequency),
+                                requestPriority, stop.Token).Task.GetAwaiter().GetResult();
+                        }
+                    }
+                    catch (OperationCanceledException) { }
+                }) : null;
                 pump.Start();
+                requests?.Start();
                 Dispatcher.Run();
                 pump.Join();
+                requests?.Join();
             });
             thread.SetApartmentState(ApartmentState.STA);
             thread.Start();
             thread.Join();
-            Console.WriteLine($"dispatcher ticks at {priority}{(inject ? " with injected moves" : "")}: {intervals.Count} ticks; spacing ms {Describe(intervals)}; over 10 ms: {intervals.Count(i => i > 10)}, over 16 ms: {intervals.Count(i => i > 16)}; tick work ms max {work.DefaultIfEmpty(0).Max():F3}");
+            Console.WriteLine($"dispatcher ticks at {priority}{(inject ? " with injected moves" : "")}{(busy ? $" with requests at {requestPriority}" : "")}: {intervals.Count} ticks; spacing ms {Describe(intervals)}; over 10 ms: {intervals.Count(i => i > 10)}, over 16 ms: {intervals.Count(i => i > 16)}; tick work ms max {work.DefaultIfEmpty(0).Max():F3}"
+                + (busy ? $"; {requestWaits.Count} requests, queue wait ms {Describe(requestWaits)}" : ""));
         }
         if (inject) NativeMethods.SetCursorPos(home.X, home.Y);
     }
@@ -436,7 +463,7 @@ internal static class MotionProbes
                 if (health.Tick != lastTick)
                 {
                     lastTick = health.Tick;
-                    Console.WriteLine($"{stamp}   ticks={health.Ticks} mean={health.TickMeanMs:F2} max={health.TickMaxMs:F2} capture={health.CaptureMaxMs:F2} map={health.MapMaxMs:F2} send={health.SendMaxMs:F2} short={health.SendShort} xinputProbe={health.XInputProbeMaxMs:F2} slots={health.XInputSlots} suppressed={health.SuppressedNavigationEvents}");
+                    Console.WriteLine($"{stamp}   ticks={health.Ticks} mean={health.TickMeanMs:F2} max={health.TickMaxMs:F2} queue={health.QueueMeanMs:F2}/{health.QueueMaxMs:F2} work={health.WorkMaxMs:F2} wait={health.WaitMeanMs:F2} capture={health.CaptureMaxMs:F2} map={health.MapMaxMs:F2} send={health.SendMaxMs:F2} short={health.SendShort} xinputProbe={health.XInputProbeMaxMs:F2} slots={health.XInputSlots} suppressed={health.SuppressedNavigationEvents}");
                 }
             }
             for (int i = 0; i < 200; i++) tick.Wait();

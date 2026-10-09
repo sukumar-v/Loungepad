@@ -46,9 +46,18 @@ to avoid flashing the Windows loading cursor.
 
 Input polling uses a process-local high-resolution waitable timer on an 8 ms schedule, with
 no global timer-resolution changes or busy spinning. The worker posts one tick at a time to
-its STA dispatcher. Movement uses `Stopwatch` timing rather than the coarse `TickCount64`
-clock, which remains suitable for health and timeout checks. The launcher wakes its IPC
-loop immediately when new synthetic input is queued.
+its STA dispatcher at `DispatcherPriority.Send`, and handles the launcher's pipe requests at
+`Normal`: both are foreground priorities. `Input` and everything below `Loaded` are WPF
+background priorities, which the dispatcher runs only when it finds the thread's Win32 queue
+empty and otherwise defers to a message timer; posted that way, the installed worker's ticks
+ran about 13 ms apart with nothing connected and 25-48 ms apart once the launcher's requests
+took turns with them (Oct 8 2026). The worker also opts out of Windows power throttling
+(`ProcessPower`), so a process that never shows a window keeps its timer resolution. Its
+health record reports, per second, how long ticks waited in the dispatcher queue, how long
+the longest tick body ran and how long the clock really waited, so a slow pointer is read
+from the registry as queue, body or clock. Movement uses `Stopwatch` timing rather than the
+coarse `TickCount64` clock, which remains suitable for health and timeout checks. The
+launcher wakes its IPC loop immediately when new synthetic input is queued.
 
 On Default, the agent captures controllers while the launcher is connected, and the launcher's
 existing policy decides what the pad does: buttons, the keyboard toggle, combos, bindings and
@@ -274,8 +283,10 @@ is on the cable and on Bluetooth at once, and Windows lists it twice; the reader
 Bluetooth instance while a wired instance of the same pad is present (same vendor and product, not
 two different serials), so one physical pad is one reading. Read as two, the stick alternated
 between the cable's copy and the radio's lagging one a few hundred times a second, and every push
-came out as a sawtooth. `--dispatcher-cadence-probe` reproduces the worker's tick mechanism and
-measures the spacing of ticks on the dispatcher. `--pointer-trace <seconds> [wait]` records every
+came out as a sawtooth. `--dispatcher-cadence-probe [inject] [busy]` reproduces the worker's tick
+mechanism and measures the spacing of ticks on the dispatcher at Input, Normal and Send; `busy`
+adds a second thread posting the launcher's requests every 8 ms, at Input beside an Input tick
+(the old arrangement) and at Normal beside a Normal or Send tick (the current one). `--pointer-trace <seconds> [wait]` records every
 change of the real pointer's position at about 1 ms and describes each run of motion (spacing of
 moves, size of steps); move only the controller stick while it runs, and with `wait` it starts
 recording at the first movement. None of the three injects input. Two more do move the real

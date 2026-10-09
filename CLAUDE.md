@@ -2368,9 +2368,28 @@ Stop the scrolled grid from clipping through the All games header
   separate bugs. `--health-watch <s>` prints worker, desktop, mode, errors and each heartbeat's
   timing while a scenario is repeated. Empty XInput slots are probed off the tick every 500 ms
   (`ProbeXInputSlots`, worst time in health as `XInputProbeMaxMs`): asking them on the tick is the
-  one call whose cost depends on the process, and the leading suspect for the slow Default worker.
+  one call whose cost depends on the process. It was the suspect for the slow Default worker until
+  the same health record showed the probe at 0.1 ms beside 13 ms ticks (next bullet): a
+  measurement that clears a suspect is worth as much as one that convicts.
+- **The worker posts its tick to the WPF dispatcher at `Send` and pipe requests at `Normal`, never
+  `Input`** (Oct 8 2026, 23:00). `Input` and everything below `Loaded` are WPF *background*
+  priorities: the dispatcher runs one only when it finds the thread's Win32 queue empty and
+  otherwise waits for a message timer, which in the installed worker was about 13 ms an operation
+  -- 13 ms ticks with nothing connected, 25-48 ms once the launcher's 125 requests a second took
+  turns with them (`--health-watch`), and 8.00 ms in a test process whose queue was empty, which
+  is why `--dispatcher-cadence-probe` and `--agent-loop-probe` never reproduced it -- nor did
+  `--dispatcher-cadence-probe busy`, a second producer at the same priority, so the queue state
+  is the worker process's own and the health fields, not another probe, are what name it. The user's
+  "smoother with Loungepad closed" was this, not two movers: the launcher never moves the pointer
+  while a reply claims it. `AgentHealth` carries `QueueMeanMs`/`QueueMaxMs` (posting to running),
+  `WorkMaxMs` (the whole tick body) and `WaitMeanMs` (what the clock really waited), so a slow
+  tick is read as queue, body or clock from the registry; `ProcessPower.KeepResponsive` opts the
+  worker out of Windows 11 power throttling, which can coarsen a windowless process's timers.
 - **Packaging needs the dist launcher closed** (`package.ps1` deletes `dist\v1.8.0`, which it runs
   from) and the two scripts sequential (`package-input-service.ps1`, then `package.ps1`; both sign).
+  `-NoRestore` only works while the last restore was for `win-x64`: a plain `dotnet build
+  Loungepad.sln` restores without the runtime identifier and overwrites `project.assets.json`, after
+  which both publishes fail with NETSDK1047 (Oct 8 2026, 23:15). Drop the flag after such a build.
   The service install needs UAC -- `install-input-service.ps1 -SourcePath <package>` in an admin
   PowerShell keeps the enabled flag and profile -- and the in-app flow only installs from a published
   release. A `dotnet build` launcher cannot authenticate the installer. The Xbox pad here is paired

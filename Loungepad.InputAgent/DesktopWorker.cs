@@ -33,8 +33,8 @@ internal sealed class DesktopWorker
     private double _xboxProbeMax;
     // Where a tick's time went over the current health period. Nothing short of these numbers
     // could say which call was slow in a SYSTEM process.
-    private long _tickStarted; private int _ticks;
-    private double _tickSum, _tickMax, _captureMax, _mapMax, _sendMax; private int _sendShort;
+    private long _tickStarted; private int _ticks, _waits;
+    private double _tickSum, _tickMax, _captureMax, _mapMax, _sendMax, _queueSum, _queueMax, _workMax, _waitSum; private int _sendShort;
 
     public DesktopWorker(string desktop) => _desktop = desktop;
 
@@ -43,6 +43,7 @@ internal sealed class DesktopWorker
     public void Run()
     {
         _dispatcher = Dispatcher.CurrentDispatcher;
+        ProcessPower.KeepResponsive();
         // The desktop is checked once per tick (Tick's first line) and the result is what every
         // injection consults. It is checked here first as well: the release of stuck buttons
         // below is an injection, and a sink that answered 0 before the first tick made the worker
@@ -70,6 +71,14 @@ internal sealed class DesktopWorker
         _injector.ReleaseMouse();
         // DispatcherTimer uses the coarse Windows message timer. Drive the STA dispatcher
         // from a precise clock instead; await every tick so slow work cannot queue a burst.
+        // The tick is posted at Send, a foreground priority. At Input it was a WPF background
+        // operation (everything below Loaded is): the dispatcher runs one of those only when it
+        // finds the thread's Win32 queue empty, and otherwise comes back on a message timer. In
+        // the installed worker that cost about 13 ms per operation (Oct 8 2026: 13 ms ticks with
+        // nothing connected, 25-48 ms once the launcher's pipe requests, handled at the same
+        // priority, took turns with them; 8.00 ms in a test process whose queue was empty). How
+        // long each tick sat in the queue, how long its body ran and how long the clock really
+        // waited are in the health record, so the next slow pointer is measured where it happens.
         var pump = Task.Factory.StartNew(() =>
         {
             try
@@ -77,16 +86,26 @@ internal sealed class DesktopWorker
                 using var cadence = new InputCadence();
                 while (!_stop.IsCancellationRequested)
                 {
+                    long waited = Stopwatch.GetTimestamp();
                     cadence.Wait();
+                    double wait = Ms(waited);
+                    long posted = Stopwatch.GetTimestamp();
                     _dispatcher.InvokeAsync(() =>
                     {
+                        double queued = Ms(posted);
+                        long began = Stopwatch.GetTimestamp();
                         try { Tick(); }
                         catch (Exception ex)
                         {
                             MachineInputSettings.ReportError($"Input agent: {Program.Describe(ex)}");
                             _injector.Release();
                         }
-                    }, DispatcherPriority.Input, _stop.Token).Task.GetAwaiter().GetResult();
+                        finally
+                        {
+                            _queueSum += queued; _queueMax = Math.Max(_queueMax, queued);
+                            _workMax = Math.Max(_workMax, Ms(began)); _waitSum += wait; _waits++;
+                        }
+                    }, DispatcherPriority.Send, _stop.Token).Task.GetAwaiter().GetResult();
                 }
             }
             catch (OperationCanceledException) when (_stop.IsCancellationRequested) { }
@@ -185,8 +204,11 @@ internal sealed class DesktopWorker
             TickMeanMs: _ticks == 0 ? 0 : Math.Round(_tickSum / _ticks, 2), TickMaxMs: Math.Round(_tickMax, 2),
             CaptureMaxMs: Math.Round(_captureMax, 2), MapMaxMs: Math.Round(_mapMax, 2), SendMaxMs: Math.Round(_sendMax, 2),
             SendShort: _sendShort, Ticks: _ticks, XInputProbeMaxMs: Math.Round(_xboxProbeMax, 2),
-            XInputSlots: _xboxConnected.Count(c => c)));
-        _ticks = 0; _tickSum = _tickMax = _captureMax = _mapMax = _sendMax = 0; _sendShort = 0; _xboxProbeMax = 0;
+            XInputSlots: _xboxConnected.Count(c => c),
+            QueueMeanMs: _waits == 0 ? 0 : Math.Round(_queueSum / _waits, 2), QueueMaxMs: Math.Round(_queueMax, 2),
+            WorkMaxMs: Math.Round(_workMax, 2), WaitMeanMs: _waits == 0 ? 0 : Math.Round(_waitSum / _waits, 2)));
+        _ticks = _waits = 0; _tickSum = _tickMax = _captureMax = _mapMax = _sendMax = _queueSum = _queueMax = _workMax = _waitSum = 0;
+        _sendShort = 0; _xboxProbeMax = 0;
     }
 
     private void RelinquishRemote()
@@ -238,7 +260,10 @@ internal sealed class DesktopWorker
                     if (request.Version != Protocol.Version || request.Events is null || request.Events.Length > 128)
                         throw new IOException("Unsupported input protocol");
                     request.Profile?.Validate();
-                    var reply = await _dispatcher.InvokeAsync(() => Handle(request), DispatcherPriority.Input, timeout.Token);
+                    // Normal, a foreground priority: at Input each request waited for the
+                    // dispatcher to find its Win32 queue empty, about 13 ms, and the ticks waited
+                    // behind them (see the pump).
+                    var reply = await _dispatcher.InvokeAsync(() => Handle(request), DispatcherPriority.Normal, timeout.Token);
                     await Protocol.Write(pipe, reply, timeout.Token);
                 }
             }

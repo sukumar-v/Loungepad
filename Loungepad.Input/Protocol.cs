@@ -64,9 +64,13 @@ internal sealed record ServiceStatus(bool Enabled, int? Session, string State, s
 // The timing fields describe the worker's last health period (about a second): how far apart
 // its ticks ran and the slowest capture, mapping and injection inside one. They are how a
 // slow pointer is told apart from a slow loop without a debugger on a SYSTEM process.
+// QueueMeanMs/QueueMaxMs is the time from the clock thread posting a tick to the dispatcher
+// running it; WorkMaxMs the longest tick body, whatever it did; WaitMeanMs how long the clock
+// really waited between ticks -- near zero means the loop is late and the cadence never paces it.
 internal sealed record AgentHealth(long Tick, int Session, int ProcessId, string Desktop, string Mode, bool ControllerPresent, bool Ready,
     long SuppressedNavigationEvents = 0, double TickMeanMs = 0, double TickMaxMs = 0, double CaptureMaxMs = 0, double MapMaxMs = 0,
-    double SendMaxMs = 0, int SendShort = 0, int Ticks = 0, double XInputProbeMaxMs = 0, int XInputSlots = 0);
+    double SendMaxMs = 0, int SendShort = 0, int Ticks = 0, double XInputProbeMaxMs = 0, int XInputSlots = 0,
+    double QueueMeanMs = 0, double QueueMaxMs = 0, double WorkMaxMs = 0, double WaitMeanMs = 0);
 // MovePointer and ScrollWheel are the launcher's policy for this tick: whether the left stick is
 // a mouse right now and whether the right stick is a wheel. The agent then moves the pointer
 // itself, from its own reading, in its own loop (see DesktopWorker.Tick). PointerOwner is the

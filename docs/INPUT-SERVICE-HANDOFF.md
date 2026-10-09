@@ -418,6 +418,66 @@ the tick reads only slots that answered, and the probe's worst time rides in hea
 `XInputProbeMaxMs` with `XInputSlots`: if that number is tens of milliseconds while `TickMaxMs`
 is 8, the diagnosis is confirmed and the cure is already in.
 
+### The watch: 13 ms ticks with nothing connected, 25-48 ms connected; the dispatcher's priority, not XInput (Oct 8, 21:00-23:00)
+
+`--health-watch 420` ran across the user's install of the `089770B1…` agent and the four
+scenarios. Per heartbeat (about a second each) it recorded:
+
+- Any worker with nothing connected -- Default in background mode and every Winlogon worker
+  (the UAC prompt, the lock screen) -- ticked **72-80 times a second: 12.5-14 ms apart, max
+  25-46**, with capture 0.00-0.01 ms, mapping and injection under 1 ms, and `XInputProbeMaxMs`
+  0.07-0.17 ms with no slot connected. The XInput suspect from 21:00 is cleared by the same
+  record that shows the slow tick: the probe costs nothing and the tick is still not 8 ms.
+- The moment the launcher connected (mode "launcher connected") the same Default worker ticked
+  **22-40 times a second: 25-48 ms apart, max 48-82**, with the same sub-millisecond work. At
+  23:00 the user's follow-up build (`4b6fe985…`, installed 22:22; the launcher closed) was at
+  23 ms in background mode.
+- Every desktop switch is a new worker process, as designed: 138820 (Default) → 138508
+  (Winlogon, the UAC prompt) → 92100 (Default) → 139736 and 49084 (Winlogon) → 134764 and
+  139744 (Default) within two minutes, each opening with a heartbeat of 0 ticks. No `Errors`
+  entry was written during the watch; `LastError` stayed clear.
+
+The user's reading -- "both Loungepad's own input and the service are moving the mouse, because
+it is smoother when Loungepad is closed" -- names the right symptom and the wrong mechanism.
+The launcher does not move the pointer while it holds a reply that claims it (`agentPointer`,
+GamepadService.cs:766; `Snapshot()` is null only once the last reply is 250 ms old). What the
+launcher does is send a request every 8 ms, and each one is handled on the worker's dispatcher
+at the same priority as the tick; the two take turns and the tick rate halves. (Two movers
+would need a reply more than 250 ms late while the worker still counts the launcher as
+connected; with handling at a millisecond that window does not open.)
+
+Why about 13 ms an operation: the pump posted the tick at `DispatcherPriority.Input`, and in
+WPF everything below `Loaded` is a *background* priority. The dispatcher dequeues a background
+operation only when it finds the thread's Win32 message queue empty and otherwise comes back on
+a message timer, which is the system clock's 10-15.6 ms and is itself delivered only when nothing
+else is queued. In the test process the queue was empty, so `--dispatcher-cadence-probe` and
+`--agent-loop-probe` ran at 8.00 ms at every priority and never reproduced it. Nor does
+`--dispatcher-cadence-probe busy` (23:30), which adds a second thread posting the launcher's
+requests every 8 ms at the same priority: Input ticks beside Input requests still 8.00 ms, 499
+ticks, request queue wait 0.11 ms mean, 2.6 max. So the queue state that slows the worker is
+specific to that process (SYSTEM, uiAccess, started on a desktop, the hook thread, the quiet
+HID readers) and is not identified; the fix does not depend on it, and the new health fields
+will say whether the time is the queue, the tick body or the clock.
+
+The build in "Latest local build":
+
+- posts the tick at `DispatcherPriority.Send` and handles pipe requests at `Normal`, both
+  foreground priorities: a posted message, processed in turn, never gated on an empty queue;
+- opts the worker out of power throttling (`ProcessPower.KeepResponsive`: `SetProcessInformation`
+  with `ProcessPowerThrottling`, EcoQoS off and timer-resolution requests always honoured), since
+  Windows 11 may treat a process that never shows a window as background;
+- adds to `AgentHealth` what decides the next step without another theory: `QueueMeanMs` and
+  `QueueMaxMs` (from posting a tick to running it), `WorkMaxMs` (the whole tick body, including
+  the per-tick desktop check and the once-a-second device refresh and health write, which the
+  earlier fields left out) and `WaitMeanMs` (how long the clock really waited between ticks).
+  `--health-watch` prints them as `queue=mean/max work= wait=`.
+
+Reading the next watch: `mean` near 8 with `wait` near 7 and `queue` under 1, in both modes, is
+the fix confirmed. `mean` still 13-23 with `queue` and `work` near 0 means the waitable timer
+itself is coarse in that process and the next change is the clock, not the dispatcher. `work` in
+the tens of milliseconds names the tick body (the desktop check, the device refresh) instead.
+Nothing about the mapping, the pad selection or the policy changed, and the launcher did not.
+
 ### Installer reset machine preferences during upgrade
 
 PowerShell `New-Item -Force` against an existing registry key cleared its values,
@@ -480,10 +540,12 @@ Older GUID build directories and extracted service folders can be stale.
 
 | Item | Path relative to workspace |
 | --- | --- |
-| Signed launcher (exact absolute move, Oct 8 20:00) | `dist\v1.8.0\Loungepad.exe` |
-| Launcher ZIP | `dist\v1.8.0\Loungepad-v1.8.0-win-x64.zip` |
-| Service ZIP (start-up fix, XInput probe off the tick, sticky errors, Oct 8 21:05) | `dist\Loungepad.InputService-v1.8.0-x64.zip` |
-| Latest signed service package source | `artifacts\input-service\ee572043bd704feabbd3bd63c8cc6aaf\package` (agent `089770B1…`, catalog Valid) |
+| Signed launcher (Advanced category, two switches; Oct 8 23:20) | `dist\v1.8.0\Loungepad.exe` (SHA-256 `9FDB348F90DFD09C6F7F1FB20EB67353CCB123D668C08734B0E40B5DB9D30831`) |
+| Launcher ZIP | `dist\v1.8.0\Loungepad-v1.8.0-win-x64.zip` (`AA5E63004DC8D332DDDDC4218BC8D80442A27B106662FA319E2B959567FF8F16`) |
+| Service ZIP (dispatcher priorities, power-throttling opt-out, queue/work/wait in health; Oct 8 23:20) | `dist\Loungepad.InputService-v1.8.0-x64.zip` (`F7FC77D905C683F648C508B42F75B10E2AAD687BD7913D9E929B629CC3B1C3C1`) |
+| **Latest signed service package source** | `artifacts\input-service\b3e70fbdfd7e41cdaf4e4334789c99fa\package` (agent exe `E3AD9A6E7DBC11FCA52D17BDFE191A6372376ACBD6E565BA65FBD46011B5AFEA`; every binary and the catalog signed, Valid with timestamp) |
+| User's follow-up package (two switches, uninstall cleanup; 22:22), **installed as of 23:10**, ticks 23 ms in background mode | `artifacts\input-service\4b6fe9856bcd4a0abacf4a8d2adde6a1\package` (agent dll `F131B3F3…`) |
+| 21:05 package (start-up fix, XInput probe off the tick, sticky errors) | `artifacts\input-service\ee572043bd704feabbd3bd63c8cc6aaf\package` (agent `089770B1…`, catalog Valid) |
 | 20:40 package, **installed as of this writing and never runs a worker** | `artifacts\input-service\1d00d017ee434cabba5b5a2cd932107d\package` (agent `A325A8EC…`) |
 | Exact-absolute-move package (20:00) | `artifacts\input-service\d75062cdd8934b3a8b0c12721604a533\package` (agent `4B28EB7A…`) |
 | Build logs | `artifacts\input-service-exact-*-build.log`, `artifacts\launcher-exact-*-build.log` |
@@ -500,19 +562,19 @@ launcher ZIP `F7604E35502DFB93E3A2C79F6A40144287F008331848426B4900188BEFFF3D9B`;
 with a timestamp, file version 1.8.0.0, 29 shipped files embedded. (Earlier launchers: 19:30
 `32304263…`, 18:20 `5FBFA8FD…`, 17:26 `E706A173…`.)
 
-**Installed as of this writing: the 19:30 service (agent `E5FD64A2…`)**, installed by the user
-with UAC. The exact-absolute-move package is NOT installed yet. The launcher the user started
-from `dist\v1.8.0` at 19:22 was closed through its window for packaging (280 ms) and the new one
-started from the same path afterwards. To install the latest service, in an administrator
-PowerShell:
+**Installed as of 23:10: the user's 22:22 follow-up service (`4b6fe985…`)**, which has the two
+switches but still posts its tick at `Input`; its worker was ticking at 23 ms with the launcher
+closed. The 23:20 package is NOT installed yet and no launcher was running. To install it, in an
+administrator PowerShell:
 
 ```powershell
-cd 'C:\Users\Sukumar\Projects\Windows\Loungepad\artifacts\input-service\d75062cdd8934b3a8b0c12721604a533\package'
+cd 'C:\Users\Sukumar\Projects\Windows\Loungepad\artifacts\input-service\b3e70fbdfd7e41cdaf4e4334789c99fa\package'
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install-input-service.ps1 -SourcePath .
 ```
 
-It keeps the enabled flag and the profile. Then start `dist\v1.8.0\Loungepad.exe`; it reconnects
-on its own and the settings row must not say the service is older.
+It keeps both switches and the profile. Then start `dist\v1.8.0\Loungepad.exe`; it reconnects
+on its own and the settings row must not say the service is older. Read the health record
+(`--health-watch`) before asking how it feels: `mean` near 8 with `queue` under 1 in both modes.
 
 Host is Windows 11 25H2 **26200.9457**. Rediscover process IDs; never reuse old IDs/HWNDs.
 
@@ -566,11 +628,14 @@ passing end-to-end test or assume observer ordering relative to the SYSTEM hook.
 
 1. Install the new service package (administrator PowerShell in the package folder named
    under "Latest local build": `.\install-input-service.ps1 -SourcePath .`; it keeps the
-   enabled flag and profile) and run the new `dist\v1.8.0\Loungepad.exe`. The settings row
-   must no longer say the installed service is older. Until the service is updated the new
-   launcher moves the pointer through the pipe as before (with the in-flight guard), and the
-   old launcher with the new service gets the old behaviour too: nothing is dead and nothing
-   doubles, whichever is updated first.
+   switches and profile) and run the new `dist\v1.8.0\Loungepad.exe`. Then
+   `dotnet run --project tests/Loungepad.Input.Tests --no-build -- --health-watch 120` while
+   the stick is pushed on the desktop with the launcher open and again with it closed: `mean`
+   near 8, `queue` under 1 and `wait` near 7 in both modes is the dispatcher fix confirmed (see
+   "The watch" above for the other two readings and what each one means). Only then ask about
+   feel. Until the service is updated the new launcher moves the pointer through the pipe as
+   before (with the in-flight guard), and the old launcher with the new service gets the old
+   behaviour too: nothing is dead and nothing doubles, whichever is updated first.
 2. Then the user's physical results: smooth motion at the same speed on the desktop, in Task
    Manager, over UAC and on the sign-in screen, no extra highlight movement and no double
    A/Cross, with the wired DualSense and the Xbox pad on the wireless adapter (power the pad
@@ -578,10 +643,11 @@ passing end-to-end test or assume observer ordering relative to the SYSTEM hook.
    built-in secure keyboard separately. Correlate each reproduction with desktop, worker
    identity, mode, ControllerPresent, Ready, LastError and SuppressedNavigationEvents. Never
    record credentials or raw typed keys.
-3. If jitter persists on Default with both sides updated, it is no longer the pipe: the
-   movement is the worker's own 8 ms tick. Measure that tick and its capture, check which pad
-   `SelectPad` is following (a second pad resting on the desk can take over on a stick
-   wobble), and that `MovePointer` is being asked for (the policy goes stale after 50 ms if
+3. If the health record shows 8 ms ticks in both modes and the stick still jumps, it is no
+   longer the loop: `--pointer-trace 15 wait` while the user pushes shows what the pointer
+   actually does (expect a move every 8 ms of 10-12 px at full deflection), then check which
+   pad `SelectPad` is following (a second pad resting on the desk can take over on a stick
+   wobble) and that `MovePointer` is being asked for (the policy goes stale after 50 ms if
    the launcher's loop stalls). Do not substitute sensitivity changes for diagnosis.
 4. If duplicate focus persists, check whether the counter increments during the actual
    failing interaction on that desktop. Investigate hook lifetime/timeouts, alternative

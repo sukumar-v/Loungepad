@@ -52,9 +52,9 @@ internal static class Program
                 MotionProbes.AbsoluteMapping();
                 return 0;
             }
-            if (args.Length is 1 or 2 && args[0] == "--dispatcher-cadence-probe")
+            if (args.Length is >= 1 and <= 3 && args[0] == "--dispatcher-cadence-probe")
             {
-                MotionProbes.DispatcherCadence(inject: args.Length == 2 && args[1] == "inject");
+                MotionProbes.DispatcherCadence(inject: args.Skip(1).Contains("inject"), busy: args.Skip(1).Contains("busy"));
                 return 0;
             }
             if (args is ["--pointer-sweep"])
