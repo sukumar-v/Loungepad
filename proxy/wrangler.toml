@@ -1,9 +1,10 @@
 # The Loungepad service, at https://api.loungepad.app (Oct 9 2026): game metadata, and add-on
 # downloads and likes through the stats binding; not "metadata" in its name for that reason.
-# Builds up to 1.8.0 have the old address baked in, consolify-metadata.s-varmagt.workers.dev; that name is now a forwarder
-# (legacy/, a service binding to this worker), so they reach this same code until nobody runs one
-# and it can be deleted. The custom domain is what makes the backend movable from here on: a
-# rename, a move or a rewrite is a change behind api.loungepad.app, never a change in the launcher.
+# Builds up to 1.8.0 have the old address baked in, consolify-metadata.s-varmagt.workers.dev;
+# that name is now a forwarder (legacy/, a service binding to this worker), so they reach this
+# same code until nobody runs one and it can be deleted. The custom domain is what makes the
+# backend movable from here on: a rename, a move or a rewrite is a change behind
+# api.loungepad.app, never a change in the launcher.
 #
 # The credentials are per worker and were set again for this name (see the end of this file).
 name = "loungepad-service"
