@@ -37,6 +37,21 @@ internal static class Program
                 NavigationHookStallProbe();
                 return 0;
             }
+            if (args is ["--hid-probe"])
+            {
+                MotionProbes.Hid();
+                return 0;
+            }
+            if (args.Length == 2 && args[0] == "--pointer-trace" && int.TryParse(args[1], out int traceSeconds))
+            {
+                MotionProbes.PointerTrace(traceSeconds);
+                return 0;
+            }
+            if (args is ["--dispatcher-cadence-probe"])
+            {
+                MotionProbes.DispatcherCadence();
+                return 0;
+            }
             if (args is ["--input-timing-probe"])
             {
                 InputTimingProbe.Run();
@@ -61,6 +76,7 @@ internal static class Program
             Handoff();
             Mapping();
             Pointer();
+            OnePadPerController();
             Framing().GetAwaiter().GetResult();
             SpoofPipe().GetAwaiter().GetResult();
             SecureKeyboard();
@@ -75,6 +91,16 @@ internal static class Program
     {
         if (!condition) throw new Exception("FAIL: " + name);
         _checks++; Console.WriteLine("PASS: " + name);
+    }
+
+    // A pad on the cable and on Bluetooth at once is one pad, two of the same model are two.
+    private static void OnePadPerController()
+    {
+        Check(HidPad.SamePhysicalPad(0x054C, 0x0CE6, "0C:27:56:5B:1C:5B", 0x054C, 0x0CE6, "0c27565b1c5b"), "the same serial in two spellings is one pad");
+        Check(HidPad.SamePhysicalPad(0x054C, 0x0CE6, "", 0x054C, 0x0CE6, "0c27565b1c5b") && HidPad.SamePhysicalPad(0x054C, 0x0CE6, "", 0x054C, 0x0CE6, ""),
+            "a missing serial cannot say two instances of one model differ");
+        Check(!HidPad.SamePhysicalPad(0x054C, 0x0CE6, "0c27565b1c5b", 0x054C, 0x0CE6, "0c27565b1c5c"), "two serials are two pads of one model");
+        Check(!HidPad.SamePhysicalPad(0x054C, 0x0CE6, "", 0x054C, 0x09CC, ""), "a different product is a different pad");
     }
 
     // The stick as a pointer: one formula for the launcher and the agent, the agent's
@@ -118,6 +144,30 @@ internal static class Program
             mapper.MovePointer(pushed, 400, move: false, wheel: false);
             mapper.MovePointer(pushed, 408, move: false, wheel: false);
             Check(output.Count == 0, "the launcher's policy holds the agent's pointer still");
+
+            // A DualSense pushed while a resting Xbox pad wobbles by a few hundred counts: the
+            // DualSense keeps the pointer, and the wobble moves nothing.
+            using var two = new SecureMapper(new InputProfile { KeyboardToggle = "Off" }, new InputInjector());
+            var rng = new Random(7);
+            output.Clear();
+            int moved = 0;
+            for (int i = 0; i < 60; i++)
+            {
+                var noisy = new NativeMethods.XINPUT_STATE { Gamepad = new() { sThumbLX = (short)rng.Next(-600, 600), sThumbLY = (short)rng.Next(-600, 600) } };
+                var both = new AgentReply(1, true, true, noisy, new(true, "playstation", "DualSense", "usb", new() { sThumbLX = 32767 }, i, 0, 0, 0, 0, false));
+                int before = output.Count;
+                two.MovePointer(both, 1000 + i * 8, move: true, wheel: false);
+                if (output.Count > before) moved++;
+            }
+            Check(moved >= 58, "a resting Xbox pad's wobble does not take the pointer from the DualSense being pushed");
+            // The DualSense is let go (one tick where only it changes: it keeps the pointer, at
+            // rest), then the Xbox pad is pushed: the only pad moving takes over.
+            var resting = new HidPadSnapshot(true, "playstation", "DualSense", "usb", default, 99, 0, 0, 0, 0, false);
+            two.MovePointer(new AgentReply(1, true, true, default, resting), 2000, move: true, wheel: false);
+            output.Clear();
+            var xboxPushed = new AgentReply(1, true, true, new() { Gamepad = new() { sThumbLX = 32767 } }, resting);
+            for (int i = 1; i <= 10; i++) two.MovePointer(xboxPushed, 2000 + i * 8, move: true, wheel: false);
+            Check(output.Count >= 9, "a real push on the Xbox pad takes it over");
 
             var reply = System.Text.Json.JsonSerializer.Deserialize<AgentReply>("{\"Version\":1,\"DefaultDesktop\":true,\"XInputPresent\":false}", Protocol.Json)!;
             Check(!reply.PointerOwner, "an older agent's reply reads as not owning the pointer, so the launcher keeps moving it");

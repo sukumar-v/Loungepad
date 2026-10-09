@@ -116,6 +116,7 @@ internal sealed class HidGamepadReader : IDisposable
         {
             if (!_pads.Remove(lParam, out gone)) return;
             if (_last == gone) _last = null;
+            Reconcile();
         }
         foreach (var reader in _quietReaders.Where(r => r.Pad == gone).ToArray())
         {
@@ -203,6 +204,7 @@ internal sealed class HidGamepadReader : IDisposable
         lock (_lock)
         {
             pad.State = state;
+            if (pad.Shadowed) return;   // the cable's copy of this pad is the reading
             pad.TouchDx += t.Dx;
             pad.TouchDy += t.Dy;
             pad.TouchSpread += t.Spread;
@@ -334,6 +336,7 @@ internal sealed class HidGamepadReader : IDisposable
         lock (_lock)
         {
             pad.State = state;
+            if (pad.Shadowed) return;   // the cable's copy of this pad is the reading
             pad.TouchDx += touch.Dx;
             pad.TouchDy += touch.Dy;
             pad.TouchSpread += touch.Spread;
@@ -344,6 +347,36 @@ internal sealed class HidGamepadReader : IDisposable
         }
     }
 
+    /// <summary>
+    /// One reading per physical pad. A DualSense plugged in while it is paired stays on Bluetooth
+    /// as well, and Windows lists it twice; read as two pads, "the last to report" flipped between
+    /// them a few hundred times a second (653 in 3 s, measured Oct 8 2026), and since the radio's
+    /// copy of the stick lags the cable's, every push read as a sawtooth -- the jittery pointer on
+    /// every desktop. The cable wins: the Bluetooth instance is shadowed while a wired instance of
+    /// the same pad (SamePhysicalPad) is present, and takes over the moment the cable goes. Its
+    /// touch travel is dropped on either change, or it would land as one jump. Under the lock.
+    /// </summary>
+    private void Reconcile()
+    {
+        foreach (var pad in _pads.Values)
+        {
+            bool shadowed = pad.Bluetooth && _pads.Values.Any(other => other != pad && !other.Bluetooth
+                && HidPad.SamePhysicalPad(pad.Vid, pad.Pid, pad.Serial, other.Vid, other.Pid, other.Serial));
+            if (shadowed == pad.Shadowed) continue;
+            pad.Shadowed = shadowed;
+            pad.TouchDx = 0; pad.TouchDy = 0; pad.TouchSpread = 0;
+            InputLog.Info(shadowed ? $"HID pad: {pad.Name} is on the cable as well; reading the cable"
+                                   : $"HID pad: {pad.Name}: the cable has gone; reading Bluetooth");
+        }
+        if (_last?.Shadowed == true) _last = null;
+    }
+
+    /// <summary>Every pad instance the reader holds, for diagnostics.</summary>
+    public IReadOnlyList<(string Name, string Path, string Serial, bool Bluetooth, bool Shadowed)> Describe()
+    {
+        lock (_lock) return _pads.Values.Select(p => (p.Name, p.Path, p.Serial, p.Bluetooth, p.Shadowed)).ToList();
+    }
+
     /// <summary>What the gamepad thread reads every tick. Reading drains the touchpad travel --
     /// unless the caller only wants the sticks and buttons (the input agent's own pointer tick,
     /// between two replies to the launcher, which is where the touch travel is going).</summary>
@@ -352,7 +385,7 @@ internal sealed class HidGamepadReader : IDisposable
         lock (_lock)
         {
             if (_pads.Count == 0) return default;
-            var p = _last ?? _pads.Values.First();
+            var p = _last ?? _pads.Values.FirstOrDefault(x => !x.Shadowed) ?? _pads.Values.First();
             var snap = new HidPadSnapshot(true, p.Layout, p.Name, p.InstanceId, p.State, _seq,
                 p.TouchDx, p.TouchDy, p.TouchSpread, p.TouchFingers, p.TouchClick);
             if (drainTouch)
@@ -374,7 +407,7 @@ internal sealed class HidGamepadReader : IDisposable
         catch (Exception ex) { InputLog.Info($"HID pad: could not open device: {ex.Message}"); return null; }
         if (pad is null) return null;
 
-        lock (_lock) _pads[hDevice] = pad;
+        lock (_lock) { _pads[hDevice] = pad; Reconcile(); }
         if (_quiet) _quietReaders.Add(new QuietReader(this, pad));
         InputLog.Info($"HID pad: {pad.Name} ({pad.Layout}, VID {pad.Vid:X4} PID {pad.Pid:X4}, {pad.ButtonCount} buttons)");
         PadChanged?.Invoke(pad.Layout, pad.Name, true);
@@ -396,6 +429,25 @@ internal sealed class HidPad : IDisposable
     public string InstanceId { get; private set; } = "";
     /// <summary>The device-interface path, for opening the pad directly while resting.</summary>
     public string Path { get; private set; } = "";
+    /// <summary>The serial the device reports, if any. A DualSense gives its Bluetooth address on
+    /// the cable too, which is how the same pad on both transports is told from two pads.</summary>
+    public string Serial { get; private set; } = "";
+    public bool Bluetooth { get; private set; }
+    /// <summary>True while another instance of this same physical pad is the one being read (it
+    /// is on the cable, this one is on Bluetooth): its reports keep its state current and nothing
+    /// else -- they never become the reading and never add touch travel.</summary>
+    public bool Shadowed { get; set; }
+
+    /// <summary>Are two instances one physical pad? Same vendor and product, and not two different
+    /// serials: a serial is compared by its hex digits, so "0C:27:56:5B:1C:5B" is "0c27565b1c5b",
+    /// and a missing serial on either side cannot say they differ.</summary>
+    internal static bool SamePhysicalPad(uint vidA, uint pidA, string serialA, uint vidB, uint pidB, string serialB)
+    {
+        if (vidA != vidB || pidA != pidB) return false;
+        string a = SerialKey(serialA), b = SerialKey(serialB);
+        return a.Length < 8 || b.Length < 8 || a == b;
+    }
+    internal static string SerialKey(string serial) => new(serial.Where(Uri.IsHexDigit).Select(char.ToLowerInvariant).ToArray());
     /// <summary>The longest input report the pad sends, report id included, from its caps.</summary>
     public int InputReportLength { get; private set; }
     public uint Vid { get; private set; }
@@ -645,7 +697,8 @@ internal sealed class HidPad : IDisposable
             return null;
         }
 
-        var pad = new HidPad { _preparsed = preparsed, Vid = info.dwVendorId, Pid = info.dwProductId, InstanceId = InstanceIdOf(path), Path = path };
+        var pad = new HidPad { _preparsed = preparsed, Vid = info.dwVendorId, Pid = info.dwProductId, InstanceId = InstanceIdOf(path), Path = path,
+            Bluetooth = IsBluetooth(path), Serial = SerialString(path) ?? "" };
         (pad.Layout, pad._map) = LayoutFor(info.dwVendorId, info.dwProductId);
         pad.Name = ProductString(path) ?? $"{pad.Layout} controller {info.dwVendorId:X4}:{info.dwProductId:X4}";
         if (!pad.ReadCaps()) { pad.Dispose(); return null; }
@@ -871,6 +924,21 @@ internal sealed class HidPad : IDisposable
             if (!HidNative.HidD_GetProductString(h, sb, (uint)sb.Capacity * 2)) return null;
             var name = sb.ToString().Trim();
             return name.Length > 0 ? name : null;
+        }
+        catch { return null; }
+    }
+
+    private static string? SerialString(string path)
+    {
+        try
+        {
+            using var h = HidNative.CreateFile(path, 0, HidNative.FILE_SHARE_READ | HidNative.FILE_SHARE_WRITE, IntPtr.Zero,
+                HidNative.OPEN_EXISTING, 0, IntPtr.Zero);
+            if (h.IsInvalid) return null;
+            var sb = new StringBuilder(128);
+            if (!HidNative.HidD_GetSerialNumberString(h, sb, (uint)sb.Capacity * 2)) return null;
+            var serial = sb.ToString().Trim();
+            return serial.Length > 0 ? serial : null;
         }
         catch { return null; }
     }

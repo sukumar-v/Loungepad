@@ -116,12 +116,18 @@ internal sealed class SecureMapper : IDisposable
         return dt;
     }
 
-    /// <summary>Which pad is driving: the one that moved last. Null with nothing attached.</summary>
+    /// <summary>
+    /// Which pad is driving: the one that moved last, where "moved" is measured against an anchor
+    /// (where the pad last registered) past the sticks' noise, as the launcher measures it. A
+    /// reading-to-reading comparison let a resting pad's wobble take the mapping from the one in
+    /// hand, a few times a second. Null with nothing attached.
+    /// </summary>
     private NativeMethods.XINPUT_GAMEPAD? SelectPad(AgentReply snapshot)
     {
-        bool hm = snapshot.Hid.Present && (!snapshot.Hid.Pad.Equals(_lastH) || snapshot.Hid.TouchDx != 0 || snapshot.Hid.TouchDy != 0 || snapshot.Hid.TouchClick);
-        bool xm = snapshot.XInputPresent && !snapshot.Xbox.Gamepad.Equals(_lastX);
-        _lastX = snapshot.Xbox.Gamepad; _lastH = snapshot.Hid.Pad;
+        bool hm = snapshot.Hid.Present && (StickPointer.Moved(snapshot.Hid.Pad, _lastH) || snapshot.Hid.TouchDx != 0 || snapshot.Hid.TouchDy != 0 || snapshot.Hid.TouchClick);
+        bool xm = snapshot.XInputPresent && StickPointer.Moved(snapshot.Xbox.Gamepad, _lastX);
+        if (xm || !snapshot.XInputPresent) _lastX = snapshot.Xbox.Gamepad;
+        if (hm || !snapshot.Hid.Present) _lastH = snapshot.Hid.Pad;
         if (hm && !xm) _useHid = true; else if (xm && !hm) _useHid = false;
         if (_useHid && !snapshot.Hid.Present) _useHid = false;
         if (!_useHid && !snapshot.XInputPresent) _useHid = true;

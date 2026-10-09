@@ -232,6 +232,47 @@ notches, leaves a held click button alone, holds still when the policy says so),
 older-peer compatibility of both records, and the in-flight guard. Not yet checked: the
 user's hands, on either desktop.
 
+### Still jittery with the agent moving the pointer: one DualSense read as two pads (Oct 8, 19:00)
+
+The user installed the pointer-fix service (agent `B0336553…`, worker 136712) and reported the
+stick still jittery on both desktops, a little better on the prompt screen. With both desktops on
+the same code now, the probes looked at what feeds it:
+
+- `--dispatcher-cadence-probe` (the worker's tick mechanism reproduced: a precise 8 ms timer
+  posting one tick at a time to an STA dispatcher, each tick reading the pointer and opening the
+  input desktop): 500 ticks, mean 8.00 ms, sd 0.19, max 8.52, none over 10 ms, at Input, Normal
+  and Send priority alike. The tick is not the jitter.
+- `--hid-probe` (a reader of our own over the real devices, 3 s of snapshots at 1 ms): **two pad
+  instances for the one DualSense** -- the Bluetooth interface (`HID\{00001124-…}_VID&0002054C…`,
+  ~380 reports/s) and the USB one (`HID\VID_054C&PID_0CE6&MI_03…`, ~150/s), both reading the
+  same stick -- and **the "last pad to report" changed 653 times in 3 s**. The pad is on the
+  cable and still paired, and Windows lists both (the PnP list shows both HID game controllers
+  present). `HidGamepadReader.Snapshot` returns whichever instance reported last, so the agent's
+  stick reading alternated, a few hundred times a second, between the cable's copy and the
+  radio's, which lags it: every push read as a sawtooth. The launcher's log had shown it since
+  18:24 (`reading full reports (id 0x31 …)` and `(id 0x01 …)` for the same pad, one line each).
+
+Fix: one reading per physical pad (`HidGamepadReader.Reconcile`). A Bluetooth instance is
+`Shadowed` while a wired instance of the same pad is present -- same vendor and product, and not
+two different serials (`HidPad.SamePhysicalPad`; a serial is compared by its hex digits, a
+missing one cannot say they differ) -- and takes over the moment the cable goes. A shadowed
+instance's reports keep its state current and nothing else: never the reading, never touch
+travel (its accumulators are dropped on either change, or they would land as one jump). The
+reader lists its instances for diagnostics (`Describe`, printed by the probe). This is in the
+shared reader, so the launcher's local path and both the agent's paths get it; both packages
+were rebuilt. Checked with the probe over the real devices after the change: the Bluetooth
+instance SHADOWED, the reading from the cable alone at ~250 reports/s, the last reporter changed
+0 times in 3 s. The USB interface reports no serial and the Bluetooth one reports the pad's
+address (`0c27565b1c5b`), so it is the "a missing serial cannot say they differ" rule that
+matches them on this pad. Not yet confirmed by hand.
+
+In the same pass, `SecureMapper.SelectPad` now decides which pad is driving the way the launcher
+does -- movement against an anchor past the sticks' noise (`StickPointer.Moved`, 1600 counts,
+shared with `GamepadService`) -- instead of comparing raw readings, which would have let a
+resting Xbox pad's wobble take the mapping from the DualSense in hand a few times a second once
+both are connected, which the next test does. On a simultaneous change the pad in hand keeps
+the pointer, as in the launcher. Two checks cover it (68 → 70).
+
 ### Installer reset machine preferences during upgrade
 
 PowerShell `New-Item -Force` against an existing registry key cleared its values,
@@ -294,38 +335,37 @@ Older GUID build directories and extracted service folders can be stale.
 
 | Item | Path relative to workspace |
 | --- | --- |
-| Signed launcher (pointer fix, Oct 8 evening) | `dist\v1.8.0\Loungepad.exe` |
+| Signed launcher (one pad per controller, Oct 8 19:30) | `dist\v1.8.0\Loungepad.exe` |
 | Launcher ZIP | `dist\v1.8.0\Loungepad-v1.8.0-win-x64.zip` |
-| Service ZIP (pointer fix, Oct 8 evening) | `dist\Loungepad.InputService-v1.8.0-x64.zip` |
-| Latest signed service package source | `artifacts\input-service\ae79aa8ac9fd4caf98710160132e5b8b\package` |
-| Service build log | `artifacts\input-service-pointer-build.log` |
-| Launcher build log | `artifacts\launcher-pointer-build.log` |
-| Previous (17:26) service package, installed as of this writing | `artifacts\input-service\a104da0444294117b6ba5555dcf4dfde\package` |
+| Service ZIP (one pad per controller, Oct 8 19:30) | `dist\Loungepad.InputService-v1.8.0-x64.zip` |
+| Latest signed service package source | `artifacts\input-service\d1a072bfa11c4c049bd4d6b527d7183f\package` |
+| Build logs | `artifacts\input-service-onepad-*-build.log`, `artifacts\launcher-onepad-*-build.log` |
+| Pointer-fix service package (18:20), **installed as of this writing** | `artifacts\input-service\ae79aa8ac9fd4caf98710160132e5b8b\package` (agent `B0336553…`) |
+| 17:26 service package, the one before | `artifacts\input-service\a104da0444294117b6ba5555dcf4dfde\package` (agent `83504FAD…`) |
 
-Service ZIP SHA-256: `2659A60B413E4EE201ACA1DCC34B85FE602AA60DDB58A8A8854A564B362F29FA`.
-New agent exe SHA-256: `B0336553B688B77AFC6AD2C5BFB850319EAE0EEFF978C01474D0BC341384B68E`
-(the installed one starts `83504FAD5A7C52A1`; both report file version 1.8.0.0, so the hash is
-how to tell them apart). Every binary and the catalog in the new package verified: signature
-Valid with a timestamp, `Test-FileCatalog` Valid. **The new service package is NOT installed**:
-the signed installer was started elevated from that folder at 18:26 and the UAC prompt was
-cancelled by the user (Win32 1223), so the installed worker is still the 17:26 build, which does
-not claim the pointer, and the new launcher against it moves the pointer through the pipe as
-before. While the prompt was up the old service put a fresh worker on Winlogon (pid 129840,
-controller present, ready, no error) and came back to Default when it closed. To install when
-wanted, in an administrator PowerShell:
+Latest service ZIP SHA-256: `BAC537D513B8544DA2ADC0FEFFD9C4978FE43C9975D4FE0B277E9BEAAEC4229F`;
+its agent exe `E5FD64A2A0ACEEDC958D8141A4497142DA93F402E41D2029BB6E8F6E4576D0EA`. Every binary
+and the catalog verified: signature Valid with a timestamp, `Test-FileCatalog` Valid. All three
+agents report file version 1.8.0.0, so the hash is how to tell them apart.
+Latest launcher SHA-256: `3230426EBA15F8E10ED205AC41914C8EBBBFAC9B00D8BEB71723CA2B41957A64`;
+launcher ZIP `0FFDCDFD13AF8E03059AD0DAFC77D491AC1A4C8DE91637596EA750FE754A7C8C`; signature Valid
+with a timestamp, file version 1.8.0.0, 29 shipped files embedded. (The 18:20 launcher was
+`5FBFA8FD…`, the 17:26 one `E706A173…`.)
+
+**Installed as of this writing: the 18:20 service (agent `B0336553…`)**, which the user installed
+with UAC after cancelling one prompt at 18:26 (while that prompt was up the old service put a
+fresh worker on Winlogon, pid 129840, controller present, ready, no error, and came back to
+Default when it closed). The one-pad-per-controller package is NOT installed yet. No launcher
+was running at 19:00 (the 18:24 one, pid 136372, is gone without a log line; the user closed it
+or it was closed for the install). To install the latest, in an administrator PowerShell:
 
 ```powershell
-cd 'C:\Users\Sukumar\Projects\Windows\Loungepad\artifacts\input-service\ae79aa8ac9fd4caf98710160132e5b8b\package'
+cd 'C:\Users\Sukumar\Projects\Windows\Loungepad\artifacts\input-service\d1a072bfa11c4c049bd4d6b527d7183f\package'
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install-input-service.ps1 -SourcePath .
 ```
 
-It keeps the enabled flag and the profile. The running launcher reconnects on its own and the
-settings row stops saying the service is older.
-Launcher SHA-256: `5FBFA8FD2E3D5DF033741C047E83D74A35DBEBCD61079AC014C0B45C04200AF9`.
-Launcher ZIP SHA-256: `624E71A8909FEBE56CCD26C700665FAC45E188A92FBCD70BEB41FBAE8D680BF8`.
-Launcher signature Valid with a timestamp, file version 1.8.0.0, 29 shipped files embedded.
-The 17:26 launcher (`E706A173…`) was closed through a WM_CLOSE to its main window (exited in
-273 ms) before packaging, and the new one started from the path above.
+It keeps the enabled flag and the profile. Then start `dist\v1.8.0\Loungepad.exe`; it reconnects
+on its own and the settings row must not say the service is older.
 
 Host is Windows 11 25H2 **26200.9457**. Rediscover process IDs; never reuse old IDs/HWNDs.
 

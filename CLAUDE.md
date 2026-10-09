@@ -2331,6 +2331,18 @@ Stop the scrolled grid from clipping through the All games header
   inert in front, wait for the next heartbeat (1 s), read again: a live hook counts 2 (checked Oct 8
   2026 on worker 131320, 0 → 2). XInputUWPFix is the same hook, which is the evidence that Windows'
   controller-to-VK events pass through the chain at all. The counter is not proof of behaviour.
+- **A DualSense on the cable while it is paired is two HID pads to Windows, and the reader read
+  both** (Oct 8 2026, after the agent took the pointer: still "very jittery on both desktops").
+  `--hid-probe` saw the Bluetooth instance at ~380 reports/s and the USB one at ~150/s, the same
+  stick on each, and `_last` flipping 653 times in 3 s; the radio's copy lags the cable's, so a
+  push read as a sawtooth. `HidGamepadReader.Reconcile` shadows a Bluetooth instance while a wired
+  instance of the same pad (`HidPad.SamePhysicalPad`: vendor, product, and not two different
+  serials) is present: parsed, never the reading, never touch travel. The dispatcher tick was
+  cleared first (`--dispatcher-cadence-probe`: 8.00 ms mean, max 8.5, at every priority). The
+  launcher's log had said it all along: two `reading full reports` lines for one pad, 0x31 and 0x01.
+  The agent's pad selection (`SecureMapper.SelectPad`) measures movement against an anchor past
+  `StickPointer.StickNoise` (1600, shared with GamepadService's `Moved`), not reading to reading,
+  or a resting Xbox pad's wobble steals the pointer from the DualSense in hand.
 - **Packaging needs the dist launcher closed** (`package.ps1` deletes `dist\v1.8.0`, which it runs
   from) and the two scripts sequential (`package-input-service.ps1`, then `package.ps1`; both sign).
   The service install needs UAC -- `install-input-service.ps1 -SourcePath <package>` in an admin

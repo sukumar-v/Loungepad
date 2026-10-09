@@ -165,6 +165,9 @@ internal static class HidNative
     [DllImport("hid.dll", CharSet = CharSet.Unicode)]
     public static extern bool HidD_GetProductString(SafeFileHandle hidDeviceObject, StringBuilder buffer, uint bufferLength);
 
+    [DllImport("hid.dll", CharSet = CharSet.Unicode)]
+    public static extern bool HidD_GetSerialNumberString(SafeFileHandle hidDeviceObject, StringBuilder buffer, uint bufferLength);
+
     /// <summary>
     /// Read a feature report. Reading the DualSense's calibration report (0x05) is what switches it
     /// from the short Bluetooth report to the full one that carries the touchpad; the calibration

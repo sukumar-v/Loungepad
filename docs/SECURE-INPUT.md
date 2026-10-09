@@ -250,6 +250,18 @@ controller reads, device discovery, ordinary waits and the precise input timer. 
 requests and restores a 1 ms timer resolution only in the benchmark process for comparison;
 the launcher and service use their own high-resolution waitable timers instead.
 
+`--hid-probe` reads the controllers through a reader of its own for three seconds and prints each
+instance the reader holds (name, transport, serial, whether it is shadowed), how often "the last
+pad to report" changed, and each instance's report rate. A DualSense plugged in while it is paired
+is on the cable and on Bluetooth at once, and Windows lists it twice; the reader shadows the
+Bluetooth instance while a wired instance of the same pad is present (same vendor and product, not
+two different serials), so one physical pad is one reading. Read as two, the stick alternated
+between the cable's copy and the radio's lagging one a few hundred times a second, and every push
+came out as a sawtooth. `--dispatcher-cadence-probe` reproduces the worker's tick mechanism and
+measures the spacing of ticks on the dispatcher. `--pointer-trace <seconds>` records every change
+of the real pointer's position at about 1 ms and describes each run of motion (spacing of moves,
+size of steps); move only the controller stick while it runs. None of the three injects input.
+
 `--navigation-hook-stall-probe` is the check for the navigation filter's thread. It is opt-in
 because it injects one inert gamepad virtual key (`VK_GAMEPAD_RIGHT_THUMBSTICK_LEFT`, 0xDA) a few
 times: it installs the filter, blocks the probe's own dispatcher thread for 1.5 s with a key sent

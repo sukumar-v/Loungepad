@@ -32,6 +32,23 @@ internal static class StickPointer
         return (nx / mag * speed, -ny / mag * speed);
     }
 
+    /// <summary>How far a stick has to travel from where it last registered before that counts as
+    /// the pad being used: 5% of its range. A DualSense streams a report every 4 ms and its sticks
+    /// rest a few percent off centre, and an Xbox pad's wobble at rest must not take the mapping
+    /// from the pad someone is actually holding.</summary>
+    public const int StickNoise = 1600;
+
+    /// <summary>Has this pad been touched since it last registered? Buttons count at once; the
+    /// analog parts past the noise. The same test as the launcher's pad selection.</summary>
+    public static bool Moved(in Interop.NativeMethods.XINPUT_GAMEPAD a, in Interop.NativeMethods.XINPUT_GAMEPAD b) =>
+        a.wButtons != b.wButtons
+        || Math.Abs(a.bLeftTrigger - b.bLeftTrigger) > 24
+        || Math.Abs(a.bRightTrigger - b.bRightTrigger) > 24
+        || Math.Abs(a.sThumbLX - b.sThumbLX) > StickNoise
+        || Math.Abs(a.sThumbLY - b.sThumbLY) > StickNoise
+        || Math.Abs(a.sThumbRX - b.sThumbRX) > StickNoise
+        || Math.Abs(a.sThumbRY - b.sThumbRY) > StickNoise;
+
     /// <summary>One axis of stick scrolling as a speed in wheel notches per second, up positive.</summary>
     public static double ScrollRate(double axis, double deadzone, double boost)
     {

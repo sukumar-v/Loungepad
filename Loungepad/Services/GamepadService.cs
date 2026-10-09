@@ -181,7 +181,7 @@ internal class GamepadService : IDisposable
     /// Measured from the last registered position rather than the last tick, so a slow push still
     /// crosses it. About 5% of the travel; the cursor deadzone is 18%.
     /// </summary>
-    private const int StickNoise = 1600;
+    private const int StickNoise = StickPointer.StickNoise;   // shared with the input agent's pad selection
 
     public GamepadService(SettingsStore settings, Func<bool> isLauncherForeground, Func<bool> isGameFocused, HidGamepadReader? hid = null)
     {
@@ -864,14 +864,7 @@ internal class GamepadService : IDisposable
     };
 
     /// <summary>Has this pad been touched since it last registered? Buttons count at once; the analog parts past the noise.</summary>
-    private static bool Moved(in NativeMethods.XINPUT_GAMEPAD a, in NativeMethods.XINPUT_GAMEPAD b) =>
-        a.wButtons != b.wButtons
-        || Math.Abs(a.bLeftTrigger - b.bLeftTrigger) > 24
-        || Math.Abs(a.bRightTrigger - b.bRightTrigger) > 24
-        || Math.Abs(a.sThumbLX - b.sThumbLX) > StickNoise
-        || Math.Abs(a.sThumbLY - b.sThumbLY) > StickNoise
-        || Math.Abs(a.sThumbRX - b.sThumbRX) > StickNoise
-        || Math.Abs(a.sThumbRY - b.sThumbRY) > StickNoise;
+    private static bool Moved(in NativeMethods.XINPUT_GAMEPAD a, in NativeMethods.XINPUT_GAMEPAD b) => StickPointer.Moved(a, b);
 
     private static bool IsDpad(ushort mask) => mask is NativeMethods.XINPUT_GAMEPAD_DPAD_UP
         or NativeMethods.XINPUT_GAMEPAD_DPAD_DOWN or NativeMethods.XINPUT_GAMEPAD_DPAD_LEFT
