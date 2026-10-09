@@ -72,11 +72,24 @@ public class UiBridge
     /// up is pushed to it and one for a page since closed is not.</summary>
     private string? _achievementsOpenId;
 
+    /// <summary>Community themes and extensions (docs/ADDONS.md).</summary>
+    private readonly AddonService _addons;
+    private readonly ExtensionRuntime _extensions;
+
     public UiBridge(MainWindow window, CoreWebView2 core, SettingsStore settings, LibraryStore library,
         DisplayService displays, LibraryScanner scanner, GameLaunchService launcher, VirtualKeyboardService keyboard, WindowService windows, ThemeService themes,
-        UpdateService updates)
+        UpdateService updates, AddonService addons, ExtensionRuntime extensions)
     {
         _updates = updates;
+        _addons = addons;
+        _extensions = extensions;
+        // The list the page draws, pushed on its own after any change (never a state push, which
+        // would rebuild the library); the pass's checkpoints push the games, since they changed.
+        _addons.Changed += () => _window.Dispatcher.BeginInvoke(PushAddons);
+        _addons.Progress += p => _window.Dispatcher.BeginInvoke(() =>
+            Push(new { type = "addonProgress", key = p.Key, state = p.State, percent = p.Percent, error = p.Error }));
+        _extensions.Changed += () => _window.Dispatcher.BeginInvoke(PushAddons);
+        _extensions.Checkpoint += () => _window.Dispatcher.BeginInvoke(PushState);
         _window = window;
         _core = core;
         _settings = settings;
@@ -141,6 +154,7 @@ public class UiBridge
     /// <summary>The window is closing: stop the sampling loop and any pass in flight.</summary>
     public void Shutdown()
     {
+        _extensions.CancelPass();
         _activity.Dispose();
         _achievements.Dispose();
     }
@@ -191,6 +205,10 @@ public class UiBridge
                 StartScan();
                 DetectApps();
                 RefreshWake();
+                // The extensions start once the page is up, in hidden WebViews beside it, and the
+                // repository's list is read in the background (cached for hours; see AddonService).
+                _extensions.Attach(_core.Environment, _window.WindowHandle);
+                _ = Task.Run(() => _addons.RefreshCatalogueAsync(force: false));
                 break;
 
             case "launch":
@@ -306,6 +324,64 @@ public class UiBridge
                 catch (Exception ex) { Push(new { type = "toast", message = $"Could not open the themes folder: {ex.Message}" }); }
                 break;
 
+            // ---- add-ons (docs/ADDONS.md) ----
+            case "addonsRefresh":
+                _ = Task.Run(() => _addons.RefreshCatalogueAsync(force: true));
+                break;
+            case "addonInstall":
+                _ = InstallAddonAsync(msg["key"]?.GetValue<string>() ?? "");
+                break;
+            case "addonInstallFile":
+                InstallAddonFromFile(msg["how"]?.GetValue<string>() == "folder");
+                break;
+            case "addonReload":
+                _ = ReloadAddonAsync(msg["key"]?.GetValue<string>() ?? "");
+                break;
+            case "addonRemove":
+                RemoveAddon(msg["key"]?.GetValue<string>() ?? "");
+                break;
+            case "addonEnable":
+                _ = EnableAddonAsync(msg["key"]?.GetValue<string>() ?? "", msg["on"]?.GetValue<bool>() ?? true);
+                break;
+            case "addonRestart":
+                _ = _extensions.RestartAsync(msg["key"]?.GetValue<string>() ?? "");
+                break;
+            case "addonDevTools":
+                try { _extensions.OpenDevTools(msg["key"]?.GetValue<string>() ?? ""); }
+                catch (Exception ex) { PushToast(ex.Message); }
+                break;
+            case "addonFetchNow":
+            {
+                var key = msg["key"]?.GetValue<string>() ?? "";
+                if (_extensions.PassRunning) { PushToast("An extension pass is already running"); break; }
+                PushToast("Fetching…");
+                _ = Task.Run(() => _extensions.RunPassAsync(key, force: true));
+                break;
+            }
+            case "addonOpenHomepage":
+            {
+                // Only a homepage the list carries: the page never names a URL of its own.
+                var key = msg["key"]?.GetValue<string>() ?? "";
+                var url = _addons.Describe().FirstOrDefault(d => d.Key == key)?.Homepage;
+                if (url is null) { PushToast("This add-on has no homepage"); break; }
+                try
+                {
+                    _window.Park();
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true });
+                }
+                catch (Exception ex) { _window.Unpark(); PushToast($"Could not open the browser: {ex.Message}"); }
+                break;
+            }
+            case "addonsOpenFolder":
+                try
+                {
+                    var dir = msg["kind"]?.GetValue<string>() == AddonKind.Extension ? Paths.ExtensionsDir : Paths.ThemesDir;
+                    Directory.CreateDirectory(dir);
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(dir) { UseShellExecute = true });
+                }
+                catch (Exception ex) { PushToast($"Could not open the folder: {ex.Message}"); }
+                break;
+
             case "addManual":
                 AddManualGame();
                 break;
@@ -357,8 +433,11 @@ public class UiBridge
                 var achievementsChanged = (incoming.AchievementsEnabled && !cur.AchievementsEnabled)
                                           || (incoming.RetroAchievementsUser ?? "").Trim() != cur.RetroAchievementsUser
                                           || Secret(incoming.RetroAchievementsKey, cur.RetroAchievementsKey) != cur.RetroAchievementsKey;
+                // Which extensions' options changed, so each running one is told (docs/ADDONS.md).
+                var extChanged = ChangedExtensionSettings(incoming.ExtensionSettings, cur.ExtensionSettings);
                 CopySettings(incoming);
                 _settings.Save();
+                foreach (var id in extChanged) _extensions.NotifySettings(AddonService.KeyOf(AddonKind.Extension, id));
                 if (storesChanged) StartScan(force: true);
                 if (autoUpdateOn) _ = _updates.CheckAsync(userAsked: false);
                 if (achievementsChanged && !storesChanged) _ = _achievements.RefreshAllAsync(force: false);
@@ -1906,6 +1985,8 @@ public class UiBridge
         t.AnimationsEnabled = s.AnimationsEnabled;
         t.AnimationSpeed = Math.Clamp(s.AnimationSpeed, 0.5, 2.0);
         t.ThemeSettings = ThemeService.CleanSettingValues(s.ThemeSettings);
+        t.ExtensionSettings = ThemeService.CleanSettingValues(s.ExtensionSettings);
+        t.AddonsIndexUrl = (s.AddonsIndexUrl ?? "").Trim();
         t.IgdbClientId = s.IgdbClientId.Trim();
         t.IgdbClientSecret = Secret(s.IgdbClientSecret, t.IgdbClientSecret);
         t.SteamGridDbKey = Secret(s.SteamGridDbKey, t.SteamGridDbKey);
@@ -2102,8 +2183,144 @@ public class UiBridge
                 if (settings.AchievementsEnabled) step("achievements", "running", null);
                 try { await _achievements.RefreshAllAsync(force: false); }
                 finally { if (settings.AchievementsEnabled) step("achievements", "done", null); }
+                // The extensions' own facts, last: they are the most optional thing in the pass,
+                // and the games are long on screen by now.
+                await _extensions.RunPassAsync();
             }
         });
+    }
+
+    // ---- add-ons (docs/ADDONS.md) ----
+
+    /// <summary>The whole of Settings → Add-ons: every theme and extension, installed or listed by
+    /// the repository, with where the list came from and what the runtime says of each.</summary>
+    private object AddonsPayload() => new
+    {
+        items = _addons.Describe(a => _extensions.StatusOf(a)),
+        catalogue = _addons.CatalogueStatus(),
+        launcher = UpdateService.Format(UpdateService.Current),
+        passRunning = _extensions.PassRunning,
+    };
+
+    public void PushAddons() => Push(new { type = "addons", addons = AddonsPayload() });
+
+    /// <summary>The ids whose option bags differ between what the page sent and what is stored.</summary>
+    private static List<string> ChangedExtensionSettings(Dictionary<string, Dictionary<string, JsonElement>>? incoming,
+        Dictionary<string, Dictionary<string, JsonElement>>? current)
+    {
+        var a = ThemeService.CleanSettingValues(incoming);
+        var b = ThemeService.CleanSettingValues(current);
+        var ids = new List<string>();
+        foreach (var id in a.Keys.Union(b.Keys))
+        {
+            var x = a.TryGetValue(id, out var xa) ? JsonSerializer.Serialize(xa) : "";
+            var y = b.TryGetValue(id, out var yb) ? JsonSerializer.Serialize(yb) : "";
+            if (x != y) ids.Add(id);
+        }
+        return ids;
+    }
+
+    private async Task InstallAddonAsync(string key)
+    {
+        try
+        {
+            var installed = await _addons.InstallFromCatalogueAsync(key);
+            await AfterInstallAsync(installed);
+        }
+        catch (Exception ex) { PushToast($"Could not install: {ex.Message}"); }
+    }
+
+    /// <summary>A zip or a folder on this PC, through the file dialogs.</summary>
+    private void InstallAddonFromFile(bool folder)
+    {
+        string? path;
+        if (folder)
+        {
+            var dlg = new Microsoft.Win32.OpenFolderDialog { Title = "Choose the theme's or extension's folder" };
+            path = ShowDialog(dlg) ? dlg.FolderName : null;
+        }
+        else
+        {
+            var dlg = new Microsoft.Win32.OpenFileDialog { Title = "Choose the theme's or extension's zip", Filter = "Zip archives (*.zip)|*.zip" };
+            path = ShowDialog(dlg) ? dlg.FileName : null;
+        }
+        if (path is null) return;
+        _ = InstallAddonFromPathAsync(path, folder);
+    }
+
+    private async Task InstallAddonFromPathAsync(string path, bool folder)
+    {
+        try
+        {
+            var installed = folder ? await _addons.InstallFromFolderAsync(path) : await _addons.InstallFromZipAsync(path);
+            await AfterInstallAsync(installed);
+        }
+        catch (Exception ex) { PushToast($"Could not install: {ex.Message}"); }
+    }
+
+    private async Task ReloadAddonAsync(string key)
+    {
+        try
+        {
+            var installed = await _addons.ReloadFromSourceAsync(key);
+            await AfterInstallAsync(installed, reloaded: true);
+        }
+        catch (Exception ex) { PushToast($"Could not reload: {ex.Message}"); }
+    }
+
+    /// <summary>An add-on is on disk: a theme reloads through the themes watcher; an extension is
+    /// started (or restarted) and asked about the library straight away.</summary>
+    private async Task AfterInstallAsync(InstalledAddon a, bool reloaded = false)
+    {
+        var what = $"{a.Manifest.Name}{(string.IsNullOrEmpty(a.Manifest.Version) ? "" : " " + a.Manifest.Version)}";
+        PushToast(reloaded ? $"Reloaded {what}" : $"Installed {what}");
+        if (a.Kind == AddonKind.Theme)
+        {
+            PushThemes();
+            PushState();
+            return;
+        }
+        await _extensions.SyncAsync();
+        if (a.Enabled) _ = Task.Run(() => _extensions.RunPassAsync(a.Key));
+    }
+
+    private void RemoveAddon(string key)
+    {
+        try
+        {
+            var gone = _addons.Remove(key);
+            if (gone.Kind == AddonKind.Theme)
+            {
+                // The theme in use just went: back to the bundled one, or Shelf without it.
+                if (_settings.Settings.Theme == gone.Id)
+                {
+                    var fallback = new AppSettings().Theme;
+                    _settings.Settings.Theme = Directory.Exists(Path.Combine(Paths.ThemesDir, fallback)) ? fallback : "";
+                    _settings.Save();
+                }
+                PushThemes();
+                PushState();
+            }
+            else
+            {
+                _ = _extensions.SyncAsync();
+                // What it stored stays with the games: a reinstall picks it up again, and a theme
+                // that reads the field keeps working. Nothing else reads it once the extension has gone.
+            }
+            PushToast($"Removed {gone.Manifest.Name}");
+        }
+        catch (Exception ex) { PushToast($"Could not remove: {ex.Message}"); }
+    }
+
+    private async Task EnableAddonAsync(string key, bool on)
+    {
+        try
+        {
+            _addons.SetEnabled(key, on);
+            await _extensions.SyncAsync();
+            if (on) _ = Task.Run(() => _extensions.RunPassAsync(key));
+        }
+        catch (Exception ex) { PushToast(ex.Message); }
     }
 
     // ---- the scan, step by step ----
@@ -2609,6 +2826,7 @@ public class UiBridge
             startupRegistered = StartupService.IsRegistered(),
             update = _updates.Status,
             themes = _themes.List(),
+            addons = AddonsPayload(),
             gameRunning = _launcher.GameRunning,
             runningGameId = _launcher.RunningGameId,
             gameStarting = _launcher.Starting,

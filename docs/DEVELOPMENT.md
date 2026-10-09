@@ -1,6 +1,6 @@
 # Development
 
-[README](../README.md) · [User guide](GUIDE.md) · [Themes](THEMES.md) · [Development](DEVELOPMENT.md)
+[README](../README.md) · [User guide](GUIDE.md) · [Themes](THEMES.md) · [Add-ons](ADDONS.md) · [Development](DEVELOPMENT.md)
 
 ## Build & run
 
@@ -82,6 +82,11 @@ Loungepad/
     CursorService.cs      Optional system-wide pointer hiding while the D-pad drives
     StartupService.cs     HKCU Run key registration
     UpdateService.cs      Checks GitHub releases, downloads the exe, swaps it in place, restarts
+    AddonService.cs       Community themes and extensions (docs/ADDONS.md): the repository's index,
+                          downloading and checking, zip and folder installs, records in addons.json
+    ExtensionHost.cs      Runs each enabled extension in a hidden WebView2 of its own on its own
+                          origin, answers its API, and runs the metadata pass over the library
+    ThemeService.cs       Lists the themes folder, keeps the bundled theme in step, watches for edits
     ShippedFiles.cs       Reads ui/, themes/ and vortex-bridge/ back out of the exe, where they ship    TrailerCache.cs       Keeps a copy of each trailer the page plays, capped, oldest out first
     ActivityStore.cs      The play sessions: activity.json, plus one readings file per session
     ActivityService.cs    Records each sitting and samples the hardware while the game runs
@@ -127,6 +132,15 @@ Loungepad/
   categorised **multi-select Filter** (platform / status / favorites) and a single-select
   **Sort** (A–Z, Z–A, recently played, most played, largest, smallest); **Y** resets both.
   LB/RB switches between Library, Collections and Settings.
+- **Add-ons** — Settings → Add-ons: community themes and extensions from the
+  [add-ons repository](https://github.com/sukumar-v/loungepad-addons), installed, updated and
+  removed from the launcher (`ui/addons.js`, `AddonService`). An extension is a manifest and a
+  JavaScript module; it runs in a hidden WebView2 controller on `https://<id>.loungepad.ext`
+  (`ExtensionHost`), served from its folder plus the runtime page in `ui/ext/`, with no bridge
+  and a CSP that allows nothing but its own module -- every request goes through `loungepad.fetch`,
+  which the host checks against the manifest's hosts. A metadata extension's `enrich(game)` is
+  called by the host's pass after the launcher's own, and what it returns lives on `Game.Ext`.
+  See [Add-ons](ADDONS.md).
 - **Actions** — Settings → Actions is a grid of the programs on this PC that we ship a pack of
   shortcuts for (the six big browsers, VLC, Spotify, Discord, File Explorer, RetroArch, PCSX2,
   Dolphin), plus **Everywhere** (volume, media keys, Show desktop, Alt+Tab, snapping, a

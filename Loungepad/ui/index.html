@@ -130,6 +130,9 @@
           <div class="detail-logo" id="detailLogo" hidden></div>
           <h1 id="detailTitleRow"><span id="detailFav" class="fav-star" style="display:none">★</span><span id="detailTitle">—</span></h1>
           <div class="detail-facts" id="detailFacts"></div>
+          <!-- What the extensions stored about the game, one line each, from the facts their
+               manifests contribute (addons.js). Empty for most games, and collapsed by :empty. -->
+          <div class="detail-ext-facts" id="detailExtFacts"></div>
           <p id="detailDesc"></p>
           <!-- Why the board rated it what it did, in the board's own words. Empty for most
                games, and collapsed by :empty when it is. -->
@@ -564,6 +567,8 @@
 <script src="app.js"></script>
 <script src="radial.js"></script>
 <script src="actions.js"></script>
+<!-- Settings → Add-ons, and what the extensions stored on each game (docs/ADDONS.md). -->
+<script src="addons.js"></script>
 <!-- Play sessions, achievements and the Stats screen, after the rest: it reads app.js's globals. -->
 <script src="activity.js"></script>
 <!-- Settings → General → Import from Playnite. -->

@@ -29,6 +29,7 @@ let S = {
   emulation: null,                       // { emulators: [...], romFolders: [...], platforms: [{ id, name, shortName, extensions, hasCores }] }
   update: null,                          // { state, current, latest, progress, message, checkedAt, userAsked } -- see UpdateService
   actions: null,                         // { apps: [{ id, name, exes, icon, installed, custom, pinned, modified, actions: [...] }] } -- see actions.js
+  addons: null,                          // { items: [...], catalogue, launcher, passRunning } -- see addons.js
   xboxButton: null,                      // { gameBar, xboxMode, steam, steamRunning, steamBusy } -- who else reacts to the Xbox button; xboxMode/steam null where there is none
   rest: null,                            // { phase: awake|resting|asleep, paused, wake: { canSleep, modernStandby, signInOnWake, devices: [{ name, armed, kind }], lastWake } | null } -- see RestService and WakeInfo
   gamePaused: false,                     // the running game is frozen (the in-game menu's Pause, or rest mode)
@@ -1506,6 +1507,8 @@ let keyPick = null;                      // { onDone, mods: Set }
 let overlayTargetProcess = "";           // the exe behind the window a menu opened over; "" for none
 let overlayTargetIsGame = false;         // that window is the running game's (the wheel's Close spoke)
 let overlayOverLauncher = false;         // opened over Loungepad itself: the Close spoke exits Loungepad
+/* Settings → Add-ons' level (addons.js), declared here for the same reason as the actions state. */
+let addonsUi = { level: "grid", kind: "theme", key: null };
 // The sheets and the screen activity.js draws. Declared here rather than there for the same
 // reason as the three above: app.js reads them while it boots.
 let achState = null;                     // { gameId, idx, filter, sort, set, head, reveal, from }
@@ -2485,6 +2488,9 @@ function gameView(g) {
     // Achievements, for a template that wants to draw them: the counts as numbers, the share as
     // a whole-number string, and `achievements` as the thing to test with data-if.
     ...achievementView(g),
+    // What the extensions stored (addons.js): {{ext.<id>.<key>}}, and {{ext.<id>.<key>Text}} as
+    // the extension's manifest formats it. Empty for a game with nothing.
+    ext: extView(g),
   };
 }
 
@@ -3391,6 +3397,7 @@ function renderDetail() {
   renderDetailPlatform(g);
   $("detailDesc").textContent = g.description || "";
   renderDetailDescriptors(g);
+  renderDetailExtFacts(g);
   renderDetailStats(g);
 
   $("playLabel").textContent = !g.installed
@@ -3711,11 +3718,11 @@ function allSettingsRows() {
       : [theme && theme.author ? "by " + theme.author : null,
          theme && theme.version ? "v" + theme.version : null,
          theme && theme.description ? theme.description : null]
-        .filter(Boolean).join(" · ") || "Drop a theme folder into the themes directory to add one",
+        .filter(Boolean).join(" · ") || "More themes are under Add-ons",
     theme && theme.error ? theme.error : null,
     Object.fromEntries(themes.map(t => [t.id, t.name]))));
   rows.push({
-    name: "Themes folder", hint: "A theme is a folder with a theme.css and an optional theme.json. Edits apply as you save",
+    name: "Themes folder", hint: "A theme is a folder with a theme.css and an optional theme.json. Edits apply as you save. Community themes install from Add-ons",
     type: "action", label: "Open",
     action: () => send({ cmd: "openThemesFolder" }),
   });
@@ -4706,6 +4713,7 @@ const SETTINGS_TABS = [
   { id: "input",      label: "Controller" },
   { id: "keyboard",   label: "Keyboard" },
   { id: "actions",    label: "Actions" },
+  { id: "addons",     label: "Add-ons" },
   { id: "library",    label: "Library" },
   { id: "stats",      label: "Stats" },
   { id: "advanced",   label: "Advanced" },
@@ -4720,6 +4728,8 @@ function settingsRows() {
   // Actions is not a list of settings but a grid of apps that drills into lists; actions.js
   // builds whatever level is showing, in the same row shape.
   if (settingsTab === "actions") return actionsSettingsRows();
+  // Add-ons likewise: a grid of themes or extensions that drills into one add-on's page (addons.js).
+  if (settingsTab === "addons") return addonsSettingsRows();
   let cat = null;
   return allSettingsRows().filter(r => {
     if (r.section) cat = r.cat;
@@ -4732,6 +4742,7 @@ function setSettingsTab(id) {
   if (changed) { settingsTab = id; settingsIdx = 0; }
   // Always the grid on the way in, never a list left open from last time.
   if (changed && id === "actions") actionsTabReset();
+  if (changed && id === "addons") addonsTabReset();
   renderSettings();
   // Only when the rows are a different category's, never on the re-render every move costs.
   if (changed) pulse($("settingsScroll"));
@@ -4763,6 +4774,7 @@ function renderSettingsNav() {
     counts[cat] = (counts[cat] || 0) + 1;
   });
   counts.actions = shownApps().length;
+  counts.addons = addonItems("theme").concat(addonItems("extension")).filter(a => a.installed).length;
 
   // Built once; from then on only the active mark and the counts change, so the tab's own
   // transition runs and a node is never destroyed under a click.
@@ -4846,13 +4858,16 @@ function renderSettings() {
   const aLabel = !onRow ? "Select" : onRow.choices ? "Change" : onRow.type === "toggle" ? "Switch" : "Select";
   if (footEl) footEl.innerHTML = settingsPane === "nav"
     ? foot(["A", "Open"], ["B", "Back"], ["DpadV", "Category"])
+    : settingsTab === "addons" ? (addonsUi.level === "grid"
+        ? foot(["A", "Open"], ["Y", "Options"], ["LB", "Themes"], ["RB", "Extensions"], ["B", "Categories"])
+        : foot(["A", aLabel], ["B", "Back"]))
     : settingsTab !== "actions" ? foot(["A", aLabel], ["B", "Categories"])
     : actionsUi.level === "apps" ? foot(["A", "Open"], ["B", "Categories"])
     : actionsUi.level === "app" ? foot(["A", "Edit"], ["B", "Back"])
     : foot(["A", aLabel], ["B", "Back"]);
   const scroll = $("settingsScroll");
-  // The Actions grid is the same scroller laid out as tiles; everything else is rows.
-  scroll.classList.toggle("apps-grid", actionsGridMode());
+  // The Actions and Add-ons grids are the same scroller laid out as tiles; everything else is rows.
+  scroll.classList.toggle("apps-grid", actionsGridMode() || addonsGridMode());
 
   const focusables = rows.filter(r => !r.section);
   settingsIdx = Math.max(0, Math.min(settingsIdx, focusables.length - 1));
@@ -4866,22 +4881,27 @@ function renderSettings() {
   const nodes = [];
   let fi = -1;
   rows.forEach(r => {
+    // A header (the Add-ons tab strip) is a section to the counting and its own element to the
+    // drawing: built by the row, rebuilt whenever the shape is, never focusable.
+    if (r.header) { nodes.push({ header: r }); return; }
     if (r.section) { nodes.push({ section: r.section, bare: !!r.bare }); return; }
     fi++;
-    nodes.push({ row: r, idx: fi, html: r.tile ? actionsTileHtml(r) : settingsRowHtml(r, true) });
+    nodes.push({ row: r, idx: fi, html: r.tile ? (settingsTab === "addons" ? addonTileHtml(r) : actionsTileHtml(r)) : settingsRowHtml(r, true) });
   });
   // The Actions category's level is part of the shape: its list and its editor are different
-  // rows under one tab, and the level tag is what makes the drill-down rebuild.
-  const levelTag = settingsTab === "actions" ? `|${actionsUi.level}:${actionsUi.appId}:${actionsUi.actionId}` : "";
-  const shape = settingsTab + levelTag + "|" + nodes.map(n => n.section !== undefined ? "s:" + n.section : n.row.tile ? "t" : "r").join("|");
+  // rows under one tab, and the level tag is what makes the drill-down rebuild. Add-ons too.
+  const levelTag = settingsTab === "actions" ? `|${actionsUi.level}:${actionsUi.appId}:${actionsUi.actionId}`
+    : settingsTab === "addons" ? addonsLevelTag() : "";
+  const shape = settingsTab + levelTag + "|" + nodes.map(n => n.header ? "h" : n.section !== undefined ? "s:" + n.section : n.row.tile ? "t" : "r").join("|");
   if (scroll.__shape !== shape) {
     const keepTop = scroll.scrollTop;
     scroll.innerHTML = "";
-    nodes.forEach(n => scroll.appendChild(n.section !== undefined ? settingsSectionEl(n.section, n.bare) : n.row.tile ? actionsTileEl(n.idx) : settingsRowEl(n.idx)));
+    nodes.forEach(n => scroll.appendChild(n.header ? n.header.build() : n.section !== undefined ? settingsSectionEl(n.section, n.bare) : n.row.tile ? actionsTileEl(n.idx) : settingsRowEl(n.idx)));
     scroll.scrollTop = keepTop;
     scroll.__shape = shape;
   }
   nodes.forEach((n, i) => {
+    if (n.header) { const built = n.header.build(); if (scroll.children[i].innerHTML !== built.innerHTML) scroll.children[i].replaceWith(built); return; }
     if (n.section !== undefined) return;
     const el = scroll.children[i];
     el.dataset.focusKey = "setrow:" + settingsTab + ":" + n.idx;
@@ -5029,11 +5049,23 @@ function settingsInput(btn) {
       if (row) activateSettingRow(row);
       break;
 
+    // On an add-on's tile, the short menu: the same actions its page has, one press nearer.
+    case "Y":
+      if (row && row.addon) addonQuickMenu(row.addon);
+      break;
+
+    // The shoulders turn Settings → Add-ons' tabs, Themes and Extensions, and do nothing else here.
+    case "LB": case "RB":
+      if (settingsTab === "addons" && addonsUi.level === "grid") addonsSwitchKind(btn === "LB" ? -1 : 1);
+      break;
+
     // Back steps out to the categories first, and only leaves Settings from there. Inside the
-    // Actions category it first climbs back out of an app's list or an action's editor.
+    // Actions category it first climbs back out of an app's list or an action's editor; inside
+    // Add-ons, out of an add-on's page.
     case "B":
       if (onTab) switchView("library");
       else if (settingsTab === "actions" && actionsBack()) break;
+      else if (settingsTab === "addons" && addonsBack()) break;
       else enterSettingsPane("nav");
       break;
   }
@@ -6805,6 +6837,7 @@ function handleHostMessage(m) {
       // A state push carries the apps without their icons (see ActionsPayload on the host); the
       // icons that came with the last actions message are carried over by app id.
       S.actions = withActionIcons(m.actions, S.actions);
+      S.addons = m.addons || S.addons;
       S.xboxButton = m.xboxButton || null;
       // The wake facts ride along once the host has read them; a push from before that keeps
       // whatever the last rest message carried.
@@ -6921,6 +6954,16 @@ function handleHostMessage(m) {
       S.actions = withActionIcons(m.actions, S.actions);
       if (view === "settings" && settingsTab === "actions") renderSettings();
       refreshActionWheel();
+      break;
+    // The add-ons list changed: an install landed, the repository was read, an extension's state
+    // moved. The library is not rebuilt for it; a game's page is, since its facts may have come.
+    case "addons":
+      S.addons = m.addons || S.addons;
+      if (view === "settings" && settingsTab === "addons") renderSettings();
+      if (view === "detail") renderDetail();
+      break;
+    case "addonProgress":
+      onAddonProgress(m);
       break;
     case "actionCaptured":
       onActionCaptured(m.combo || null);
@@ -7130,6 +7173,45 @@ const mockActions = (() => {
   ] };
 })();
 const mockActionsPristine = JSON.parse(JSON.stringify(mockActions));
+
+/* Preview only: Settings → Add-ons' list, as the host's AddonsPayload gives it. Two themes
+   installed (the bundled one and a hand-dropped one), one extension running with options, one
+   theme and one extension available, one that needs a newer launcher. Installing walks the
+   download messages, then lands the add-on in the list. */
+const mockAddons = (() => {
+  const hltbFacts = [
+    { key: "main", label: "Main story", format: "hours" },
+    { key: "mainExtra", label: "Main + extras", format: "hours" },
+    { key: "completionist", label: "Completionist", format: "hours" },
+  ];
+  const items = [
+    { key: "theme:loungepad", id: "loungepad", kind: "theme", name: "Loungepad", description: "Full-bleed art, recents in a row, the grid on the way down", author: "Loungepad",
+      installed: true, bundled: true, enabled: true, source: "bundled", version: "4.6", available: null, update: false, installable: false, hosts: [] },
+    { key: "theme:night-shelf", id: "night-shelf", kind: "theme", name: "Night Shelf", description: "Shelf's rows under a darker wash, with larger titles", author: "couchplayer",
+      installed: true, bundled: false, enabled: true, source: "folder", canReload: true, version: "1.2.0", available: "1.3.0", update: true, installable: true, hosts: [],
+      homepage: "https://github.com/sukumar-v/loungepad-addons/tree/main/themes/night-shelf" },
+    { key: "theme:arcade", id: "arcade", kind: "theme", name: "Arcade", description: "Cabinet marquees and a scanline wash, for a ROM library", author: "pixelgrid",
+      installed: false, available: "0.9.0", installable: true, hosts: [], homepage: "https://github.com/sukumar-v/loungepad-addons/tree/main/themes/arcade" },
+    { key: "extension:howlongtobeat", id: "howlongtobeat", kind: "extension", name: "HowLongToBeat",
+      description: "How long each game takes to beat -- main story, with extras, completionist -- from howlongtobeat.com, on every game's page.", author: "Loungepad",
+      homepage: "https://github.com/sukumar-v/loungepad-addons/tree/main/extensions/howlongtobeat",
+      installed: true, bundled: false, enabled: true, source: "catalogue", version: "1.0.0", available: "1.0.0", update: false, installable: true,
+      hosts: ["howlongtobeat.com"], contributes: { metadata: { staleAfterDays: 30, retryAfterDays: 7, paceMs: 1500 }, gameFacts: hltbFacts },
+      settings: [{ id: "match-year", name: "Match the release year", type: "toggle", default: true, hint: "Only accept a result released the same year as the game, when both are known" }],
+      lastPass: { at: new Date(Date.now() - 40 * 60000).toISOString(), tried: 24, found: 19, failed: 0 },
+      status: { state: "running", startedAt: new Date(Date.now() - 3 * 3600000).toISOString(), hooks: ["activate", "enrich"], calls: 24, failures: 0 } },
+    { key: "extension:opencritic", id: "opencritic", kind: "extension", name: "OpenCritic", description: "Critic scores and the top-critic average from opencritic.com", author: "couchplayer",
+      installed: false, available: "0.3.0", installable: true, hosts: ["api.opencritic.com"] },
+    { key: "extension:protondb", id: "protondb", kind: "extension", name: "ProtonDB", description: "Each Steam game's ProtonDB tier, for a library that also runs on a Deck", author: "deckhand",
+      installed: false, available: "1.1.0", installable: false, needsLauncher: "1.10.0", hosts: ["www.protondb.com"] },
+  ];
+  const catalogue = { url: "https://raw.githubusercontent.com/sukumar-v/loungepad-addons/main/index.json", fetchedAt: new Date(Date.now() - 2 * 3600000).toISOString(), error: null, count: 4, busy: false, stale: false };
+  return { items, catalogue, passRunning: false, payload: () => ({ items, catalogue, launcher: "1.9.0", passRunning: mockAddons.passRunning }) };
+})();
+/* An extension's record on a game, as the host stores it: HowLongToBeat's hours. */
+function mockExt(main, mainExtra, completionist) {
+  return { howlongtobeat: { at: new Date().toISOString(), ext: "1.0.0", found: true, data: { id: 26286, name: "Hollow Knight", main, mainExtra, completionist, allStyles: mainExtra, reviewScore: 91, url: "https://howlongtobeat.com/game/26286" } } };
+}
 /* Everything that reacts to the Xbox button still on, so Windows and Steam can be walked. */
 const mockXboxButton = { gameBar: true, xboxMode: true, steam: true, steamRunning: true, steamBusy: false };
 
@@ -7461,11 +7543,11 @@ function mockHandle(msg) {
     });
     const now = Date.now();
     const games = [
-      g("Hollowmark: Second Ascent", "Steam", { playtimeMinutes: 4934, sessions: 41, favorite: true, trailerUrl: clip(), media: mediaHollow, lastPlayed: new Date(now - 86400000).toISOString(), sizeBytes: 64.2 * 1024 ** 3, installDir: "C:\\Games\\Steam\\steamapps\\common\\Hollowmark" }),
+      g("Hollowmark: Second Ascent", "Steam", { ext: mockExt(27, 41.5, 65.5), playtimeMinutes: 4934, sessions: 41, favorite: true, trailerUrl: clip(), media: mediaHollow, lastPlayed: new Date(now - 86400000).toISOString(), sizeBytes: 64.2 * 1024 ** 3, installDir: "C:\\Games\\Steam\\steamapps\\common\\Hollowmark" }),
       // No fetched metadata at all -- the facts row has to fall back to the platform and the
       // description has to collapse rather than leave a gap under the title.
       g("Ridgeline 84", "Epic", { playtimeMinutes: 660, sessions: 9, lastPlayed: new Date(now - 2 * 86400000).toISOString(), sizeBytes: 31 * 1024 ** 3, description: null, developer: null, publisher: null, genres: [], releaseDate: null, criticScore: null, criticSource: null, controllerSupport: null, esrbRating: null, pegiRating: null }),
-      g("Salt & Tide", "GOG", { playtimeMinutes: 2820, sessions: 30, favorite: true, trailerUrl: clip(), lastPlayed: new Date(now - 3 * 86400000).toISOString(), sizeBytes: 12 * 1024 ** 3, criticScore: 61, controllerSupport: "partial", esrbRating: "T", esrbDescriptors: ["Fantasy Violence", "Mild Language"], pegiRating: null }),
+      g("Salt & Tide", "GOG", { ext: mockExt(26.5, 41.5, 65.5), playtimeMinutes: 2820, sessions: 30, favorite: true, trailerUrl: clip(), lastPlayed: new Date(now - 3 * 86400000).toISOString(), sizeBytes: 12 * 1024 ** 3, criticScore: 61, controllerSupport: "partial", esrbRating: "T", esrbDescriptors: ["Fantasy Violence", "Mild Language"], pegiRating: null }),
       g("Foundry Nine", "Manual", { playtimeMinutes: 360, sessions: 5, lastPlayed: new Date(now - 4 * 86400000).toISOString(), sizeBytes: 8 * 1024 ** 3, trailerUrl: "https://www.youtube.com/watch?v=TEXsORWDFNY", criticScore: 38, controllerSupport: null, esrbRating: null, pegiRating: 7, pegiDescriptors: ["Violence"] }),
       g("Cassette Run", "Steam", { playtimeMinutes: 180, trailerUrl: clip(), sessions: 3, lastPlayed: new Date(now - 5 * 86400000).toISOString(), sizeBytes: 4 * 1024 ** 3 }),
       // enough recently-played entries to exercise the Continue carousel
@@ -7523,6 +7605,7 @@ function mockHandle(msg) {
       },
       emulation: mockEmulation,
       actions: mockActions,
+      addons: mockAddons.payload(),
       xboxButton: { ...mockXboxButton },
       mods: { installed: true, path: "C:\\Users\\couch\\AppData\\Local\\Programs\\Vortex\\Vortex.exe", version: "1.13.7", running: true },
       update: mockUpdate,
@@ -7758,6 +7841,56 @@ function mockHandle(msg) {
     mockHandle._emus = mockHandle._emus || {};
     mockHandle._emus[msg.id] = msg.emulatorId || null;
     pushState();
+  } else if (msg.cmd === "addonsRefresh") {
+    mockAddons.catalogue.busy = true;
+    handleHostMessage({ type: "addons", addons: mockAddons.payload() });
+    setTimeout(() => { mockAddons.catalogue.busy = false; mockAddons.catalogue.fetchedAt = new Date().toISOString(); handleHostMessage({ type: "addons", addons: mockAddons.payload() }); }, 900);
+  } else if (msg.cmd === "addonInstall") {
+    const a = mockAddons.items.find(x => x.key === msg.key);
+    if (!a) return;
+    [0, 35, 70, 99].forEach((p, i) => setTimeout(() => handleHostMessage({ type: "addonProgress", key: msg.key, state: "downloading", percent: p }), i * 300));
+    setTimeout(() => handleHostMessage({ type: "addonProgress", key: msg.key, state: "installing", percent: 100 }), 1300);
+    setTimeout(() => {
+      a.installed = true; a.version = a.available; a.update = false; a.source = "catalogue"; a.enabled = true;
+      if (a.kind === "extension") a.status = { state: "running", startedAt: new Date().toISOString(), hooks: ["enrich"], calls: 0, failures: 0 };
+      handleHostMessage({ type: "addonProgress", key: msg.key, state: "done", percent: 100 });
+      toast(`Installed ${a.name} ${a.version}`);
+      handleHostMessage({ type: "addons", addons: mockAddons.payload() });
+    }, 1700);
+  } else if (msg.cmd === "addonInstallFile") {
+    toast(`(preview) the ${msg.how === "folder" ? "folder" : "zip"} dialog would open on the TV`);
+  } else if (msg.cmd === "addonRemove") {
+    const a = mockAddons.items.find(x => x.key === msg.key);
+    if (!a) return;
+    if (a.available) { a.installed = false; a.version = null; a.update = false; a.status = null; a.canReload = false; }
+    else mockAddons.items.splice(mockAddons.items.indexOf(a), 1);
+    if (a.kind === "theme" && S.settings && S.settings.theme === a.id) { S.settings.theme = "loungepad"; applyTheme(); }
+    toast(`Removed ${a.name}`);
+    handleHostMessage({ type: "addons", addons: mockAddons.payload() });
+  } else if (msg.cmd === "addonEnable") {
+    const a = mockAddons.items.find(x => x.key === msg.key);
+    if (!a) return;
+    a.enabled = !!msg.on;
+    a.status = msg.on ? { state: "running", startedAt: new Date().toISOString(), hooks: ["enrich"], calls: 0, failures: 0 } : { state: "disabled" };
+    handleHostMessage({ type: "addons", addons: mockAddons.payload() });
+  } else if (msg.cmd === "addonFetchNow") {
+    const a = mockAddons.items.find(x => x.key === msg.key);
+    mockAddons.passRunning = true;
+    handleHostMessage({ type: "addons", addons: mockAddons.payload() });
+    setTimeout(() => {
+      mockAddons.passRunning = false;
+      if (a) a.lastPass = { at: new Date().toISOString(), tried: 24, found: 19, failed: 0 };
+      handleHostMessage({ type: "addons", addons: mockAddons.payload() });
+    }, 1500);
+  } else if (msg.cmd === "addonReload" || msg.cmd === "addonRestart") {
+    toast(`(preview) ${msg.cmd === "addonReload" ? "reloaded" : "restarted"}`);
+    handleHostMessage({ type: "addons", addons: mockAddons.payload() });
+  } else if (msg.cmd === "addonDevTools") {
+    toast("(preview) the extension's developer tools would open");
+  } else if (msg.cmd === "addonOpenHomepage") {
+    toast("(preview) would open the homepage in the browser");
+  } else if (msg.cmd === "addonsOpenFolder") {
+    toast(`(preview) would open the ${msg.kind === "extension" ? "extensions" : "themes"} folder`);
   } else if (msg.cmd === "setTitle") {
     mockHandle._titles = mockHandle._titles || {};
     mockHandle._titles[msg.id] = msg.title;

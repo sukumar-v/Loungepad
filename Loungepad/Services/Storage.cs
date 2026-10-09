@@ -19,6 +19,15 @@ public static class Paths
     /// because DataDir is mapped as a virtual host, so a theme's own files need no further
     /// plumbing to load.</summary>
     public static string ThemesDir { get; } = Path.Combine(DataDir, "themes");
+    /// <summary>One folder per installed extension (Settings → Add-ons; see docs/ADDONS.md). The
+    /// folder is what says an extension is installed; addons.json beside it only says where it
+    /// came from and whether it is enabled.</summary>
+    public static string ExtensionsDir { get; } = Path.Combine(DataDir, "extensions");
+    public static string AddonsFile { get; } = Path.Combine(DataDir, "addons.json");
+    /// <summary>Each extension's own small JSON store (loungepad.storage in its API).</summary>
+    public static string ExtensionDataDir { get; } = Path.Combine(DataDir, "extension-data");
+    /// <summary>A copy of each extension replaced or removed, as theme-backups is for themes.</summary>
+    public static string ExtensionBackupsDir { get; } = Path.Combine(DataDir, "extension-backups");
 
     /// <summary>
     /// WebView2's profile. Deliberately NOT under DataDir: WebView2 refuses to serve a virtual
@@ -37,6 +46,9 @@ public static class Paths
     /// <summary>Achievement icons, a few kilobytes each and a few thousand of them: a cache, under
     /// Local like the trailers, reached from the page as https://loungepad.data/achievements/…</summary>
     public static string AchievementIconsDir { get; } = Path.Combine(LocalDir, "achievements");
+    /// <summary>The add-ons repository's index as last fetched, and the icons of what it lists and
+    /// of what is installed, reached from the page as https://loungepad.data/addons/icons/…</summary>
+    public static string AddonsCacheDir { get; } = Path.Combine(LocalDir, "addons");
     public static string SettingsFile { get; } = Path.Combine(DataDir, "settings.json");
     public static string LibraryFile { get; } = Path.Combine(DataDir, "library.json");
     /// <summary>The last list of games the Steam account owned, so a start with no network keeps
@@ -315,6 +327,9 @@ public class LibraryStore
                     // was filled in by an older build, and the whole library is re-fetched on
                     // every single start.
                     s.MetadataVersion = old.MetadataVersion;
+                    // What the extensions stored (docs/ADDONS.md): fetched, so not on disk to
+                    // find, and the same silent loss as every field above if left out.
+                    s.Ext = old.Ext;
                     // Just installed. The lite pass an uninstalled Steam game gets (see
                     // MetadataService) stops at the cover and the tile; clearing the stamp is
                     // what fetches the hero, the backdrop and the wordmark now that there is a

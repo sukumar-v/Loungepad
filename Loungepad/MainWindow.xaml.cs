@@ -29,6 +29,10 @@ public partial class MainWindow : Window
     private IntPtr _displayStateNotification;
     private readonly CursorService _cursor;
     private readonly ThemeService _themes = new();
+    /// <summary>Community themes and extensions (docs/ADDONS.md): the catalogue and installer, and
+    /// the runtime that keeps the enabled extensions running in hidden WebViews of their own.</summary>
+    private readonly AddonService _addons;
+    private readonly ExtensionRuntime _extensions;
     private readonly WindowService _windows;
     private readonly UpdateService _updates;
     private readonly RestService _rest;
@@ -60,6 +64,10 @@ public partial class MainWindow : Window
         _settings.Load();
         InputLog.Sink = Log.Info;
         _library.Load();
+        _addons = AddonService.ForApp(() => _settings.Settings.AddonsIndexUrl);
+        _addons.Load();
+        _addons.Sweep();
+        _extensions = new ExtensionRuntime(_addons, _library, () => _settings.Settings, Dispatcher, Paths.ExtensionDataDir);
 
         _keyboard = new VirtualKeyboardService(_settings);
         _cursor = new CursorService(_settings);
@@ -198,7 +206,7 @@ public partial class MainWindow : Window
             _hid.SetQuiet(false);
             if (_displayStateNotification != IntPtr.Zero) NativeMethods.UnregisterPowerSettingNotification(_displayStateNotification);
             if (_hwnd != IntPtr.Zero) NativeMethods.WTSUnRegisterSessionNotification(_hwnd);
-            _kb?.Close(); _bridge?.Shutdown(); _gamepad.Dispose(); _serviceInput.Dispose(); _hid.Dispose(); _cursor.Dispose(); _tray?.Dispose(); _updates.Dispose();
+            _kb?.Close(); _bridge?.Shutdown(); _extensions.Dispose(); _gamepad.Dispose(); _serviceInput.Dispose(); _hid.Dispose(); _cursor.Dispose(); _tray?.Dispose(); _updates.Dispose();
         };
 
         try
@@ -408,7 +416,7 @@ public partial class MainWindow : Window
         };
         core.NewWindowRequested += (_, e) => e.Handled = true;
 
-        _bridge = new UiBridge(this, core, _settings, _library, _displays, _scanner, _launcher, _keyboard, _windows, _themes, _updates);
+        _bridge = new UiBridge(this, core, _settings, _library, _displays, _scanner, _launcher, _keyboard, _windows, _themes, _updates, _addons, _extensions);
         // Saving a theme file should show up in the launcher, not after a restart.
         _themes.Changed += () => Dispatcher.BeginInvoke(() => _bridge?.PushThemes());
         _themes.Watch();
@@ -474,9 +482,12 @@ public partial class MainWindow : Window
             try
             {
                 var rel = Uri.UnescapeDataString(uri.AbsolutePath).TrimStart('/');
+                // Neither the player nor the extension runtime is served on the page's own origin:
+                // each is a page meant for a second origin (see ExtensionHost for ext/).
                 var allowed = rel.Length > 0
                     && !rel.Split('/').Any(s => s is "" or "." or ".." || s.Contains('\\'))
-                    && !(folder == "ui/" && rel.StartsWith("player/", StringComparison.OrdinalIgnoreCase));
+                    && !(folder == "ui/" && (rel.StartsWith("player/", StringComparison.OrdinalIgnoreCase)
+                                             || rel.StartsWith("ext/", StringComparison.OrdinalIgnoreCase)));
                 var body = allowed ? ShippedFiles.ReadAllBytes(folder + rel) : null;
                 if (body is null)
                 {
@@ -518,6 +529,9 @@ public partial class MainWindow : Window
     {
         ["trailers"] = Paths.TrailersDir,
         ["achievements"] = Paths.AchievementIconsDir,
+        // The add-on icons: what the repository lists and what is installed, copied out of each
+        // folder (AddonService). The extension folders themselves are never served.
+        ["addons"] = Paths.AddonsCacheDir,
     };
 
     /// <summary>
@@ -539,6 +553,10 @@ public partial class MainWindow : Window
     /// <summary>Whether one of the pad-driven overlays (the Power Wheel, the in-game menu) is up
     /// in front of whatever was running. The bridge only pushes live hardware readings then.</summary>
     public bool OverlayActive => _overlayActive;
+
+    /// <summary>The window's handle, made if it has not been yet: the extensions' hidden WebViews
+    /// are children of it (ExtensionHost), never shown and never sized.</summary>
+    public IntPtr WindowHandle => _hwnd != IntPtr.Zero ? _hwnd : new System.Windows.Interop.WindowInteropHelper(this).EnsureHandle();
 
     /// <summary>Files up to this size are read whole; anything larger is streamed off disk.</summary>
     private const long ReadWholeBelow = 8 * 1024 * 1024;

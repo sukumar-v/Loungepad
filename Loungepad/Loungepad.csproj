@@ -13,7 +13,7 @@
     <RootNamespace>Loungepad</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Loungepad.ico</ApplicationIcon>
-    <Version>1.8.0</Version>
+    <Version>1.9.0</Version>
   </PropertyGroup>
 
   <ItemGroup>

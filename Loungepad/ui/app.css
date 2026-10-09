@@ -1548,6 +1548,45 @@ body.overlay-mode #overlay-actions { background: color-mix(in srgb, var(--bg) 74
 .app-name { max-width: 100%; font-size: 20px; font-weight: 600; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .app-sub { font-size: 15px; color: color-mix(in srgb, var(--ink) 45%, transparent); text-align: center; }
 
+/* ---- Settings → Add-ons (addons.js) ----
+   The same grid as Actions, with the tab strip and the two headings laid across the whole width.
+   An add-on's icon is a picture rather than an extracted program icon, so it sits in a rounded
+   box of its own; a badge in the tile's corner says Update or In use without a second line. */
+.settings-scroll.apps-grid > .set-section, .settings-scroll.apps-grid > .addons-tabs { grid-column: 1 / -1; }
+.settings-scroll.apps-grid > .set-section { padding-top: 10px; }
+.addons-tabs { display: flex; align-items: center; gap: 10px; padding: 2px 0 4px; }
+.addon-tab {
+  display: flex; align-items: center; gap: 12px; padding: 12px 22px; border-radius: 999px; cursor: pointer;
+  font-size: 20px; font-weight: 500; color: color-mix(in srgb, var(--ink) 55%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ink) 12%, transparent);
+  transition: background var(--t-focus) linear, color var(--t-focus) linear, border-color var(--t-focus) linear;
+}
+.addon-tab:hover { color: var(--ink); }
+.addon-tab.active { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--ink); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+.addon-tab-count { font-family: "IBM Plex Mono", monospace; font-size: 14px; color: color-mix(in srgb, var(--ink) 34%, transparent); }
+.addon-tab.active .addon-tab-count { color: color-mix(in srgb, var(--accent) 80%, transparent); }
+.addons-tabs-hint { margin-left: auto; display: flex; align-items: center; gap: 6px; opacity: 0.7; }
+.addons-tabs-hint .btn-icon { height: 30px; }
+.app-icon.addon-icon { border-radius: 18px; background-color: color-mix(in srgb, var(--ink) 6%, transparent); background-size: 70%; }
+.addon-badge {
+  position: absolute; top: 10px; right: 10px; padding: 3px 9px; border-radius: 999px;
+  font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--on-accent, var(--bg-deep)); background: var(--accent);
+}
+.addon-badge.quiet { color: color-mix(in srgb, var(--ink) 70%, transparent); background: color-mix(in srgb, var(--ink) 10%, transparent); }
+.app-sub.accent { color: var(--accent); }
+.app-sub.muted { opacity: 0.6; }
+.addon-row-icon { width: 44px; height: 44px; border-radius: 12px; background: color-mix(in srgb, var(--ink) 6%, transparent) center / 70% no-repeat; }
+.set-text.danger { color: var(--danger, #e06060); }
+
+/* What the extensions stored, under the facts on a game's page: the source's name, then each
+   fact as its value and its label. Styled as the facts line is, a size down. */
+.detail-ext-facts { display: flex; flex-direction: column; gap: 6px; margin-top: 2px; }
+.detail-ext-facts:empty { display: none; }
+.ext-line { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; font-size: 17px; color: color-mix(in srgb, var(--ink) 62%, transparent); }
+.ext-src { font-family: "IBM Plex Mono", monospace; font-size: 13px; letter-spacing: 0.12em; text-transform: uppercase; color: color-mix(in srgb, var(--ink) 40%, transparent); margin-right: 4px; }
+.ext-fact b { font-weight: 600; color: color-mix(in srgb, var(--ink) 88%, transparent); }
+
 /* An action's row: its keys as caps, its button beside them. */
 .set-value .keys .btn-icon { height: 32px; }
 .set-value .keys .combo-plus { margin: 0 5px; font-size: 18px; }

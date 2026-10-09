@@ -1,6 +1,6 @@
 # Loungepad user guide
 
-[README](../README.md) · [User guide](GUIDE.md) · [Themes](THEMES.md) · [Development](DEVELOPMENT.md)
+[README](../README.md) · [User guide](GUIDE.md) · [Themes](THEMES.md) · [Add-ons](ADDONS.md) · [Development](DEVELOPMENT.md)
 
 Everything Loungepad does, in detail. The [README](../README.md) is the short version.
 
@@ -9,6 +9,7 @@ Everything Loungepad does, in detail. The [README](../README.md) is the short ve
 - [Your library, found automatically](#your-library-found-automatically)
 - [Emulators and ROMs](#emulators-and-roms)
 - [Mods](#mods)
+- [Add-ons: themes and extensions](#add-ons-themes-and-extensions)
 
 ## Install
 
@@ -308,3 +309,39 @@ Downloads go through Vortex's own command line (`Vortex.exe --install <link>`). 
 mods into the game folder itself, so the game launches exactly as it did before; nothing about
 the launch changes. Mods for emulated games, and mod managers other than Vortex, are not
 supported.
+
+## Add-ons: themes and extensions
+
+**Settings → Add-ons** is where themes and extensions made by other people are found, installed,
+updated and removed, from the sofa. Two tabs, **Themes** and **Extensions**, switched with LB and
+RB; each shows what is installed first and what the community repository has under it.
+
+- **A** on a tile opens the add-on's page: what it is, who made it, what it may reach, and then
+  the rows that act on it — Install or Update, Use this theme, an extension's Enabled switch and
+  its own options, Fetch now, Remove. **Y** on a tile is the short menu with the same actions.
+- **Install from a file** takes a zip, or a folder on this PC, for a theme or extension that is
+  not in the repository — your own, while you write it. A folder install keeps a **Reload**
+  row, so an edit there is one press away from being seen.
+- **Refresh** reads the repository's list again; it is read on its own every few hours.
+
+**A theme** restyles the launcher. It cannot run code. Once installed it is picked under
+Settings → Appearance like the built-in ones, and its colour, hints and options live there too.
+
+**An extension** adds something Loungepad does not do on its own. The first kind is a metadata
+source: a small script that looks up each game somewhere and hands Loungepad a few facts, which
+appear under the facts on the game's page (and a theme can draw them wherever it likes). After
+every scan Loungepad asks the extension about the games it has no fresh answer for, a game at a
+time; **Fetch now** on the extension's page asks about all of them again.
+
+An extension runs in a sandbox of its own, the way the YouTube player does: it can send requests
+only to the hosts its page lists, and it cannot read your settings, your files or your accounts,
+start anything, change a setting, or draw on the screen. Before one is installed, Loungepad says
+what it reaches.
+
+The first extension is **HowLongToBeat**: how long each game takes to beat — the main story, with
+extras, completionist — from [howlongtobeat.com](https://howlongtobeat.com). Install it under
+Settings → Add-ons → Extensions; the hours appear on each game's page as they are found.
+
+Writing one, and adding it to the repository at
+[github.com/sukumar-v/loungepad-addons](https://github.com/sukumar-v/loungepad-addons), is in
+[Add-ons](ADDONS.md).

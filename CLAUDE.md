@@ -2530,3 +2530,52 @@ Stop the scrolled grid from clipping through the All games header
   release. A `dotnet build` launcher cannot authenticate the installer. The Xbox pad here is paired
   over Bluetooth LE and shows in no XInput slot unless powered on; the DualSense on USB is what the
   worker's "controller present" was.
+
+## Add-ons: community themes and extensions (1.9.0)
+
+- **Built on the branch `community-addons`** (Oct 9 2026, off main at dfccd9c). `docs/ADDONS.md` is
+  the design and the author's guide; read it first. The seed of the separate repository the user
+  will maintain is `addons-repo/` (README, `index.json`, `tools/build-index.mjs`, the workflow,
+  `extensions/howlongtobeat`); nothing in the launcher's build reads it.
+- **An extension runs in a hidden WebView2 controller of its own** (`ExtensionHost`), a child of
+  the main window's HWND, `IsVisible=false`, on `https://<id>.loungepad.ext`, served from
+  `%APPDATA%\Loungepad\extensions\<id>` plus `ui/ext/runtime.js` out of the exe. The page's CSP is
+  `default-src 'none'; script-src 'self'; connect-src 'none'`: a direct `fetch` from the page is
+  refused by the browser (checked over CDP), and the only way out is `chrome.webview.postMessage`
+  to that controller, where `ExtensionApi` checks each call -- `fetch` against the manifest's
+  `permissions.hosts`, https only, redirects re-checked. `ui/ext/` is NOT served on loungepad.ui
+  (same rule as `player/`). One origin per extension, so the host knows who spoke from
+  `e.Source`; no broker page.
+- **The host drives metadata, the extension only answers** (`ExtensionRuntime.RunPassAsync`, after
+  the launcher's own pass and achievements, and on install, enable and Fetch now): one game at a
+  time, `paceMs` apart, `enrich(game)` with a 60 s timeout, saved every 20 s, five failures in a
+  row stop it. What comes back lives on `Game.Ext[<id>]` (`ExtRecord`: at, ext version, found,
+  data), carried by `MergeScanned`. A hidden page's timers are throttled, which is why an
+  extension must never schedule its own work.
+- **The pass waits for the sync that attach started** (`_syncInFlight`): the extensions start at
+  `ready`, and a quick metadata pass used to reach the extension pass before any host was running.
+- **`minLauncher` is checked against the csproj version.** The first e2e run showed "Needs
+  Loungepad 1.9.0" on every tile because the build was still 1.8.0: a feature that ships a new
+  manifest field needs the version bumped in the same change.
+- **The catalogue is `index.json` on the repository's `main`**, cached six hours under
+  `%LOCALAPPDATA%\Loungepad\addons`, every file downloaded and hashed against it before anything is
+  put in place (`AddonService`). `AppSettings.AddonsIndexUrl` overrides it; an http base is accepted
+  only when the index itself came from loopback, which is how the harness and the e2e run. Icons
+  are copied into the cache (`icons\`) and served as `loungepad.data/addons/icons/…`; the extension
+  folders themselves are never served to the page.
+- **The e2e was a Debug build driven only through CDP** (`scratchpad/addons-e2e/e2e.mjs`, Node 22's
+  global WebSocket; `serve.mjs` standing in for raw.githubusercontent.com on 8941): install from
+  the page's own confirm, the extension up in under a second, 11 of 33 games answered in 25 s,
+  the facts under the game's page. The "What's new" card for the bumped version covers the
+  screenshots; the DOM reads are the evidence. The harness (`scratchpad/addons-harness`, 102
+  checks) overwrites the scratch index.json: regenerate it with `build-index.mjs --base
+  http://127.0.0.1:8941/repo/ --out …` before an e2e run.
+- **HowLongToBeat has no API.** As of Oct 2026 the site's page asks `/api/search/site/init?t=` for
+  a token and posts to `/api/search/site` with it in `x-auth-token`; the token is bound to the
+  User-Agent that asked, so the extension sends the same UA on both. It changed shape several
+  times before, which is the argument for an extension over launcher code. The site's search wants
+  every word, so a dashed or suffixed store title ("The Witcher 3: Wild Hunt — Remastered") is
+  searched again by its normalised key. `node test.mjs` in the extension's folder runs the module
+  against the live site (22 checks).
+- **A and Y, not B, on a tile.** The user's ask said B opens the menu; B is the one cancel key
+  everywhere (Oct 1 2026), so A opens the add-on's page and Y is the short menu, as on the library.

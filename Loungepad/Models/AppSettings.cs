@@ -98,6 +98,15 @@ public class AppSettings
     /// them to plain values (ThemeService.CleanSettingValues) and nothing more.
     /// </summary>
     public Dictionary<string, Dictionary<string, JsonElement>> ThemeSettings { get; set; } = new();
+    /// <summary>The extensions' own options, keyed by extension id then option id, exactly as
+    /// ThemeSettings is for themes (docs/ADDONS.md): the manifest declares the rows, the page
+    /// draws and checks them, the host keeps the values to plain ones, and the running extension
+    /// reads them as loungepad.settings.</summary>
+    public Dictionary<string, Dictionary<string, JsonElement>> ExtensionSettings { get; set; } = new();
+    /// <summary>Overrides where the add-ons index is read from (AddonService.DefaultIndexUrl).
+    /// Empty means the community repository; this is for testing an add-on against a local copy
+    /// of it, not something anyone need set.</summary>
+    public string AddonsIndexUrl { get; set; } = "";
 
     // Metadata providers
     // Nothing here needs setting. Steam games are keyed by app id, non-Steam games are looked up

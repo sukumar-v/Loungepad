@@ -611,7 +611,8 @@ function actionsTileEl(idx) {
   });
   el.addEventListener("click", () => {
     settingsIdx = idx; settingsPane = "rows";
-    const row = settingsRows()[idx];
+    // By focusable index, as settingsRowEl does: the Add-ons grid has headings between its tiles.
+    const row = settingsRows().filter(x => !x.section)[idx];
     if (row && row.action) row.action();
   });
   return el;

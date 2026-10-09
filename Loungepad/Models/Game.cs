@@ -149,6 +149,13 @@ public class Game
     public int MetadataVersion { get; set; }
 
     /// <summary>
+    /// What each extension stored about this game, by extension id (see docs/ADDONS.md): a
+    /// stamp and the data the extension returned, as it was. Kept across rescans by
+    /// MergeScanned like every other fetched field. Null until an extension has looked.
+    /// </summary>
+    public Dictionary<string, ExtRecord>? Ext { get; set; }
+
+    /// <summary>
     /// Whatever library.json holds that this build has no property for, kept and written back
     /// as it was. An older build run against the same data folder -- an updater test, a copy
     /// left on another drive -- used to read the file, drop every field it had never heard of

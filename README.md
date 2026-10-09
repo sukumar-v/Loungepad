@@ -98,6 +98,11 @@ Works with Xbox, PlayStation, Switch and other controllers. A keyboard and mouse
   [Vortex](https://www.nexusmods.com/site/mods/1).
 - **Themes.** Two built in, Loungepad and Shelf, with your choice of accent colour. Or
   [write your own](docs/THEMES.md) in CSS.
+- **Add-ons.** Community themes and extensions, installed from Settings → Add-ons. The first
+  extension is [HowLongToBeat](https://howlongtobeat.com): how long each game takes to beat, on
+  its page. Extensions run in a sandbox that can reach only the hosts they declare;
+  [write one](docs/ADDONS.md) in JavaScript, or add yours to the
+  [add-ons repository](https://github.com/sukumar-v/loungepad-addons).
 
 <table>
   <tr>
@@ -142,6 +147,8 @@ PlayStation and Switch pads use the buttons in the same places, and the hints on
 - **[User guide](docs/GUIDE.md):** every feature in detail, from store sign-ins to emulators,
   mods, and rest and sleep.
 - **[Themes](docs/THEMES.md):** how to write your own.
+- **[Add-ons](docs/ADDONS.md):** community themes and extensions, how to write an extension, and
+  the repository they come from.
 - **[Development](docs/DEVELOPMENT.md):** building, packaging and how it works inside.
 
 ## Questions, ideas and problems

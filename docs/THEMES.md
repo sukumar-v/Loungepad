@@ -1,10 +1,13 @@
 # Themes
 
-[README](../README.md) · [User guide](GUIDE.md) · [Themes](THEMES.md) · [Development](DEVELOPMENT.md)
+[README](../README.md) · [User guide](GUIDE.md) · [Themes](THEMES.md) · [Add-ons](ADDONS.md) · [Development](DEVELOPMENT.md)
 
 
 A theme is a folder under `%APPDATA%\Loungepad\themes` — **Settings → Appearance → Themes
 folder** opens it — with a `theme.css` in it and, optionally, a `theme.json` and a `theme.html`.
+Community themes install from **Settings → Add-ons**, from the
+[add-ons repository](https://github.com/sukumar-v/loungepad-addons) or from a zip or folder; a
+theme to share goes there with a pull request (see [Add-ons](ADDONS.md)).
 Nothing is compiled or copied: the launcher loads the files straight off disk, watches the folder
 and reloads on save, so editing a theme is editing a file. Loungepad, the theme the launcher opens
 on, ships this way too; Shelf is the built-in look with no theme applied.
@@ -29,7 +32,10 @@ on, ships this way too; Shelf is the built-in look with no theme applied.
   ```
 
   For a bundled theme the installed copy is refreshed whenever the shipped files change (the old
-  copy goes to `theme-backups`); `version` is what Settings shows.
+  copy goes to `theme-backups`); `version` is what Settings shows. A theme in the add-ons
+  repository gives `version` as `major.minor.patch` (it is how the launcher sees an update) and
+  may add `icon` (an svg, png, jpg or webp in the folder, for its tile), `homepage` and
+  `minLauncher`; `id` is the folder's name and need not be written.
 
 ### A theme's own options
 
