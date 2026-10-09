@@ -29,7 +29,8 @@ public partial class App : Application
         var waitFor = int.TryParse(ArgValue(e.Args, "--wait-for"), out var oldPid) ? oldPid : (int?)null;
         if (waitFor is { } pid) UpdateService.WaitForPrevious(pid);
 
-        _instanceMutex = new System.Threading.Mutex(true, "Loungepad_SingleInstance", out bool createdNew);
+        // The input service's worker opens this by name to know a launcher is running (LauncherPresence).
+        _instanceMutex = new System.Threading.Mutex(true, Loungepad.Input.LauncherPresence.Mutex, out bool createdNew);
         if (!createdNew && waitFor is not null)
         {
             try { createdNew = _instanceMutex.WaitOne(TimeSpan.FromSeconds(30)); }

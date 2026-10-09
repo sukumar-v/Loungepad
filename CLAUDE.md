@@ -2394,6 +2394,26 @@ Stop the scrolled grid from clipping through the All games header
   each connection began and ended, since both sides swallow pipe exceptions on purpose, and
   `--health-watch` prints it. `Input` is a WPF background priority (it waits for an empty Win32
   queue) and stays out; `ProcessPower.KeepResponsive` opts the worker out of power throttling.
+- **The worker never maps the Default desktop on its own while a launcher is running, connected or
+  not** (Oct 9 2026). The launcher maps the pad itself whenever it is not connected to the worker,
+  and the worker's own mapping beside it is two mappers on one press: Cross is the worker's left
+  click and the launcher's A, so a click on a Settings category also pressed the row the switch
+  had just highlighted. The watch showed the window: a second of `background input` after every
+  return from UAC or the lock screen, while the fresh Default worker waited for the reconnect (and
+  the whole time during the 23:20 build's flapping). The worker tells a launcher by its
+  single-instance mutex (`LauncherPresence.Mutex`, session-local, opened by name twice a second);
+  the health mode reads `launcher running, not connected`. **Reproduce the page in the preview
+  before blaming it**: `ui-preview` runs the same app.js, `activateSettingRow` and `handleInput`
+  can be wrapped from `javascript_tool` to log what fires, and a real mouse click on a category
+  there activated nothing with either input family in force, nor did hover-then-A.
+- **The Xbox pad on the sign-in screen is an open question** (Oct 9 2026): the DualSense works
+  there (a direct HID read), the Xbox pad works over UAC (also Winlogon) but not on the lock
+  screen, and the Winlogon worker's health says `slots=1`, so XInput reports it connected.
+  `--xinput-lock-probe <s>` prints per second whether the session is locked and whether the pad's
+  packet numbers change; run it, lock with the pad on, push the stick. Zero changes while locked
+  means XInput withholds the pad there and the fix is reading `IG_` HID pads directly on a locked
+  Winlogon worker; changes present means pad selection, and the next step is a health field for
+  which pad `SelectPad` follows.
 - **Packaging needs the dist launcher closed** (`package.ps1` deletes `dist\v1.8.0`, which it runs
   from) and the two scripts sequential (`package-input-service.ps1`, then `package.ps1`; both sign).
   `-NoRestore` only works while the last restore was for `win-x64`: a plain `dotnet build

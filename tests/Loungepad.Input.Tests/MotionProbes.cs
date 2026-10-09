@@ -437,6 +437,38 @@ internal static class MotionProbes
     /// health period's tick timing follows it. Run it while repeating whatever misbehaves.
     /// Read-only; it moves nothing.
     /// </summary>
+    /// <summary>Reads XInput at 125 Hz from this user process and prints, once a second, whether the
+    /// session is unlocked, which input desktop is current, which slots answer, how many packet
+    /// numbers changed and the largest left-stick deflection seen. Lock the PC and push the Xbox
+    /// stick while it runs: packet changes at zero behind a locked session, with the stick clearly
+    /// pushed, means XInput withholds the pad there while a direct HID read does not.</summary>
+    public static void XInputLock(int seconds)
+    {
+        Console.WriteLine($"Reading XInput for {seconds} s. Lock the PC, push the Xbox stick for a few seconds, unlock.");
+        var sw = Stopwatch.StartNew();
+        var packets = new uint[4];
+        using var tick = new MillisecondTimer();
+        while (sw.Elapsed.TotalSeconds < seconds)
+        {
+            int changes = 0, slots = 0, maxStick = 0, reads = 0;
+            double until = sw.Elapsed.TotalSeconds + 1;
+            while (sw.Elapsed.TotalSeconds < until)
+            {
+                for (int i = 0; i < 4; i++)
+                {
+                    try { if (NativeMethods.XInputGetStateAny(i, out var state) != 0) continue; slots |= 1 << i; reads++;
+                        if (state.dwPacketNumber != packets[i]) { changes++; packets[i] = state.dwPacketNumber; }
+                        maxStick = Math.Max(maxStick, Math.Max(Math.Abs((int)state.Gamepad.sThumbLX), Math.Abs((int)state.Gamepad.sThumbLY))); }
+                    catch (DllNotFoundException) { Console.WriteLine("no XInput"); return; }
+                }
+                for (int k = 0; k < 8; k++) tick.Wait();
+            }
+            string desktop;
+            try { using var d = DesktopApi.Open(); desktop = d.Name; } catch { desktop = "(not openable)"; }
+            Console.WriteLine($"{DateTime.Now:HH:mm:ss} unlocked={DesktopApi.SignedInAndUnlocked()?.ToString() ?? "unknown"} desktop={desktop} slots={Convert.ToString(slots, 2).PadLeft(4, '0')} reads={reads} packetChanges={changes} maxStick={maxStick}");
+        }
+    }
+
     public static void HealthWatch(int seconds)
     {
         Console.WriteLine($"Watching the agent for {seconds} s. Repeat the scenarios now.");

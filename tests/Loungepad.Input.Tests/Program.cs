@@ -52,6 +52,11 @@ internal static class Program
                 MotionProbes.AbsoluteMapping();
                 return 0;
             }
+            if (args.Length is 1 or 2 && args[0] == "--xinput-lock-probe")
+            {
+                MotionProbes.XInputLock(args.Length == 2 && int.TryParse(args[1], out int s) ? s : 90);
+                return 0;
+            }
             if (args.Length is >= 1 and <= 3 && args[0] == "--dispatcher-cadence-probe")
             {
                 MotionProbes.DispatcherCadence(inject: args.Skip(1).Contains("inject"), busy: args.Skip(1).Contains("busy"));
@@ -96,6 +101,7 @@ internal static class Program
             Profiles();
             Features();
             DesktopCheckCost();
+            LauncherPresenceCheck();
             NavigationFilter();
             Handoff();
             Mapping();
@@ -115,6 +121,21 @@ internal static class Program
     {
         if (!condition) throw new Exception("FAIL: " + name);
         _checks++; Console.WriteLine("PASS: " + name);
+    }
+
+    // The worker tells a running launcher by its single-instance mutex, opened by name in the same
+    // session, and defers the Default desktop to it while it exists.
+    private static void LauncherPresenceCheck()
+    {
+        string name = LauncherPresence.Mutex + ".check." + Environment.ProcessId;
+        Check(!Mutex.TryOpenExisting(name, out _), "no mutex reads as no launcher");
+        using (var held = new Mutex(true, name, out bool created))
+        {
+            Mutex? seen = null;
+            Check(created && Mutex.TryOpenExisting(name, out seen), "a held single-instance mutex reads as a running launcher");
+            seen?.Dispose();
+        }
+        Check(!Mutex.TryOpenExisting(name, out _), "a released mutex reads as the launcher gone");
     }
 
     // The worker runs the desktop check on every tick and every pipe request, so it has to cost

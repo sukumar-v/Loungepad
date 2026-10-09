@@ -496,6 +496,53 @@ staying `launcher connected` for as long as Loungepad is open, `ready` staying t
 `Clients` showing one `connected` and no `ended` until Loungepad is closed. Then the user's
 three symptoms should be gone with the stutter, and only then is feel worth asking about.
 
+### The 23:45 build measured: 8 ms ticks, a stable connection; two reports left (Oct 9, 00:00-00:30)
+
+`--health-watch 720` across the user's install of the `DA4EBC8B…` agent: from 23:43 every Default
+and Winlogon worker ticked **125 times a second, mean 8.00 ms, body 0.2-0.4 ms, clock wait
+7.8-7.9 ms, queue 0.03-0.1 ms**; the mode stayed `launcher connected` for as long as Loungepad was
+open and the `Clients` record shows one `connected` per worker and `ended: IOException: Desktop
+changed` only at desktop switches; `slots=1` once the Xbox pad was powered on and `suppressed`
+climbed to 57 with it in use (the navigation hook is dropping Windows' gamepad keys). The user:
+"everything looks good". One oddity for later: a single `map=288.57` ms on a Winlogon worker at
+23:44:34, most likely the secure keyboard's first show.
+
+**Report 1: the Xbox pad does nothing on the sign-in screen; the DualSense works there; the Xbox
+pad works over Task Manager and UAC.** The lock screen and UAC are both Winlogon workers, and the
+Winlogon heartbeats showed `slots=1`: XInput reports the pad connected there. Whether its readings
+*change* behind a locked session is the open question -- the DualSense comes through a direct HID
+read, which nothing gates. `--xinput-lock-probe <s>` polls XInput at 125 Hz from a user process
+and prints, per second, the session's lock state, the input desktop, the answering slots, the
+packet-number changes and the largest left-stick deflection: lock the PC with the Xbox pad on,
+push its stick, unlock, and read the locked seconds. Zero changes with the stick clearly pushed
+means XInput withholds the pad behind the lock screen and the fix is reading `IG_` HID pads
+directly on a locked Winlogon worker (an Xbox map for HID button numbers, the hat as the D-pad,
+the combined Z axis as the triggers); changes present means the fault is in pad selection and the
+next step is a health field for which pad `SelectPad` is following. Not measured yet: the pad was
+off when the first probe ran.
+
+**Report 2: with the mouse, clicking a Settings category also "clicks" a focused option.** The
+page alone does not do this. In the preview (`ui-preview`, the same app.js), with
+`activateSettingRow` and `handleInput` wrapped to log, hovering a row and then clicking a category
+with a real mouse event switched the category and activated nothing -- with the keyboard family
+in force and again with the PlayStation family in force, which is the real app's state and makes
+the page re-render Settings during the mousedown; hovering a row, hovering a category and then
+the A the host sends for a pad press also activated nothing (the highlight lands on row 0 of the
+new category, `settingsPane` staying `rows`). What does produce exactly this is two mappers on
+one press: the worker's own mapping (Cross is a left click there) plus the launcher's (Cross is
+A). That happens whenever the launcher is running but not connected -- the watch shows a second
+of `background input` after every return from UAC or the lock screen, while the fresh Default
+worker waits for the launcher to reconnect, and it was continuous during the 23:20 build's
+flapping. The click lands on the category, the A lands on the row the category switch just
+highlighted. Fix in the build below: the worker never maps the Default desktop on its own while
+a launcher is running, connected or not. It tells by the launcher's single-instance mutex
+(`LauncherPresence.Mutex`, session-local, opened by name at most twice a second; a mutex that
+exists but refuses to open counts as present), the health mode reads `launcher running, not
+connected` in that state, and the suite checks the mutex round trip. The launcher still maps the
+desktop itself whenever it is not connected, as it did before the service existed, so nothing
+is lost and nothing doubles. If the user still sees the double with this build, ask how they
+clicked (mouse, stick + Cross, or a touchpad tap) and reproduce that path in the preview first.
+
 ### Installer reset machine preferences during upgrade
 
 PowerShell `New-Item -Force` against an existing registry key cleared its values,
@@ -560,8 +607,9 @@ Older GUID build directories and extracted service folders can be stale.
 | --- | --- |
 | Signed launcher (Advanced category, two switches; Oct 8 23:20) | `dist\v1.8.0\Loungepad.exe` (SHA-256 `9FDB348F90DFD09C6F7F1FB20EB67353CCB123D668C08734B0E40B5DB9D30831`) |
 | Launcher ZIP | `dist\v1.8.0\Loungepad-v1.8.0-win-x64.zip` (`AA5E63004DC8D332DDDDC4218BC8D80442A27B106662FA319E2B959567FF8F16`) |
-| Service ZIP (session id read once, tick and requests at Normal, Clients record; Oct 8 23:45) | `dist\Loungepad.InputService-v1.8.0-x64.zip` (`E11563B139BEC793AD761136D057C31ED6B26F4146E242CCDC00F2FEF50E2AC8`) |
-| **Latest signed service package source** | `artifacts\input-service\3c3f1d4b7e95470192672a480d1fda3a\package` (agent exe `DA4EBC8B8E1399CD7F6F487D494120E45C2CF4C9814E90D1BBF6D64C38E8AAEC`; every binary and the catalog signed, Valid with timestamp, `Test-FileCatalog` Valid) |
+| Service ZIP (the worker defers the Default desktop to a running launcher; Oct 9 00:35) | `dist\Loungepad.InputService-v1.8.0-x64.zip` (`1F73100A52ABB5945FDF6748EFC476D28744B85E26E9102FEAC3BB569D2B15BF`) |
+| **Latest signed service package source** | `artifacts\input-service\3292e7e752ce40b086ec80d18ca86416\package` (agent exe `EBA4B45A878664813BF965F9359EC6019EC82E89AB5A2D97879381F8992F5C1C`; every binary and the catalog signed, Valid with timestamp, `Test-FileCatalog` Valid) |
+| 23:45 package (session id read once, tick and requests at Normal, Clients record), **installed as of 00:35**: 8 ms ticks confirmed | `artifacts\input-service\3c3f1d4b7e95470192672a480d1fda3a\package` (agent exe `DA4EBC8B…`) |
 | 23:20 package (tick at Send: starves the pipe, flapping connection), **installed as of 23:45** | `artifacts\input-service\b3e70fbdfd7e41cdaf4e4334789c99fa\package` (agent exe `E3AD9A6E…`) |
 | User's follow-up package (two switches, uninstall cleanup; 22:22), ticks 23 ms in background mode | `artifacts\input-service\4b6fe9856bcd4a0abacf4a8d2adde6a1\package` (agent dll `F131B3F3…`) |
 | 21:05 package (start-up fix, XInput probe off the tick, sticky errors) | `artifacts\input-service\ee572043bd704feabbd3bd63c8cc6aaf\package` (agent `089770B1…`, catalog Valid) |
@@ -581,13 +629,14 @@ launcher ZIP `F7604E35502DFB93E3A2C79F6A40144287F008331848426B4900188BEFFF3D9B`;
 with a timestamp, file version 1.8.0.0, 29 shipped files embedded. (Earlier launchers: 19:30
 `32304263…`, 18:20 `5FBFA8FD…`, 17:26 `E706A173…`.)
 
-**Installed as of 23:45: the 23:20 service (`b3e70fbd…`, agent `E3AD9A6E…`)**, whose tick at
-`Send` starves the pipe and makes the launcher reconnect every few seconds while the 14 ms body
-lasts (see "The watch"). The 23:45 package is NOT installed yet; the 23:20 `dist` launcher is
-running and is current. To install, in an administrator PowerShell:
+**Installed as of 00:35: the 23:45 service (`3c3f1d4b…`, agent `DA4EBC8B…`)**, measured at 8 ms
+ticks with a stable connection (see "The 23:45 build measured"). The 00:35 package is NOT
+installed yet; the 23:20 `dist` launcher is running and is current (the source change in
+App.xaml.cs since then names the same mutex through a constant and changes nothing). To install,
+in an administrator PowerShell:
 
 ```powershell
-cd 'C:\Users\Sukumar\Projects\Windows\Loungepad\artifacts\input-service\3c3f1d4b7e95470192672a480d1fda3a\package'
+cd 'C:\Users\Sukumar\Projects\Windows\Loungepad\artifacts\input-service\3292e7e752ce40b086ec80d18ca86416\package'
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install-input-service.ps1 -SourcePath .
 ```
 
@@ -655,11 +704,19 @@ passing end-to-end test or assume observer ordering relative to the SYSTEM hook.
    (see "The watch" above). Only then ask about feel. Until the service is updated the new launcher moves the pointer through the pipe as
    before (with the in-flight guard), and the old launcher with the new service gets the old
    behaviour too: nothing is dead and nothing doubles, whichever is updated first.
-2. Then the user's physical results: smooth motion at the same speed on the desktop, in Task
-   Manager, over UAC and on the sign-in screen, no extra highlight movement and no double
-   A/Cross, with the wired DualSense and the Xbox pad on the wireless adapter (power the pad
-   on against the adapter; it was paired over Bluetooth LE and absent from XInput), and the
-   built-in secure keyboard separately. Correlate each reproduction with desktop, worker
+2. The Xbox pad on the sign-in screen (report 1 under "The 23:45 build measured"): run
+   `dotnet run --project tests/Loungepad.Input.Tests --no-build -- --xinput-lock-probe 600`,
+   have the user power the pad on, lock the PC, push its stick for a few seconds, unlock, and
+   read the locked seconds' `packetChanges`. Zero means XInput withholds the pad behind the lock
+   screen (the DualSense's direct HID read is not gated) and the fix is a direct `IG_` HID read
+   on a locked Winlogon worker; changes mean pad selection, so add a health field for the pad
+   `SelectPad` follows. Then the user's physical results: smooth motion at the same speed on the
+   desktop, in Task Manager, over UAC and on the sign-in screen, no extra highlight movement and
+   no double A/Cross, with the wired DualSense and the Xbox pad on the wireless adapter (power
+   the pad on against the adapter; it was paired over Bluetooth LE and absent from XInput), and
+   the built-in secure keyboard separately. A Settings category click that also presses a row is
+   two mappers on one press (report 2): check the health mode first, and if it says `launcher
+   connected` while it happens, ask how the click was made and reproduce it in the preview. Correlate each reproduction with desktop, worker
    identity, mode, ControllerPresent, Ready, LastError and SuppressedNavigationEvents. Never
    record credentials or raw typed keys.
 3. If the health record shows 8 ms ticks in both modes and the stick still jumps, it is no

@@ -74,10 +74,16 @@ position and sent it through the pipe, and a tick that read the position before 
 arrived aimed from a stale base and threw that move away, which came out as slow, uneven motion
 on the desktop against full speed on secure screens. The agent announces this in its reply
 (`PointerOwner`); an older agent never does, and the launcher then moves the pointer through the
-pipe as before, so the two can be updated separately. When the launcher is closed or stops
-responding, the agent resumes background mouse/keyboard mapping after a neutral controller
-handoff. With the launcher closed this mapping applies across the desktop, including games;
-disable the feature if background controller-to-mouse mapping is unwanted. On Winlogon, it maps
+pipe as before, so the two can be updated separately. When the launcher is closed, the agent
+resumes background mouse/keyboard mapping after a neutral controller handoff. While a launcher
+is running but not connected -- an older build, a pipe it cannot reach, or the second between
+a desktop switch and its reconnect -- the Default worker maps nothing of its own: the launcher
+maps the pad itself whenever it is not connected, and two mappers on one press made Cross both a
+click and an A (Oct 2026). The worker tells a running launcher by its single-instance mutex
+(`LauncherPresence.Mutex`, session-local, opened by name at most twice a second) and reports
+`launcher running, not connected` as its mode. With the launcher closed this mapping applies
+across the desktop, including games; disable the feature if background controller-to-mouse
+mapping is unwanted. On Winlogon, it maps
 physical readings independently of the UI. No UI input pipe exists on Winlogon. Buttons and
 sticks must return to neutral when a new worker starts.
 XInput checks four slots. Sony, Switch and generic HID controllers use the existing parsers

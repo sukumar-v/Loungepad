@@ -33,6 +33,7 @@ internal sealed class DesktopWorker
     private double _xboxProbeMax;
     // Where a tick's time went over the current health period. Nothing short of these numbers
     // could say which call was slow in a SYSTEM process.
+    private bool _mapping, _launcherPresent; private long _nextLauncherCheck;
     private long _tickStarted; private int _ticks, _waits;
     private double _tickSum, _tickMax, _captureMax, _mapMax, _sendMax, _queueSum, _queueMax, _workMax, _waitSum; private int _sendShort;
 
@@ -188,9 +189,33 @@ internal sealed class DesktopWorker
         _captureMax = Math.Max(_captureMax, Ms(capture));
         if (!snapshot.XInputPresent && !snapshot.Hid.Present) _mapper!.ResetInput();
         long map = Stopwatch.GetTimestamp();
-        if (_gate.Accept(snapshot)) _mapper!.Update(snapshot, Now());
+        if (LauncherPresent(now))
+        {
+            // A launcher is running but not connected to this worker: an older build, a pipe it
+            // cannot reach, or the second between a desktop switch and its reconnect. It maps the
+            // pad itself the whole time, so this worker's own mapping would be a second A and a
+            // second pointer (Oct 8 2026, 23:50: a category click in Settings also pressed the row
+            // the click had just highlighted). The launcher owns the Default desktop while it runs.
+            if (_mapping) { _mapper!.ResetInput(); _gate.Reset(); _mapping = false; }
+        }
+        else if (_gate.Accept(snapshot)) { _mapper!.Update(snapshot, Now()); _mapping = true; }
         _mapMax = Math.Max(_mapMax, Ms(map));
         ReportHealth(now);
+    }
+
+    /// <summary>Whether a launcher is running in this session (its single-instance mutex exists),
+    /// asked at most twice a second. Only on Default: there is no launcher to defer to on Winlogon.
+    /// A mutex that exists but refuses to open still counts as a launcher.</summary>
+    private bool LauncherPresent(long now)
+    {
+        if (_desktop != "Default") return false;
+        if (now >= _nextLauncherCheck)
+        {
+            _nextLauncherCheck = now + 500;
+            try { _launcherPresent = Mutex.TryOpenExisting(LauncherPresence.Mutex, out var mutex); mutex?.Dispose(); }
+            catch (UnauthorizedAccessException) { _launcherPresent = true; }
+        }
+        return _launcherPresent;
     }
 
     private void ReportHealth(long now)
@@ -199,7 +224,7 @@ internal sealed class DesktopWorker
         _nextHealth = now + 1000;
         MachineInputSettings.ReportError(null);
         MachineInputSettings.ReportAgent(new(now, (int)DesktopApi.CurrentSession, Environment.ProcessId,
-            _desktop, _remoteActive ? "launcher connected" : "background input",
+            _desktop, _remoteActive ? "launcher connected" : _launcherPresent ? "launcher running, not connected" : "background input",
             _latest?.XInputPresent == true || _latest?.Hid.Present == true, _gate.Armed,
             _navigation?.BlockedCount ?? 0,
             TickMeanMs: _ticks == 0 ? 0 : Math.Round(_tickSum / _ticks, 2), TickMaxMs: Math.Round(_tickMax, 2),

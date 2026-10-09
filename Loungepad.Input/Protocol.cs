@@ -61,6 +61,10 @@ internal static class Protocol
 }
 
 internal sealed record ServiceStatus(bool Enabled, int? Session, string State, string? Error = null, AgentHealth? Agent = null);
+// The launcher's single-instance mutex (App.OnStartup). A session-local name, so the worker in the
+// same session can see whether a launcher is running without walking the process list: while one
+// is, the worker never maps the Default desktop on its own, connected or not (DesktopWorker).
+internal static class LauncherPresence { public const string Mutex = "Loungepad_SingleInstance"; }
 // The timing fields describe the worker's last health period (about a second): how far apart
 // its ticks ran and the slowest capture, mapping and injection inside one. They are how a
 // slow pointer is told apart from a slow loop without a debugger on a SYSTEM process.
