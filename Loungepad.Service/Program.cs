@@ -15,6 +15,21 @@ internal static class Program
 
     public static void Main(string[] args)
     {
+        if (args is ["--configure", "0" or "1", "0" or "1", _])
+        {
+            if (!new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator))
+                throw new UnauthorizedAccessException("Changing machine input support requires elevation");
+            MachineInputSettings.Save(MachineInputSettings.Parse(System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(args[3]))));
+            var features = new InputFeatures(args[1] == "1", args[2] == "1");
+            features.Save();
+            MachineInputSettings.ReportError(null);
+            if (features.Enabled)
+            {
+                using var service = new ServiceController(Protocol.ServiceName);
+                if (service.Status == ServiceControllerStatus.Stopped) service.Start();
+            }
+            return;
+        }
         if (args.Length is 1 or 2 && args[0] is "--enable" or "--disable")
         {
             if (!new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator))
@@ -22,7 +37,7 @@ internal static class Program
             using var key = Registry.LocalMachine.CreateSubKey(RegistryPath);
             if (args.Length == 2)
                 MachineInputSettings.Save(MachineInputSettings.Parse(System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(args[1]))));
-            key.SetValue("Enabled", args[0] == "--enable" ? 1 : 0, RegistryValueKind.DWord);
+            new InputFeatures(args[0] == "--enable", args[0] == "--enable").Save();
             MachineInputSettings.ReportError(null);
             if (args[0] == "--enable")
             {
@@ -85,7 +100,7 @@ internal sealed class InputService : ServiceBase
                     bool responding = child is not null && agent is not null && agent.Session == session
                         && Environment.TickCount64 - agent.Tick is >= 0 and < 3000;
                     Volatile.Write(ref _status, new(enabled, child is null ? null : checked((int)session),
-                        !enabled ? "disabled" : child is null ? "waiting for console" : !responding ? "Waiting for input agent"
+                        !enabled ? "disabled" : child is null ? "waiting for console" : !responding ? "Waiting for input agent or selected desktop"
                         : !agent!.ControllerPresent ? $"No controller detected ({agent.Desktop})"
                         : !agent.Ready ? "Release controller controls to start"
                         : $"Active on {agent.Desktop} ({agent.Mode})", enabled ? MachineInputSettings.Error() : null,

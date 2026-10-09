@@ -1,6 +1,7 @@
 #Requires -RunAsAdministrator
 [CmdletBinding()]
-param([string]$SourcePath = $PSScriptRoot, [string]$ExpectedPublisher, [string]$EnableProfile)
+param([string]$SourcePath = $PSScriptRoot, [string]$ExpectedPublisher, [string]$EnableProfile,
+    [ValidateSet(0,1)][int]$UacEnabled = 1, [ValidateSet(0,1)][int]$SignInEnabled = 1)
 $ErrorActionPreference = 'Stop'
 $serviceName = 'Loungepad.Service'
 $source = (Resolve-Path -LiteralPath $SourcePath).Path
@@ -86,7 +87,7 @@ if ($null -eq (Get-ItemProperty -LiteralPath $key -Name Enabled -ErrorAction Sil
 }
 Start-Service -Name $serviceName
 if ($EnableProfile) {
-    & (Join-Path $target 'Loungepad.Service.exe') --enable $EnableProfile
+    & (Join-Path $target 'Loungepad.Service.exe') --configure $UacEnabled $SignInEnabled $EnableProfile
     if ($LASTEXITCODE -ne 0) { throw 'Service installed, but enabling input failed.' }
 }
-Write-Host 'Installed. Configure Controller on UAC and sign-in screens in Loungepad Settings > General.'
+Write-Host 'Installed. Configure controller support in Loungepad Settings > Advanced > Secure desktop input (beta).'

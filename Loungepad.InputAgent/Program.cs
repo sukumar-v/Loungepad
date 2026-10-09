@@ -40,6 +40,7 @@ internal static class Program
     {
         Process? worker = null;
         string? name = null;
+        bool? context = null;
         long started = 0, retryAt = 0;
         int failures = 0;
         try
@@ -50,12 +51,16 @@ internal static class Program
                 {
                     using var desktop = DesktopApi.Open();
                     long now = Environment.TickCount64;
-                    if (name != desktop.Name)
+                    bool? currentContext = desktop.Name == "Winlogon" ? DesktopApi.SignedInAndUnlocked() : true;
+                    bool allowed = InputFeatures.Load().Allows(desktop.Name, currentContext);
+                    if (name != desktop.Name || context != currentContext || !allowed)
                     {
                         // New process per desktop: WPF render resources and HWNDs cannot be moved
                         // with SetThreadDesktop after creation, even on a fresh dispatcher thread.
                         if (worker?.HasExited == false) { worker.Kill(entireProcessTree: true); worker.WaitForExit(2000); }
                         worker?.Dispose(); worker = null; name = desktop.Name;
+                        context = currentContext;
+                        if (!allowed) MachineInputSettings.ClearAgent();
                         failures = 0; retryAt = 0;
                     }
                     if (worker?.HasExited == true)
@@ -64,7 +69,7 @@ internal static class Program
                         retryAt = now + Math.Min(30000, 1000 << failures);
                         worker.Dispose(); worker = null;
                     }
-                    if (worker is null && now >= retryAt && name is "Default" or "Winlogon")
+                    if (allowed && worker is null && now >= retryAt && name is "Default" or "Winlogon")
                     {
                         retryAt = now + 30000;
                         worker = DesktopApi.StartWorker(name);

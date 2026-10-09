@@ -87,11 +87,14 @@ internal static class Program
                 using var desktop = DesktopApi.Open();
                 DesktopApi.VerifyWorkerDesktop(desktop.Name);
                 Check(true, "STA worker accepts its startup desktop without rebinding");
+                if (desktop.Name == "Default")
+                    Check(DesktopApi.SignedInAndUnlocked() == true, "native WTS session state identifies the unlocked Default desktop");
                 try { DesktopApi.VerifyWorkerDesktop("NotTheWorkerDesktop"); throw new Exception("Wrong desktop accepted"); }
                 catch (InvalidOperationException) { Check(true, "incorrect worker desktop rejected"); }
                 return 0;
             }
             Profiles();
+            Features();
             NavigationFilter();
             Handoff();
             Mapping();
@@ -114,6 +117,22 @@ internal static class Program
     }
 
     // A pad on the cable and on Bluetooth at once is one pad, two of the same model are two.
+    private static void Features()
+    {
+        Check(InputFeatures.FromRegistry(true, null, null) == new InputFeatures(true, true), "legacy enabled installation retains both features");
+        Check(InputFeatures.FromRegistry(false, 1, 1) == new InputFeatures(false, false), "master disable stops both features");
+        Check(InputFeatures.FromRegistry(true, 1, 0) == new InputFeatures(true, false), "independent switches load without enabling sign-in");
+        foreach (bool uac in new[] { false, true })
+        foreach (bool signIn in new[] { false, true })
+        {
+            var features = new InputFeatures(uac, signIn);
+            Check(features.Enabled == (uac || signIn) && features.Allows("Default", true) == (uac || signIn)
+                && features.Allows("Winlogon", true) == uac && features.Allows("Winlogon", false) == signIn
+                && features.Allows("Winlogon", null) == (uac && signIn) && !features.Allows("Other", true),
+                $"desktop policy isolates UAC={uac}, sign-in={signIn}, including unknown session state");
+        }
+    }
+
     private static void OnePadPerController()
     {
         Check(HidPad.SamePhysicalPad(0x054C, 0x0CE6, "0C:27:56:5B:1C:5B", 0x054C, 0x0CE6, "0c27565b1c5b"), "the same serial in two spellings is one pad");

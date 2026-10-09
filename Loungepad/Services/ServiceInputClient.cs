@@ -24,6 +24,7 @@ internal sealed class ServiceInputClient : IDisposable
     private bool _connected;
     private Task? _inputTask, _statusTask;
     private bool _installed, _enabled, _olderAgent;
+    private InputFeatures _features = new(false, false);
     private bool _movePointer, _scrollWheel;
     private long _policyAt;
     private string? _operation;
@@ -38,7 +39,8 @@ internal sealed class ServiceInputClient : IDisposable
                 string state = Status.State switch { "agent running" => "Enabled", "disabled" => "Disabled",
                     "waiting for console" => "Waiting for a console session", "error" => "Error", _ => Status.State };
                 if (_olderAgent && _enabled && _connected) state += " (the installed service is older than this Loungepad: reinstall it to update)";
-                return new(_enabled, _installed, _operation ?? state, Status.Error, _operation is not null, _progress);
+                return new(_enabled, _installed, _operation ?? state, Status.Error, _operation is not null, _progress,
+                    _features.Uac, _features.SignIn);
             }
         }
     }
@@ -166,12 +168,13 @@ internal sealed class ServiceInputClient : IDisposable
     private async Task RefreshStatus()
     {
         bool installed = false, enabled = false;
+        var features = new InputFeatures(false, false);
         ServiceStatus status;
         try
         {
             installed = InputServiceSetup.IsInstalled();
-            using var key = Registry.LocalMachine.OpenSubKey(MachineInputSettings.RegistryPath);
-            enabled = installed && key?.GetValue("Enabled") is int value && value == 1;
+            if (installed) features = InputFeatures.Load();
+            enabled = features.Enabled;
             if (!installed) status = new(false, null, "Not installed");
             else
             {
@@ -187,8 +190,8 @@ internal sealed class ServiceInputClient : IDisposable
         bool changed;
         lock (_gate)
         {
-            changed = status != Status || _installed != installed || _enabled != enabled;
-            Status = status; _installed = installed; _enabled = enabled;
+            changed = status != Status || _installed != installed || _enabled != enabled || _features != features;
+            Status = status; _installed = installed; _enabled = enabled; _features = features;
         }
         if (changed) StatusChanged?.Invoke();
     }
@@ -199,25 +202,29 @@ internal sealed class ServiceInputClient : IDisposable
         StatusChanged?.Invoke();
     }
 
-    public async Task SetEnabled(bool enabled, AppSettings settings, bool installConfirmed)
+    public async Task SetEnabled(string feature, bool enabled, AppSettings settings, bool installConfirmed)
     {
+        if (feature is not ("uac" or "signIn")) throw new ArgumentException("Unknown input feature");
         bool installed = InputServiceSetup.IsInstalled();
         if (!installed && !enabled) { await RefreshStatus(); return; }
         if (!installed && !installConfirmed) throw new InputServiceInstallRequiredException();
+        var current = installed ? InputFeatures.Load() : new(false, false);
+        var features = feature == "uac" ? current with { Uac = enabled } : current with { SignIn = enabled };
         UpdateProfile(settings);
         string profile = Convert.ToBase64String(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(_profile, Protocol.Json)));
         ReportSetup(installed ? "Waiting for administrator approval" : "Preparing input service", null);
         try
         {
-            if (!installed) await InputServiceSetup.Install(profile, ReportSetup, _stop.Token);
+            if (!installed) await InputServiceSetup.Install(profile, features, ReportSetup, _stop.Token);
             else
             {
                 string exe = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), @"Loungepad\Input\Loungepad.Service.exe");
                 if (!File.Exists(exe)) throw new IOException("Input service files are missing. Uninstall the service and enable it again to reinstall.");
-                using var process = Process.Start(new ProcessStartInfo(exe, (enabled ? "--enable " : "--disable ") + profile)
+                using var process = Process.Start(new ProcessStartInfo(exe, $"--configure {(features.Uac ? 1 : 0)} {(features.SignIn ? 1 : 0)} " + profile)
                 { UseShellExecute = true, Verb = "runas", WindowStyle = ProcessWindowStyle.Hidden }) ?? throw new IOException("Could not open input service configuration");
                 await process.WaitForExitAsync();
-                if (process.ExitCode != 0) throw new IOException("Input service configuration failed");
+                if (process.ExitCode != 0) throw new IOException("Input service configuration failed. If the service is from an older build, install the matching updated service package.");
+                if (InputFeatures.Load() != features) throw new IOException("Input service did not save the requested feature switches");
             }
         }
         catch (Win32Exception ex) when (ex.NativeErrorCode == 1223) { throw new OperationCanceledException("Administrator approval was cancelled", ex); }
@@ -251,5 +258,6 @@ internal sealed class ServiceInputClient : IDisposable
     }
 }
 
-internal sealed record InputServiceUiStatus(bool Enabled, bool Installed, string State, string? Error, bool Busy, int? Progress);
+internal sealed record InputServiceUiStatus(bool Enabled, bool Installed, string State, string? Error, bool Busy, int? Progress,
+    bool UacEnabled, bool SignInEnabled);
 internal sealed class InputServiceInstallRequiredException : Exception { }

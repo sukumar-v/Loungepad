@@ -320,6 +320,7 @@ const ONB_PAGES = {
       lede: "After a restart or a wake, Windows asks you to sign in before Loungepad can come up. A password needs a keyboard; a PIN can be typed with the controller.",
       items: [
         { status: [status] },
+        { note: "Loungepad also offers experimental controller input on Windows lock/sign-in screens and UAC prompts, using your selected keyboard. You can enable each separately in Settings → Advanced → Secure desktop input (beta). Installing the optional input service asks for administrator approval." },
         {
           name: pin === true ? "Change your PIN" : "Set up a PIN",
           hint: pin === true

@@ -4058,7 +4058,6 @@ function allSettingsRows() {
   restWakeRows(wake).forEach(r => rows.push(r));
 
   rows.push({ section: "STARTUP & LOCK SCREEN", cat: "general" });
-  rows.push(...secureInputRows());
   rows.push(toggleRow("Launch Loungepad at login", "Registers a startup entry so the launcher is ready after wake or reboot",
     () => s.launchOnStartup, v => set(() => s.launchOnStartup = v)));
   rows.push({
@@ -4093,6 +4092,8 @@ function allSettingsRows() {
     name: "Exit Loungepad", type: "action", label: "Exit", danger: true,
     action: () => send({ cmd: "exitApp" }),
   });
+  rows.push({ section: "SECURE DESKTOP INPUT (beta)", cat: "advanced" });
+  rows.push(...secureInputRows());
   return rows;
 }
 
@@ -4515,13 +4516,14 @@ function updateRow() {
   return { name: u.current ? `Loungepad ${u.current}` : "Loungepad", hint, type: "action", label, action };
 }
 
-function askSecureInputInstall() {
+function askSecureInputInstall(feature) {
   if (S.secureInput?.busy) return;
+  if (feature !== "uac" && feature !== "signIn") return;
   askConfirm({
     title: "Install Loungepad input service?",
-    body: "Download and install the signed Loungepad input service on this PC? It runs in the background so your controller and selected keyboard work on UAC and Windows sign-in screens, even when Loungepad is closed. Windows will ask for administrator approval. Turning this setting off keeps the service installed; you can uninstall it here later.",
+    body: `Download and install the signed Loungepad input service and enable controller input on ${feature === "uac" ? "UAC prompts" : "Windows lock and sign-in screens"}? This experimental feature uses your selected keyboard and works even when Loungepad is closed. Windows will ask for administrator approval. The other option stays off. Turning both options off keeps the service installed; you can uninstall it here later.`,
     yesLabel: "Install and enable", icon: "download", danger: false,
-    onYes: () => send({ cmd: "setSecureInput", enabled: true, installConfirmed: true }),
+    onYes: () => send({ cmd: "setSecureInput", feature, enabled: true, installConfirmed: true }),
   });
 }
 
@@ -4529,21 +4531,25 @@ function secureInputRows() {
   const service = S.secureInput || {};
   const status = service.busy ? service.state + (service.progress == null ? "" : ` (${service.progress}%)`)
     : service.error || service.state || "Checking installation";
-  const rows = [toggleRow("Controller on UAC and sign-in screens",
-    "For this PC, even before login. Uses your selected keyboard. " + (service.installed
+  const row = (feature, name, hint) => toggleRow(name,
+    hint + " Experimental; uses your selected keyboard. " + (service.installed
       ? "Turning off keeps the input service installed. " : "Turning on offers to download and install the input service. ") + "Status: " + status,
-    () => !!service.enabled, enabled => {
+    () => !!(feature === "uac" ? service.uacEnabled : service.signInEnabled), enabled => {
       if (service.busy) return;
-      if (enabled && !service.installed) askSecureInputInstall();
-      else send({ cmd: "setSecureInput", enabled });
-    })];
+      if (enabled && !service.installed) askSecureInputInstall(feature);
+      else send({ cmd: "setSecureInput", feature, enabled });
+    });
+  const rows = [
+    row("uac", "Controller on UAC prompts", "Control Windows administrator approval prompts with your controller."),
+    row("signIn", "Controller on sign-in screens", "Control Windows lock and sign-in screens, including before login."),
+  ];
   if (service.installed) rows.push({
     name: "Uninstall Loungepad input service", type: "action", label: service.busy ? "Please wait" : "Uninstall", danger: true,
-    hint: "Removes the background service, its files and machine input settings. Loungepad and your library stay installed. Windows asks for administrator approval",
+    hint: "Removes the background service and XInputUWPFix startup scripts, and restores Windows controller navigation. Loungepad and your library stay installed. Windows asks for administrator approval",
     action: () => {
       if (service.busy) return;
       askConfirm({ title: "Uninstall Loungepad input service?",
-        body: "Controller input on UAC and sign-in screens will stop. The service, its files and machine input settings will be removed. Loungepad and your library will remain installed. You can reinstall the service by turning the setting on again.",
+        body: "Controller input on UAC and sign-in screens will stop. The service, its files and machine settings will be removed, along with XInputUWPFix startup entries and installed helper files. Windows controller navigation will be restored. Loungepad and your library will remain installed. You can reinstall by turning either option on again.",
         yesLabel: "Uninstall", icon: "trash", danger: true,
         onYes: () => send({ cmd: "uninstallSecureInput", confirmed: true }),
       });
@@ -4683,6 +4689,7 @@ const SETTINGS_TABS = [
   { id: "actions",    label: "Actions" },
   { id: "library",    label: "Library" },
   { id: "stats",      label: "Stats" },
+  { id: "advanced",   label: "Advanced" },
 ];
 let settingsTab = "general";
 /* Which half of the screen has the highlight. Settings opens on the sidebar, so the first thing
@@ -6573,7 +6580,7 @@ let lastBatteryMsg = null;
 function handleHostMessage(m) {
   switch (m.type) {
     case "secureInputInstallRequired":
-      askSecureInputInstall();
+      askSecureInputInstall(m.feature);
       break;
     case "secureInput":
       S.secureInput = m.status;

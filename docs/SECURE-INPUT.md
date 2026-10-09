@@ -75,7 +75,18 @@ provider, automatic sign-in, or changes to Windows' secure-desktop policies are 
 
 ## Settings and selected keyboard
 
-Enable **Controller on UAC and sign-in screens** in **Settings → General → Startup & lock screen**.
+Open **Settings → Advanced → Secure desktop input (beta)**. **Controller on UAC prompts**
+and **Controller on sign-in screens** are independent machine-wide switches for secure
+screens. While either is enabled, the normal-desktop worker continues capturing input,
+syncing the selected keyboard/mappings and providing privileged input for elevated apps.
+Sign-in support covers lock and pre-login screens. The feature is experimental.
+Existing installations migrate the previous combined switch to both options with the same
+state. New installations enable only the option selected in the confirmation screen.
+Because Windows uses Winlogon for both UAC and sign-in, the supervisor checks the console
+session's authenticated user and WTS lock state to choose the appropriate switch. If the
+session state cannot be determined, Winlogon input requires both switches to be enabled.
+The matching updated service must be installed for separate switches to work; an older
+service will report a configuration error instead of silently enabling both.
 If the service is missing, Loungepad first asks whether to install it. **Install and enable**
 downloads the signed service package matching the launcher's version from its GitHub release,
 checks the SHA-256 digest, and asks for Windows administrator approval. Download progress and
@@ -88,10 +99,16 @@ publisher matching the launcher before registering anything. The package is copi
 protected staging directory and verified again before use. Missing release assets, download
 errors or invalid packages leave a retryable error instead of enabling the feature.
 
-Disabling the toggle keeps the service installed. **Uninstall Loungepad input service** appears
+Disabling either or both toggles keeps the service installed. **Uninstall Loungepad input service** appears
 only while Windows reports the service installed, including when it is stopped. It asks for
 confirmation and administrator approval, then removes the service, its protected files/backups
-and machine input settings. The launcher, library and ordinary user preferences are retained.
+and machine input settings. It also removes the originating user's and machine-wide
+`XInputUWPFix` Run entries, stops running XInputUWPFix helpers, and removes the identified
+helper executable and its companion batch files. Unrelated files in the containing directory
+are preserved; arbitrary download folders are not searched. Loungepad does not install
+XInputUWPFix separately. Its own navigation hook ends with the worker. If the legacy
+`ControllerToVKMapping\Enabled=0` workaround exists, uninstall removes that override to
+restore Windows' default controller navigation. The launcher, library and ordinary user preferences are retained.
 Enabling again offers a fresh installation. This machine-wide flag persists across reboot and
 defaults to **off** on manual installation. Closing Loungepad does not disable it.
 

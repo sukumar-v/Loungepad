@@ -69,6 +69,24 @@ internal static class DesktopApi
         using (token) { using var identity = new WindowsIdentity(token.DangerousGetHandle()); return identity.User; }
     }
 
+    public static bool? SignedInAndUnlocked()
+    {
+        uint session = (uint)Process.GetCurrentProcess().SessionId;
+        // No authenticated console user means the pre-login/sign-in screen.
+        if (!WTSQuerySessionInformation(IntPtr.Zero, session, 5, out var user, out _)) return null; // WTSUserName
+        try { if (string.IsNullOrEmpty(Marshal.PtrToStringUni(user))) return false; }
+        finally { WTSFreeMemory(user); }
+        if (!WTSQuerySessionInformation(IntPtr.Zero, session, 25, out var info, out int bytes)) return null; // WTSSessionInfoEx
+        try
+        {
+            // WTSINFOEXW's level DWORD precedes an 8-byte-aligned union. The first
+            // three DWORDs of LEVEL1 are SessionId, SessionState, SessionFlags.
+            if (bytes < 20 || Marshal.ReadInt32(info) != 1) return null;
+            return Marshal.ReadInt32(info, 16) switch { 0 => false, 1 => true, _ => null };
+        }
+        finally { WTSFreeMemory(info); }
+    }
+
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)] private struct STARTUPINFO
     {
         public int cb; public string? lpReserved, lpDesktop, lpTitle;
@@ -85,6 +103,8 @@ internal static class DesktopApi
     [DllImport("kernel32.dll")] internal static extern bool ProcessIdToSessionId(uint pid, out uint session);
     [DllImport("kernel32.dll", SetLastError = true)] internal static extern bool GetNamedPipeClientProcessId(SafePipeHandle pipe, out uint pid);
     [DllImport("wtsapi32.dll", SetLastError = true)] private static extern bool WTSQueryUserToken(uint session, out SafeAccessTokenHandle token);
+    [DllImport("wtsapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern bool WTSQuerySessionInformation(IntPtr server, uint session, int infoClass, out IntPtr buffer, out int bytes);
+    [DllImport("wtsapi32.dll")] private static extern void WTSFreeMemory(IntPtr memory);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern bool CreateProcess(string application, StringBuilder commandLine, IntPtr processAttributes, IntPtr threadAttributes, bool inherit, uint flags, IntPtr environment, string directory, ref STARTUPINFO startup, out PROCESS_INFORMATION process);
     [DllImport("kernel32.dll")] private static extern bool CloseHandle(IntPtr handle);
 }

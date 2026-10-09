@@ -1127,7 +1127,7 @@ public partial class MainWindow : Window
 
     internal ActionService Actions => _actions;
     internal InputServiceUiStatus SecureInputStatus => _serviceInput.UiStatus;
-    internal Task SetSecureInput(bool enabled, bool installConfirmed) => _serviceInput.SetEnabled(enabled, _settings.Settings, installConfirmed);
+    internal Task SetSecureInput(string feature, bool enabled, bool installConfirmed) => _serviceInput.SetEnabled(feature, enabled, _settings.Settings, installConfirmed);
     internal Task UninstallSecureInput() => _serviceInput.Uninstall();
 
     /// <summary>

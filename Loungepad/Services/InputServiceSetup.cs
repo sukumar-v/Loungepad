@@ -27,7 +27,7 @@ internal static class InputServiceSetup
         finally { CloseServiceHandle(manager); }
     }
 
-    public static async Task Install(string profile, Action<string, int?> report, CancellationToken ct)
+    public static async Task Install(string profile, InputFeatures features, Action<string, int?> report, CancellationToken ct)
     {
         string publisher = Publisher(); // fail unsigned dev builds before downloading anything
         string work = Path.Combine(Path.GetTempPath(), "Loungepad.InputService." + Guid.NewGuid().ToString("N"));
@@ -46,7 +46,8 @@ internal static class InputServiceSetup
             report("Waiting for administrator approval / installing", null);
             // The downloaded .ps1 is never executed. Installer code comes from this signed launcher.
             await Elevate("install-input-service.ps1", " -SourcePath " + Quote(files)
-                + " -ExpectedPublisher " + Quote(publisher) + " -EnableProfile " + Quote(profile));
+                + " -ExpectedPublisher " + Quote(publisher) + " -EnableProfile " + Quote(profile)
+                + $" -UacEnabled {(features.Uac ? 1 : 0)} -SignInEnabled {(features.SignIn ? 1 : 0)}");
             if (!IsInstalled()) throw new IOException("Windows did not register the input service");
         }
         finally
@@ -67,7 +68,8 @@ internal static class InputServiceSetup
 
     public static async Task Uninstall()
     {
-        await Elevate("uninstall-input-service.ps1", "");
+        string sid = System.Security.Principal.WindowsIdentity.GetCurrent().User!.Value;
+        await Elevate("uninstall-input-service.ps1", " -UserSid " + Quote(sid));
         if (IsInstalled()) throw new IOException("Windows still has the service registered; close service-management windows and try again");
     }
 

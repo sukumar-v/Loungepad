@@ -1,5 +1,46 @@
 # Loungepad v1.8.0 input service handoff
 
+## Follow-up: independent beta settings
+
+The latest source moves secure input into the final **Advanced** settings category under
+**Secure desktop input (beta)**, with separate UAC and sign-in toggles. `InputFeatures.cs`
+stores administrator-controlled `UacEnabled`/`SignInEnabled` alongside the legacy master
+`Enabled`; missing switches inherit the old combined state. The new service CLI is
+`--configure <0|1 UAC> <0|1 sign-in> <base64 profile>`; old `--enable`/`--disable` still set both.
+Default workers remain available while either option is enabled, preserving normal input
+and profile sync even with UAC off. On Winlogon, the supervisor uses WTS username and
+session lock state to distinguish unlocked-user UAC from locked/pre-login sign-in. Unknown
+state requires both flags. These changes require a matching service update.
+
+Uninstall also removes exact XInputUWPFix startup entries for the originating user and
+machine, stops its helper processes, and removes identified executable/companion batch
+files without deleting the surrounding directory. It clears the legacy navigation-disable
+override if present. The installer is still embedded in the launcher, so changing these
+scripts requires rebuilding the launcher as well as the service package. PIN onboarding
+now mentions the experimental option and its Advanced settings location.
+
+New checks: independent desktop-policy/migration cases in the C# suite, independent UI
+toggle/confirmation/onboarding cases in the Node suite, and
+`powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/input-service-uninstall.test.ps1`.
+The latter uses fake registry/process objects and disposable files; it does not uninstall
+the real service. Historical build paths/results below predate this follow-up.
+
+Follow-up build checkpoint: signed launcher at `dist\v1.8.0\Loungepad.exe`, signed
+service ZIP at `dist\Loungepad.InputService-v1.8.0-x64.zip`, extracted signed service
+package at `artifacts\input-service\4b6fe9856bcd4a0abacf4a8d2adde6a1\package`.
+Logs: `artifacts\launcher-advanced-build.log`, `artifacts\input-service-advanced-build.log`.
+Both signature checks and the service file catalog passed. All 78 C# checks, three
+desktop/session probe checks, Node UI checks, and isolated PowerShell cleanup checks passed.
+These packages were built but **not installed or published** during this follow-up.
+To update the existing service, run from that extracted package in administrator PowerShell:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install-input-service.ps1 -SourcePath .
+```
+
+This preserves existing settings. Then run the new signed launcher. Physical validation
+of both independent secure-screen switches and real uninstall cleanup remains pending.
+
 Checkpoint: October 8, 2026. Read this together with `docs/SECURE-INPUT.md`.
 This records the preceding development session; machine state and test results below are
 last verified observations, not a guarantee that the same processes are still running.

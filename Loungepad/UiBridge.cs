@@ -371,7 +371,7 @@ public class UiBridge
             }
 
             case "setSecureInput":
-                _ = SetSecureInputAsync(msg["enabled"]?.GetValue<bool>() == true, msg["installConfirmed"]?.GetValue<bool>() == true);
+                _ = SetSecureInputAsync(msg["feature"]?.GetValue<string>() ?? "", msg["enabled"]?.GetValue<bool>() == true, msg["installConfirmed"]?.GetValue<bool>() == true);
                 break;
             case "uninstallSecureInput":
                 if (msg["confirmed"]?.GetValue<bool>() == true) _ = UninstallSecureInputAsync();
@@ -2492,12 +2492,12 @@ public class UiBridge
     // ---- host -> UI pushes ----
 
     private bool _secureInputBusy;
-    private async Task SetSecureInputAsync(bool enabled, bool installConfirmed)
+    private async Task SetSecureInputAsync(string feature, bool enabled, bool installConfirmed)
     {
         if (_secureInputBusy) return;
         _secureInputBusy = true;
-        try { await _window.SetSecureInput(enabled, installConfirmed); PushToast(enabled ? "Secure input enabled for this PC" : "Secure input disabled; the service remains installed"); }
-        catch (InputServiceInstallRequiredException) { Push(new { type = "secureInputInstallRequired" }); }
+        try { await _window.SetSecureInput(feature, enabled, installConfirmed); PushToast($"Controller input for {(feature == "uac" ? "UAC" : "sign-in")} {(enabled ? "enabled" : "disabled")}; the service remains installed"); }
+        catch (InputServiceInstallRequiredException) { Push(new { type = "secureInputInstallRequired", feature }); }
         catch (OperationCanceledException) { PushToast("Input service setup cancelled"); }
         catch (Exception ex) { PushToast($"Secure input: {ex.Message}"); }
         finally { _secureInputBusy = false; PushSecureInput(); }
