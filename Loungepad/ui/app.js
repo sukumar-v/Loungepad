@@ -979,8 +979,10 @@ async function applyThemeMarkup() {
 
 /** Hand each screen to the theme's layout, or put it back if the theme has none. */
 function applyThemeLayout() {
-  ["library", "detail", "settings"].forEach(id =>
-    Theme.applyScreen(document.getElementById("screen-" + id), "screen-" + id));
+  ["library", "detail", "settings"].forEach(id => {
+    const screen = document.getElementById("screen-" + id);
+    if (Theme.applyScreen(screen, "screen-" + id)) armLayout(screen);
+  });
 }
 
 function applyTheme() {
@@ -1241,6 +1243,11 @@ function applyThemeSheet() {
     link.rel = "stylesheet";
     document.head.appendChild(link);
   }
+  // Drawn again once the sheet is in. The library is usually drawn before it has loaded, and a
+  // theme's own numbers -- how many recents its row holds (--continue-max), how wide a tile is --
+  // were then measured against the app's defaults until something else redrew it: a row of twelve
+  // in a theme cut for ten slid its icons off both sides of the screen.
+  link.onload = () => { if (link.getAttribute("href") === href && Array.isArray(S.games)) renderLibrary(); };
   link.setAttribute("href", href);
 }
 
@@ -8033,11 +8040,19 @@ function mockHandle(msg) {
     const set = mockAct.sets[msg.id];
     const items = set ? set.items : [];
     const pct = (a) => (typeof a.percent === "number" ? a.percent : 101);
+    const byDate = (a, b) => new Date(b.unlockedAt || 0) - new Date(a.unlockedAt || 0);
     const peek = !set ? null : {
-      recent: items.filter(a => a.unlocked).sort((a, b) => new Date(b.unlockedAt || 0) - new Date(a.unlockedAt || 0)).slice(0, 8),
+      recent: items.filter(a => a.unlocked).sort(byDate).slice(0, 8),
       rarest: items.filter(a => a.unlocked && typeof a.percent === "number").sort((a, b) => a.percent - b.percent).slice(0, 8),
       next: items.filter(a => !a.unlocked && !a.hidden).sort((a, b) => pct(b) - pct(a)).slice(0, 8),
+      list: null,
     };
+    if (peek) {
+      const U = items.filter(a => a.unlocked).sort(byDate);
+      const L = [...items.filter(a => !a.unlocked && !a.hidden).sort((a, b) => pct(b) - pct(a)), ...items.filter(a => !a.unlocked && a.hidden)];
+      const nL = Math.min(L.length, Math.max(20, 40 - U.length));
+      peek.list = [...U.slice(0, 40 - nL), ...L.slice(0, nL)];
+    }
     setTimeout(() => handleHostMessage({ type: "achievementsPeek", id: msg.id, set: peek }), 120);
   } else if (msg.cmd === "achievementsClose") {
     /* nothing to release in the preview */

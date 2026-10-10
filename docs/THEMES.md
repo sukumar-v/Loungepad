@@ -87,15 +87,22 @@ on a tile. No other name does anything, and a theme has no other way to make som
 | `options` | The game's menu, as Y on a tile |
 | `details` | The game's page |
 | `favorite` | Favorite it, or take it off |
-| `achievements` | Its achievements sheet |
+| `achievements` | Its achievements sheet, opened on the achievement `data-id` names when it has one |
 | `stats` | Its Stats sheet (sessions, playtime) |
 | `collect` | Add it to a collection |
-| `manage` | Its Manage sheet (on its page; anywhere else it opens the page) |
+| `manage` | Its Manage sheet |
+| `mods` | Its mods, through Vortex |
 | `media` | Open the gallery's item `data-index` in the viewer |
 | `library` | Open the game list on the tab `data-tab`: `installed`, `collection` (not installed), `all` or `favorites` |
 | `home` | Back from the game list to the library's home |
 | `search`, `filter`, `settings` | What View, X and Menu do on the library |
+| `add-game` | Add a game by hand |
 | `back` | What B does |
+
+A button can sit anywhere: in an item template (a `game-tile` whose root is `data-act="details"`
+opens the game's page on A instead of launching it), in a live region, or straight in a screen
+template, like a search button in the top bar or a rail of them beside the game list. One that
+is not about a game needs a `data-focus-key` when the same action appears twice on a screen.
 
 Highlighting a `media` button changes the picture behind the screen to that screenshot, or plays
 that film after a short beat, as the built-in gallery does. A button keeps its place under the
@@ -186,8 +193,8 @@ only the game in a live region fetches what isn't on the page yet.
 | `stats` | list of `{id, label, value}`: what a game's page shows, each only when it has something to say |
 | `score`, `scoreBand` | the Metacritic score, and `good`, `mixed` or `poor` for its colour |
 | `age` | `{board, label, image, descriptors}`: the ESRB or PEGI rating in the board Settings asks for. `image` is the board's mark, ready for an `<img src>`; `descriptors` is a list of `{text}` |
-| `ach` | achievements: `has`, `canHave`, `unlocked`, `total`, `locked`, `percent` (0–100), `done`, `score`, `totalScore`, `lastUnlock`, `loaded`, and three lists of up to eight: `recent` (latest unlocks), `rarest` (rarest unlocks), `next` (locked ones most players have) |
-| `ach.recent[…]` and the others | `{name, description, icon, unlocked, when, ago, percent, rarity, rarityId}`. `rarity` is `Ultra rare`, `Rare`, `Uncommon` or `Common` |
+| `ach` | achievements: `has`, `canHave`, `unlocked`, `total`, `locked`, `percent` (0–100), `done`, `score`, `totalScore`, `lastUnlock`, `loaded`, and three lists of up to eight: `recent` (latest unlocks), `rarest` (rarest unlocks), `next` (locked ones most players have), and `list`, up to forty for a row: the latest unlocks and the locked ones most players have, at least half of each when there are that many |
+| `ach.recent[…]` and the others | `{id, name, description, icon, unlocked, when, ago, percent, rarity, rarityId}`. `rarity` is `Ultra rare`, `Rare`, `Uncommon` or `Common`; a locked hidden one is named "Hidden achievement" |
 | `achievements`, `achUnlocked`, `achTotal`, `achPercent` | the tile fields: `achievements` is true only while the theme's "Achievement progress" option is on |
 | `media`, `videos`, `pictures` | the gallery, trailer first: lists of `{index, kind, isVideo, isPicture, url, thumb, name}`. `index` is what `data-act="media"` takes |
 | `hasMedia`, `mediaCount`, `hasTrailer` | |
@@ -206,6 +213,7 @@ For `data-model="library"` and the `continue-end` tile.
 | `tabs` | list of `{id, label, count, active}`: Installed, Your collection, All games, Favorites |
 | `all`, `installed`, `collection`, `favorites` | how many games each tab holds |
 | `shown`, `summary` | how many games the grid is showing, and the line the built-in heading prints |
+| `sortLabel`, `filtered` | the sort in force ("Recently played"), and whether a filter is narrowing the list |
 | `search`, `searching` | the standing search, if any |
 
 ### A theme's own options

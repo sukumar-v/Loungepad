@@ -160,7 +160,7 @@ function gameView(g) { return gameModel(g); }
    The counts ride every state push. The lists behind the hub's trophy card -- the latest
    unlocks, the rarest, the ones most players have that you do not -- are asked of the host per
    game (achievementsPeek), kept here, and forgotten when that game's summary changes. */
-const achPeek = new Map();          // game id -> { recent, rarest, next } as the host sent them
+const achPeek = new Map();          // game id -> { recent, rarest, next, list } as the host sent them
 const achPeekAsked = new Set();
 
 function achPeekFor(g) {
@@ -173,7 +173,7 @@ function achPeekFor(g) {
 
 function onAchievementsPeek(m) {
   achPeekAsked.delete(m.id);
-  achPeek.set(m.id, m.set || { recent: [], rarest: [], next: [] });
+  achPeek.set(m.id, m.set || { recent: [], rarest: [], next: [], list: [] });
   bumpLive();
 }
 
@@ -186,8 +186,12 @@ function forgetAchPeek(id) {
 
 function achItemModel(a) {
   const band = rarityBand(a.percent);
+  // A locked hidden one is named as hidden and nothing more, the way the store shows it.
+  const secret = !!a.hidden && !a.unlocked;
   return {
-    name: a.name || "", description: a.description || "", unlocked: !!a.unlocked, hidden: !!a.hidden,
+    id: a.id || "",
+    name: secret ? "Hidden achievement" : a.name || "", description: secret ? "Keep playing to find out" : a.description || "",
+    unlocked: !!a.unlocked, hidden: !!a.hidden,
     icon: achItemIcon(a) || "", when: a.unlockedAt ? fmtDate(a.unlockedAt) : "", ago: a.unlockedAt ? fmtAgo(a.unlockedAt) : "",
     percent: fmtPct(a.percent), rarity: band ? band.label : "", rarityId: band ? band.id : "",
   };
@@ -208,6 +212,9 @@ function achModel(g, live) {
     recent: peek ? (peek.recent || []).map(achItemModel) : [],
     rarest: peek ? (peek.rarest || []).map(achItemModel) : [],
     next: peek ? (peek.next || []).map(achItemModel) : [],
+    // Up to forty for a row of them: the unlocked, latest first, then the locked ones most
+    // players have, then the hidden ones.
+    list: peek ? (peek.list || []).map(achItemModel) : [],
   };
 }
 
@@ -238,6 +245,8 @@ function libraryModel() {
     page: themeLib.page, tab, tabLabel: current ? current.label : "", tabs,
     all: groups.length, installed: count("installed"), collection: count("collection"), favorites: count("favorites"),
     shown: libraryShown, summary: libraryShownSummary,
+    sortLabel: (SORTS.find(s => s.id === F.sort) || SORTS[0]).label,
+    filtered: !!(F.platforms.size || F.status.size || F.collections.size || F.fav || F.hidden),
     search: F.search || "", searching: !!F.search,
   };
 }
@@ -254,16 +263,19 @@ const THEME_ACTS = {
   options:      { game: true, run: g => openGameMenu(g.id, view) },
   details:      { game: true, run: g => openDetail(g.id, view === "detail" ? detailReturn : view) },
   favorite:     { game: true, run: g => send({ cmd: "toggleFavorite", id: g.id }) },
-  achievements: { game: true, run: g => openAchievements(g.id, view) },
+  // data-id: the achievement to open the list on.
+  achievements: { game: true, run: (g, el) => openAchievements(g.id, view, el.dataset.id || null) },
   stats:        { game: true, run: g => openActivity(g.id, view) },
   collect:      { game: true, run: g => openCollect(g.id) },
-  // Manage is the game's page's own sheet; anywhere else it opens the page.
-  manage:       { game: true, run: g => (view === "detail" && detailGameId === g.id ? openManage() : openDetail(g.id, view)) },
+  // The game's page's own sheet, over whatever screen asked: it is about detailGameId.
+  manage:       { game: true, run: g => { detailGameId = g.id; openManage(); } },
+  mods:         { game: true, run: g => openMods(g.id) },
   media:        { game: true, run: (g, el) => openMediaView(parseInt(el.dataset.index, 10) || 0, g.id) },
   library:      { run: (g, el) => openLibraryPage(el.dataset.tab || "all") },
   home:         { run: () => closeLibraryPage() },
   search:       { run: () => openSearch() },
   filter:       { run: () => openFilter() },
+  "add-game":   { run: () => send({ cmd: "addManual" }) },
   settings:     { run: () => switchView("settings") },
   back:         { run: () => handleInput("B") },
 };
@@ -370,6 +382,14 @@ function fillLive(host, data, gameId) {
     const all = host.querySelectorAll("*");
     for (const [i, l, t] of kept) if (all[i]) { all[i].scrollLeft = l; all[i].scrollTop = t; }
   }
+}
+
+/* A screen layout's own buttons -- a search icon in the top bar, a rail of them beside the game
+   list -- are armed once, when the layout is put in. The live regions arm what they draw. */
+function armLayout(screen) {
+  const layout = screen && [...screen.children].find(c => c.dataset.themeLayout !== undefined);
+  if (!layout) return;
+  layout.querySelectorAll("[data-act]").forEach(el => { if (!el.closest("[data-render]")) armActions(el, null); });
 }
 
 /* The tile a theme puts after the recents (`continue-end`, typically the way into the game list),

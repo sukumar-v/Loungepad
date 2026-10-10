@@ -2635,3 +2635,18 @@ Stop the scrolled grid from clipping through the All games header
   used direct membership, so Down skipped a media row for the button under it, and from the row
   the page's off-screen buttons were unreachable. One key sequence over Shelf and Loungepad took
   the same path before and after (checked by serving the committed app.js against the new one).
+- **A theme's stylesheet loading redraws the library** (`applyThemeSheet`'s `link.onload`, Oct 10
+  2026). The library is usually drawn before the sheet arrives, so a theme's own numbers were
+  measured against the app's defaults until something else redrew it: Nova's row of ten
+  (`--continue-max`) came out as twelve plus its library icon in the real app and the carousel slid
+  icons off both sides ("the icons look cropped on the sides", the user's report). Loungepad's dock
+  had the same lag. Seen in the preview with the user's own covers copied in for the test (and
+  deleted after): eleven items with no manual redraw.
+- **Nova is the console's game hub on one screen** (Oct 10 2026, built against five photos of the
+  user's PS5; extract an iPhone DNG's embedded JPEG to view one). No legend anywhere, no separate
+  details page: the home hub carries Play, Achievements/Stats/Mods cards, Activities (`ach.list`:
+  the host's `achievementsPeek` balances unlocked and locked, at least 20 of each where there are
+  that many, or a 41-unlock game showed no locked ones), Media and Game info; a game opened from
+  the library (the `game-tile` root is `data-act="details"`) gets the same hub as its page. Static
+  `data-act` buttons in a screen layout are armed by `armLayout` (top-bar search and settings, the
+  library's rail). Its menus are a sheet from the right (Nova's CSS over the app's overlays).

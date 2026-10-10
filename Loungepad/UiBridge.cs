@@ -3111,17 +3111,27 @@ public class UiBridge
     };
 
     /// <summary>Eight each of the latest unlocks, the rarest unlocks and the locked ones most
-    /// players have -- never a hidden one, which would give it away. The preview's mock answers
-    /// with the same three rules.</summary>
+    /// players have -- never a hidden one, which would give it away -- and up to forty in one
+    /// row. The preview's mock answers with the same rules.</summary>
     private static object AchievementPeekDto(GameAchievements set)
     {
-        const int n = 8;
+        const int n = 8, row = 40;
         var unlocked = set.Items.Where(a => a.Unlocked).ToList();
+        // The row holds both kinds: at least half of it for the locked ones when there are that
+        // many, so a game with forty unlocks still shows what is left to get.
+        var byDate = unlocked.OrderByDescending(a => a.UnlockedAt ?? DateTime.MinValue).ToList();
+        var locked = set.Items.Where(a => !a.Unlocked && !a.Hidden).OrderByDescending(a => a.Percent ?? 101)
+            .Concat(set.Items.Where(a => !a.Unlocked && a.Hidden)).ToList();
+        var nLocked = Math.Min(locked.Count, Math.Max(row / 2, row - byDate.Count));
+        var nUnlocked = Math.Min(byDate.Count, row - nLocked);
         return new
         {
             recent = unlocked.OrderByDescending(a => a.UnlockedAt ?? DateTime.MinValue).Take(n).Select(AchievementDto),
             rarest = unlocked.Where(a => a.Percent is not null).OrderBy(a => a.Percent).Take(n).Select(AchievementDto),
             next = set.Items.Where(a => !a.Unlocked && !a.Hidden).OrderByDescending(a => a.Percent ?? 101).Take(n).Select(AchievementDto),
+            // A row of them for a theme's Activities: the unlocked, latest first, then the locked
+            // ones most players have, then the hidden ones (the page names those "Hidden").
+            list = byDate.Take(nUnlocked).Concat(locked.Take(nLocked)).Select(AchievementDto),
         };
     }
 
