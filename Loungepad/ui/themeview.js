@@ -365,16 +365,14 @@ function updateLiveRegions() {
     if (!host.getClientRects().length) continue;
     const screen = host.closest(".screen");
     const kind = host.dataset.model === "library" ? "library" : "game";
-    let data = null, gameId = "";
-    if (kind === "library") data = libraryModel();
-    else {
-      const g = liveGame(host, screen);
-      if (g) { gameId = g.id; data = gameModel(g, { live: true }); }
-    }
+    const g = kind === "game" ? liveGame(host, screen) : null;
+    const gameId = g ? g.id : "";
     const sig = `${host.dataset.render}|${gameId}|${liveVersion}|${kind === "library" ? themeLib.page + themeLib.tab : ""}`;
     if (host.__sig === sig) continue;
     host.__sig = sig;
-    fillLive(host, data, gameId);
+    // Built only now: on most steps nothing a region shows has changed, and the library model
+    // walks the whole library to count its tabs.
+    fillLive(host, kind === "library" ? libraryModel() : g ? gameModel(g, { live: true }) : null, gameId);
   }
 }
 

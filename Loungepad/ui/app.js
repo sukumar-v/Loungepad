@@ -2016,6 +2016,10 @@ const BACKDROP_SETTLE_MS = 170;
 let bdDeferTimer = null, lastPaintAt = -Infinity;
 
 function scheduleBackdrop(g, override) {
+  // A theme that hides the backdrop in some state (a game list on a page of its own) gets none of
+  // its work done there: each change decodes a hero and re-blurs a screen-sized layer, the most
+  // expensive thing in a frame, for nothing anyone sees. The next paint after it shows again sets it.
+  if (!backdropDrawn()) { clearTimeout(bdDeferTimer); bdDeferTimer = null; return; }
   const now = performance.now();
   const fast = now - lastPaintAt < BACKDROP_SETTLE_MS;
   lastPaintAt = now;
@@ -2023,6 +2027,8 @@ function scheduleBackdrop(g, override) {
   clearTimeout(bdDeferTimer);
   bdDeferTimer = setTimeout(() => { bdDeferTimer = null; setBackdrop(focusedGame(), focusedMediaOverride()); }, BACKDROP_SETTLE_MS);
 }
+
+function backdropDrawn() { const bd = $("backdrop"); return !!bd && bd.getClientRects().length > 0; }
 
 /** `override` is a picture to hang instead of the game's own -- a screenshot highlighted in the
     page's gallery -- with the game's own pictures behind it as the fallbacks. */

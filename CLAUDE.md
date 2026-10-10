@@ -2664,3 +2664,12 @@ Stop the scrolled grid from clipping through the All games header
   inside lies that way). A key list written through a heredoc into a template literal lost its
   `\s` and split on the letter s, which mangled any key with an s in it; read regexes back after
   writing them that way.
+- **Nova's Installed tab froze; its collection did not** (the user's report, Oct 10 2026). The
+  icon fallback drew each square from the game's HERO, and 23 of the 32 installed games have
+  Steam's 3840x1240 2x hero (avg 3.76 MP) against the collection's 1x (1.18 MP): a screen of
+  icons was ~360 MB of decoded picture for 259px squares, plus the hidden backdrop decoding and
+  blurring a 4K hero and arming a trailer on every step under an opaque page. Icons now use the
+  616x353 tile art blurred under the logo; the library page hides `#backdrop` and sets
+  `--trailers: none`; `scheduleBackdrop` does nothing while the backdrop is not drawn. Headless
+  Edge with the user's real art (scratchpad `perf-edge.mjs`, CDP only): step-to-frame median
+  26 -> 9-15 ms, worst 74 -> 29. It cannot see GPU raster cost, which is most of a decode stall.
