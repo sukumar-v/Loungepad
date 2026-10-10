@@ -153,19 +153,29 @@ public class MetadataProxyClient : IFactsProvider, IArtProvider
         }
     }
 
-    /// <summary>A square picture's URL (/v1/square), or null for none. Without an app id the
-    /// answer is checked against the title like any other art.</summary>
-    public async Task<string?> FindSquareAsync(string title, string? steamAppId, CancellationToken ct)
+    /// <summary>
+    /// A square picture's URL (/v1/square). `Answered` is false when the service did not really
+    /// answer: it could not be reached, said slow down, or 404'd WITHOUT its X-Cache header -- the
+    /// shape of a route it does not have. That last one is a service from before the route, and its
+    /// "not found" must not be read as "this game has no square": that is how 390 games were marked
+    /// as having none, for a month, in the hour before the route was deployed (Oct 10 2026).
+    /// Without an app id the answer is checked against the title like any other art.
+    /// </summary>
+    public async Task<(string? Url, bool Answered)> FindSquareAsync(string title, string? steamAppId, CancellationToken ct)
     {
         var d = await GetAsync("square", title, steamAppId, null, ct);
-        if (d is null) return null;
+        if (d is null) return (null, !Unavailable && _lastNotFoundAnswered);
         using (d)
         {
             var root = d.RootElement;
-            if (steamAppId is null && !TitleMatch.IsConfident(title, Str(root, "name"))) return null;
-            return Str(root, "square");
+            if (steamAppId is null && !TitleMatch.IsConfident(title, Str(root, "name"))) return (null, true);
+            return (Str(root, "square"), true);
         }
     }
+
+    // Whether the last 404 was the service's own "no match" (it carries X-Cache) rather than a
+    // route it does not have.
+    private bool _lastNotFoundAnswered;
 
     private async Task<JsonDocument?> GetAsync(string kind, string title, string? steamAppId,
         IReadOnlyList<int>? platforms, CancellationToken ct)
@@ -187,7 +197,11 @@ public class MetadataProxyClient : IFactsProvider, IArtProvider
             using var res = await _http.SendAsync(req, ct);
 
             // 404 is the service saying "no confident answer", which is an ordinary outcome.
-            if (res.StatusCode == System.Net.HttpStatusCode.NotFound) return null;
+            if (res.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                _lastNotFoundAnswered = res.Headers.Contains("X-Cache");
+                return null;
+            }
 
             if ((int)res.StatusCode == 429)
             {

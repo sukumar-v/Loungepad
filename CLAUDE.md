@@ -2675,3 +2675,11 @@ Stop the scrolled grid from clipping through the All games header
   `--trailers: none`; `scheduleBackdrop` does nothing while the backdrop is not drawn. Headless
   Edge with the user's real art (scratchpad `perf-edge.mjs`, CDP only): step-to-frame median
   26 -> 9-15 ms, worst 74 -> 29. It cannot see GPU raster cost, which is most of a decode stall.
+- **A 404 from a route the service does not have is not "no square"** (Oct 10 2026). The user opened
+  Nova in the hour before /v1/square was deployed; the old worker's catch-all 404 was read as
+  "none" and all 390 games were stamped `SquareCheckedAt`, so after the deploy nothing was asked
+  again. The service's own "no match" carries `X-Cache` and a missing route does not:
+  `FindSquareAsync` returns `Answered` false for the latter (Unavailable, never stamped), and
+  stamps from before `MetadataService.SquareRouteLive` (08:02:05Z, from `wrangler deployments
+  list`) are ignored by the bridge and the page. Checked in the real app over CDP: 252 squares in
+  four minutes, about one a second, 8 genuine "none", the rest left for the next session.

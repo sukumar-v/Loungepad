@@ -621,6 +621,10 @@ public class MetadataService
     /// </summary>
     public enum SquareResult { Found, None, Unavailable }
 
+    /// <summary>When /v1/square went live (version dcd106b5). A "none" stamped before it is the old
+    /// service's missing route, not an answer, and is ignored.</summary>
+    public static readonly DateTime SquareRouteLive = new(2026, 10, 10, 8, 2, 5, DateTimeKind.Utc);
+
     /// <summary>
     /// A square picture for one game, from the shared service (SteamGridDB's square grids), stored
     /// as `&lt;id&gt;_sv_sq.&lt;ext&gt;` and checked to really be square. Asked only by a theme that draws
@@ -632,8 +636,9 @@ public class MetadataService
         var endpoint = string.IsNullOrWhiteSpace(settings.MetadataEndpoint) ? MetadataProxyClient.DefaultEndpoint : settings.MetadataEndpoint;
         if (!MetadataProxyClient.IsConfigured(endpoint)) return SquareResult.Unavailable;
         var proxy = new MetadataProxyClient(Http, endpoint);
-        var url = await proxy.FindSquareAsync(g.Title, SteamAppId(g), ct);
-        if (url is null) return proxy.Unavailable ? SquareResult.Unavailable : SquareResult.None;
+        var (url, answered) = await proxy.FindSquareAsync(g.Title, SteamAppId(g), ct);
+        if (!answered) return SquareResult.Unavailable;
+        if (url is null) return SquareResult.None;
         var filled = CustomSlots(g);
         return await StoreRemoteAsync(g, Slot.Square, url, filled, ct) || filled.Contains(Slot.Square)
             ? SquareResult.Found : SquareResult.None;

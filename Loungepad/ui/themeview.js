@@ -161,12 +161,15 @@ function gameView(g) { return gameModel(g); }
 
 /* ---- squares ---- */
 const squareAsked = new Set();
+const SQUARE_ROUTE_LIVE = Date.parse("2026-10-10T08:02:05Z");
 let squareBatch = [], squareRedraw = null;
 
 function requestSquare(g) {
   if (squareAsked.has(g.id)) return;
-  // Looked for this month and none found: the host would refuse anyway.
-  if (g.squareCheckedAt && Date.now() - Date.parse(g.squareCheckedAt) < 30 * 864e5) return;
+  // Looked for this month and none found: the host would refuse anyway. A stamp from before the
+  // route went live (MetadataService.SquareRouteLive) was the old service's 404 and does not count.
+  const checked = g.squareCheckedAt ? Date.parse(g.squareCheckedAt) : 0;
+  if (checked > SQUARE_ROUTE_LIVE && Date.now() - checked < 30 * 864e5) return;
   squareAsked.add(g.id);
   squareBatch.push(g.id);
   if (squareBatch.length === 1) setTimeout(() => { const ids = squareBatch; squareBatch = []; send({ cmd: "fetchSquares", ids }); }, 200);

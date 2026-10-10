@@ -928,7 +928,8 @@ public class UiBridge
                         var game = node?.GetValue<string>() is { } gid ? _library.Find(gid) : null;
                         if (game is null || _squareQueued.Contains(game.Id)) continue;
                         if (game.SquareFile is { } sq && File.Exists(Path.Combine(Paths.CoversDir, sq))) continue;
-                        if (game.SquareCheckedAt is { } at && DateTime.UtcNow - at < TimeSpan.FromDays(30)) continue;
+                        if (game.SquareCheckedAt is { } at && at > MetadataService.SquareRouteLive
+                            && DateTime.UtcNow - at < TimeSpan.FromDays(30)) continue;
                         _squareQueue.Enqueue(game.Id);
                         _squareQueued.Add(game.Id);
                     }
