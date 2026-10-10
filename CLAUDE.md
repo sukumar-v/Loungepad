@@ -1297,6 +1297,18 @@ Stop the scrolled grid from clipping through the All games header
   mouse click. `TakeForeground` joins the foreground window's input queue for the call
   (`AttachThreadInput`), and while `_overlayActive` the pad service treats the launcher as in front
   and the game as not focused regardless, so a refused foreground can no longer freeze a menu.
+- **Over some games the join is refused too, and Home then left the pad dead** (Oct 10 2026, the
+  user's report on Silksong: the library came up but the pad did nothing until a mouse click).
+  The 1.9.0 log refused it on every menu over Silksong, ULTRAKILL, Katana ZERO and Slay the
+  Princess, never over Cyberpunk, Persona 3 Reload or Look Outside; Home clears `_overlayActive`,
+  so nothing kept the pad on the launcher. Why the join fails there is unknown: a scratch harness
+  (two processes, a foreground lock, hidden WebView2 controllers) never reproduced it, and
+  minimizing the game handed the activation to some other window, not the topmost one.
+  `TakeForeground` now ends with an empty mouse input sent by the launcher itself
+  (`SendInputLocal`, never through the input service) and one more try: Windows lets the process
+  that sent the last input take the foreground, and in the harness that alone was granted every
+  time. The log says which step won or who kept the foreground. **Verified by the user over
+  Silksong** (Oct 10 2026, Home with the pad, "it works now").
 - **A process the launcher starts directly opened unfocused** -- an emulator, a GOG or manual exe.
   `GameStarted` parks the launcher by hiding it, the foreground passes to whatever was underneath,
   and when the game's window appears two seconds later Windows refuses it the foreground: the

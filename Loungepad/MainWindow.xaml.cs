@@ -773,6 +773,15 @@ public partial class MainWindow : Window
     /// keeps the foreground and the keyboard focus, which is why the Guide menu needed a mouse
     /// click before anything worked. Joining the foreground window's input queue for the length
     /// of the call is the sanctioned way round it; the two queues are separated again at once.
+    ///
+    /// Over some games the join is not enough either: Silksong, ULTRAKILL, Katana ZERO and Slay the
+    /// Princess refused it on every menu in the 1.9.0 log (Oct 10 2026), and Home then left the
+    /// pad on a game it could no longer see until a mouse click. Windows also lets the process
+    /// that sent the last input take the foreground, and an input with nothing in it -- no
+    /// movement, no button -- makes the launcher that process (PowerToys does the same). In a
+    /// scratch harness it was granted every time on its own, a foreground lock included. It goes
+    /// to Windows directly, never through the input service: the agent sending it would make the
+    /// agent the one entitled.
     /// </summary>
     private void TakeForeground()
     {
@@ -793,8 +802,15 @@ public partial class MainWindow : Window
         {
             if (attached) NativeMethods.AttachThreadInput(ours, fgThread, false);
         }
-        if (NativeMethods.GetForegroundWindow() != _hwnd)
-            Log.Info("Could not take the foreground from the game; the menu still owns the pad");
+        if (NativeMethods.GetForegroundWindow() == _hwnd) return;
+
+        NativeMethods.SendInputLocal(new[] { new NativeMethods.INPUT { type = NativeMethods.INPUT_MOUSE } });
+        NativeMethods.SetForegroundWindow(_hwnd);
+        var who = ActionService.ExeOf(fg) is { Length: > 0 } exe ? exe : "the window in front";
+        var join = attached ? "the input-queue join was made" : "the input-queue join was refused";
+        Log.Info(NativeMethods.GetForegroundWindow() == _hwnd
+            ? $"Took the foreground from {who} with an empty input ({join} and was not enough)"
+            : $"Could not take the foreground from {who} ({join}, an empty input did not help); the menu still owns the pad");
     }
 
     private void OnGameStarted()
