@@ -22,7 +22,7 @@ const worker = (await import(pathToFileURL(path.join(proxy, "src", "worker.js"))
 const db = new DatabaseSync(":memory:");
 db.exec(readFileSync(path.join(proxy, "migrations", "0001_cache.sql"), "utf8"));
 
-const trace = { d1Writes: 0, d1ReadFail: false, d1WriteFail: false, limiterThrows: false };
+const trace = { d1Writes: 0, d1ReadFail: false, d1WriteFail: false, limiterThrows: false, sgdbUrls: [] };
 const D1 = {
   prepare(sql) {
     // node:sqlite binds an array only to plain ?, and takes D1's ?1 ?2 for names; the worker uses each
@@ -72,6 +72,9 @@ globalThis.fetch = async (url, init = {}) => {
   if (u.startsWith("https://www.steamgriddb.com/")) {
     upstream.sgdb++;
     if (u.includes("/search/autocomplete/")) return body({ data: u.includes("Known%20Game") ? [{ id: 7, name: "Known Game" }] : [] });
+    if (u.includes("/games/steam/")) return body(u.endsWith("/440") ? { data: { id: 9, name: "Steam Game" } } : { success: false }, u.endsWith("/440") ? 200 : 404);
+    trace.sgdbUrls.push(u);
+    if (u.includes("dimensions=512x512") && u.includes("/game/9?")) return body({ data: [] });
     return body({ data: [{ url: "https://img.example/a.png" }] });
   }
   throw new Error(`unexpected fetch ${u}`);
@@ -144,6 +147,17 @@ r = await get("/v1/art?title=Known%20Game");
 check("art MISS", r.status === 200 && r.cache === "MISS" && r.body.portrait === "https://img.example/a.png");
 r = await get("/v1/art?title=Known%20Game");
 check("art HIT", r.status === 200 && r.cache === "HIT");
+
+// The square: a route of its own, its own cache key, square sizes only, and a game with none is a
+// cached 404.
+r = await get("/v1/square?title=Known%20Game");
+check("square MISS", r.status === 200 && r.cache === "MISS" && r.body.square === "https://img.example/a.png" && r.body.name === "Known Game");
+check("square asks for square grids, static and safe", trace.sgdbUrls.some(x => x.endsWith("/grids/game/7?dimensions=512x512,1024x1024&types=static&nsfw=false&humor=false")), trace.sgdbUrls.slice(-1)[0]);
+check("square is cached under its own kind", !!row("square:v7:known game") && !!row("art:v7:known game"));
+r = await get("/v1/square?title=Known%20Game");
+check("square HIT", r.status === 200 && r.cache === "HIT");
+r = await get("/v1/square?appid=440&title=Steam%20Game");
+check("a game with no square is a 404, cached by app id", r.status === 404 && !!row("square:v7:steam:440"));
 
 // The rate limit: counted on misses only, 429 with Retry-After, hits still served.
 ip = "198.51.100.9"; limit = 2;

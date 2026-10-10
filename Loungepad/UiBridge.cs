@@ -62,6 +62,10 @@ public class UiBridge
     /// <summary>Games whose gallery is being fetched on demand, so a page reopened while one is in
     /// flight does not ask twice.</summary>
     private readonly HashSet<string> _mediaFetching = new();
+    // Square pictures a theme asked for (fetchSquares): one at a time, in the order asked.
+    private readonly Queue<string> _squareQueue = new();
+    private readonly HashSet<string> _squareQueued = new();
+    private bool _squareRunning;
     /// <summary>The play sessions and their readings, and the service that records them.</summary>
     private readonly ActivityStore _activityStore;
     private readonly ActivityService _activity;
@@ -908,6 +912,30 @@ public class UiBridge
                     catch (Exception ex) { Log.Info($"Metadata: gallery for {game.Title} failed: {ex.Message}"); }
                     finally { lock (_mediaFetching) _mediaFetching.Remove(game.Id); }
                 });
+                break;
+            }
+
+            // A theme that draws games as icons asks for squares for the games it draws (themeview.js).
+            // Queued, one at a time, a little apart; a game with one on disk, or looked for and found
+            // to have none this month, is not asked about.
+            case "fetchSquares":
+            {
+                if (msg["ids"] is not JsonArray ids) break;
+                lock (_squareQueue)
+                {
+                    foreach (var node in ids)
+                    {
+                        var game = node?.GetValue<string>() is { } gid ? _library.Find(gid) : null;
+                        if (game is null || _squareQueued.Contains(game.Id)) continue;
+                        if (game.SquareFile is { } sq && File.Exists(Path.Combine(Paths.CoversDir, sq))) continue;
+                        if (game.SquareCheckedAt is { } at && DateTime.UtcNow - at < TimeSpan.FromDays(30)) continue;
+                        _squareQueue.Enqueue(game.Id);
+                        _squareQueued.Add(game.Id);
+                    }
+                    if (_squareRunning || _squareQueue.Count == 0) break;
+                    _squareRunning = true;
+                }
+                _ = Task.Run(FetchSquaresAsync);
                 break;
             }
 
@@ -3109,6 +3137,62 @@ public class UiBridge
         unlocked = set.Unlocked, total = set.Total, score = set.Score, totalScore = set.TotalScore,
         items = set.Items.Select(AchievementDto),
     };
+
+    /// <summary>Works through the square queue. A service that answers "slow down" or cannot be
+    /// reached is waited out once for a minute, then the rest is left for the next session.
+    /// Saves every twenty games and at the end; each find goes to the page as one field.</summary>
+    private async Task FetchSquaresAsync()
+    {
+        int found = 0, none = 0, dirty = 0;
+        var retried = false;
+        try
+        {
+            while (true)
+            {
+                string? id;
+                lock (_squareQueue)
+                {
+                    if (!_squareQueue.TryDequeue(out id)) { _squareRunning = false; break; }
+                }
+                var game = _library.Find(id);
+                if (game is null) continue;
+                var result = await _metadata.FetchSquareAsync(game, _settings.Settings);
+                if (result == MetadataService.SquareResult.Unavailable)
+                {
+                    if (retried)
+                    {
+                        lock (_squareQueue) { _squareQueue.Clear(); _squareQueued.Clear(); _squareRunning = false; }
+                        Log.Info("Squares: the service is not answering; the rest are left for later");
+                        break;
+                    }
+                    retried = true;
+                    lock (_squareQueue) { _squareQueue.Enqueue(game.Id); }
+                    await Task.Delay(TimeSpan.FromSeconds(65));
+                    continue;
+                }
+                retried = false;
+                if (result == MetadataService.SquareResult.Found)
+                {
+                    found++;
+                    var file = game.SquareFile;
+                    _ = _window.Dispatcher.BeginInvoke(() => Push(new { type = "square", id = game.Id, file }));
+                }
+                else { none++; game.SquareCheckedAt = DateTime.UtcNow; }
+                if (++dirty >= 20) { _library.Save(); dirty = 0; }
+                await Task.Delay(300);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Info($"Squares: {ex.Message}");
+            lock (_squareQueue) { _squareRunning = false; }
+        }
+        finally
+        {
+            if (dirty > 0) _library.Save();
+            if (found + none > 0) Log.Info($"Squares: {found} found, {none} with none");
+        }
+    }
 
     /// <summary>Eight each of the latest unlocks, the rarest unlocks and the locked ones most
     /// players have -- never a hidden one, which would give it away -- and up to forty in one

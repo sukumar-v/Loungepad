@@ -81,7 +81,7 @@ public class MetadataService
     }
 
     /// <summary>Which picture a file is, independent of what it ends up called on disk.</summary>
-    private enum Slot { Cover, Tile, Hero, Backdrop, Logo }
+    private enum Slot { Cover, Tile, Hero, Backdrop, Logo, Square }
 
     // Steam serves all of these straight off its CDN, unauthenticated, for any app id, at their
     // original sizes rather than the half-size copies the client keeps on disk.
@@ -619,6 +619,26 @@ public class MetadataService
     /// Steam's page first (by app id, or by the same exact-title search the pass uses; never for
     /// a ROM), IGDB for the rest. Returns true when the game now has one.
     /// </summary>
+    public enum SquareResult { Found, None, Unavailable }
+
+    /// <summary>
+    /// A square picture for one game, from the shared service (SteamGridDB's square grids), stored
+    /// as `&lt;id&gt;_sv_sq.&lt;ext&gt;` and checked to really be square. Asked only by a theme that draws
+    /// games as icons (fetchSquares on the bridge); the metadata pass never asks, so a library under
+    /// any other theme costs nothing. By Steam app id when the game has one, else by title.
+    /// </summary>
+    public async Task<SquareResult> FetchSquareAsync(Game g, AppSettings settings, CancellationToken ct = default)
+    {
+        var endpoint = string.IsNullOrWhiteSpace(settings.MetadataEndpoint) ? MetadataProxyClient.DefaultEndpoint : settings.MetadataEndpoint;
+        if (!MetadataProxyClient.IsConfigured(endpoint)) return SquareResult.Unavailable;
+        var proxy = new MetadataProxyClient(Http, endpoint);
+        var url = await proxy.FindSquareAsync(g.Title, SteamAppId(g), ct);
+        if (url is null) return proxy.Unavailable ? SquareResult.Unavailable : SquareResult.None;
+        var filled = CustomSlots(g);
+        return await StoreRemoteAsync(g, Slot.Square, url, filled, ct) || filled.Contains(Slot.Square)
+            ? SquareResult.Found : SquareResult.None;
+    }
+
     public async Task<bool> FetchMediaAsync(Game g, AppSettings settings, CancellationToken ct = default)
     {
         if (g.Media.Count > 0) return false;
@@ -996,6 +1016,7 @@ public class MetadataService
         Slot.Hero => "_hero",
         Slot.Backdrop => "_bg",
         Slot.Logo => "_logo",
+        Slot.Square => "_sq",
         _ => "_cover",
     };
 
@@ -1017,6 +1038,7 @@ public class MetadataService
         Slot.Tile => (1.30, 2.60),      // 1.75 capsule through 2.14 header, and nothing squarer
         Slot.Hero => (2.40, 5.00),      // the 3.1:1 band
         Slot.Backdrop => (1.60, 2.10),  // 16:9 key art, which is the only thing this slot is for
+        Slot.Square => (0.85, 1.18),    // an icon: the point of the slot is that nothing is cut off it
         // A WORDMARK, which is wider than it is tall by definition. Anything squarer is a logo
         // mark rather than the title set as art, and the detail page hangs this where the title
         // goes -- so a square one arrives as a small blob in the corner of a wide box. Rejecting
@@ -1087,6 +1109,8 @@ public class MetadataService
                 g.BackdropFile = name; return true;
             case Slot.Logo when g.LogoFile != name && !IsCustom(g.LogoFile):
                 g.LogoFile = name; return true;
+            case Slot.Square when g.SquareFile != name && !IsCustom(g.SquareFile):
+                g.SquareFile = name; return true;
             default: return false;
         }
     }
@@ -1109,6 +1133,7 @@ public class MetadataService
             case Slot.Hero when g.HeroFile == name: g.HeroFile = null; break;
             case Slot.Backdrop when g.BackdropFile == name: g.BackdropFile = null; break;
             case Slot.Logo when g.LogoFile == name: g.LogoFile = null; break;
+            case Slot.Square when g.SquareFile == name: g.SquareFile = null; break;
         }
     }
 
@@ -1124,6 +1149,7 @@ public class MetadataService
         if (IsCustom(g.HeroFile)) set.Add(Slot.Hero);
         if (IsCustom(g.BackdropFile)) set.Add(Slot.Backdrop);
         if (IsCustom(g.LogoFile)) set.Add(Slot.Logo);
+        if (IsCustom(g.SquareFile)) set.Add(Slot.Square);
         return set;
     }
 

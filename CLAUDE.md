@@ -2650,3 +2650,17 @@ Stop the scrolled grid from clipping through the All games header
   the library (the `game-tile` root is `data-act="details"`) gets the same hub as its page. Static
   `data-act` buttons in a screen layout are armed by `armLayout` (top-bar search and settings, the
   library's rail). Its menus are a sheet from the right (Nova's CSS over the app's overlays).
+- **Square art is `/v1/square` and `Game.SquareFile`** (Oct 10 2026; the user: "isn't it possible to
+  fetch the right image with the right aspect ratio?"). No store publishes a square; SteamGridDB's
+  grids come in 512x512 and 1024x1024 (static, nsfw and humor off), by Steam app id or by title.
+  The route is its own cache kind, so adding it retired nothing under `art`. Fetched only when a
+  template reads `{{square}}` (the model's lazy getter batches `fetchSquares`; the bridge's queue
+  goes one at a time 300 ms apart, waits a minute once on a 429, saves every twenty), stored as
+  `<id>_sv_sq.<ext>` through `StoreRemoteAsync` (Slot.Square, bounds 0.85-1.18), and a game with
+  none is stamped `SquareCheckedAt` and not asked again for 30 days. `MergeScanned` carries both
+  fields. The page redraws the library once for a run of `square` messages. **The worker has to be
+  deployed for any of it to happen**; until then every lookup is a 404 and Nova keeps its fallback.
+- **`data-nav-<dir>` on a container is a theme's route out of it** (focus keys, taken when nothing
+  inside lies that way). A key list written through a heredoc into a template literal lost its
+  `\s` and split on the letter s, which mangled any key with an s in it; read regexes back after
+  writing them that way.

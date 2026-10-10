@@ -153,6 +153,20 @@ public class MetadataProxyClient : IFactsProvider, IArtProvider
         }
     }
 
+    /// <summary>A square picture's URL (/v1/square), or null for none. Without an app id the
+    /// answer is checked against the title like any other art.</summary>
+    public async Task<string?> FindSquareAsync(string title, string? steamAppId, CancellationToken ct)
+    {
+        var d = await GetAsync("square", title, steamAppId, null, ct);
+        if (d is null) return null;
+        using (d)
+        {
+            var root = d.RootElement;
+            if (steamAppId is null && !TitleMatch.IsConfident(title, Str(root, "name"))) return null;
+            return Str(root, "square");
+        }
+    }
+
     private async Task<JsonDocument?> GetAsync(string kind, string title, string? steamAppId,
         IReadOnlyList<int>? platforms, CancellationToken ct)
     {

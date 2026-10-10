@@ -53,6 +53,13 @@ public class Game
     public string? BackdropFile { get; set; }
     /// <summary>Transparent wordmark, for a theme that wants the title as art rather than text.</summary>
     public string? LogoFile { get; set; }
+    /// <summary>A square picture -- SteamGridDB's 512 and 1024 grids, key art with the name on it --
+    /// for a theme that draws games as icons. Fetched only when such a theme asks (fetchSquares),
+    /// never by the metadata pass.</summary>
+    public string? SquareFile { get; set; }
+    /// <summary>When a square was last looked for and none found, so a game with none is not asked
+    /// about again for a month.</summary>
+    public DateTime? SquareCheckedAt { get; set; }
     public long SizeBytes { get; set; }
     public double PlaytimeMinutes { get; set; }      // tracked by Loungepad sessions
     public int Sessions { get; set; }

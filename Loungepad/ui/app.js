@@ -571,6 +571,22 @@ function navMove(dir, within) {
   // Inside the scroller, not only directly in it: a theme's page that scrolls down can hold rows
   // that scroll sideways, and on "directly" a Down from the row above skipped every one of them
   // for the next button straight in the page.
+  /* A theme's own route out of a container: data-nav-<dir> names, by focus key, where a step in
+     that direction goes when nothing inside the container lies that way -- the console's Down
+     from its row of icons to the Play button rather than to whatever card is under the icon, or
+     Left from the game list's first column to the rail beside it rather than round the row. */
+  const hintAttr = "data-nav-" + dir.toLowerCase();
+  const hint = within ? null : cur.closest("[" + hintAttr + "]");
+  if (hint) {
+    const inside = pool.filter(el => hint.contains(el));
+    if (!pick(inside)) {
+      const keys = hint.getAttribute(hintAttr).split(/\s+/).filter(Boolean);
+      const targets = walkable.filter(el => el !== cur && keys.includes(Nav.keyOf(el)));
+      const target = pick(targets) || targets.find(el => keys[0] === Nav.keyOf(el)) || targets[0];
+      if (target) { setScopeKey(scope, Nav.keyOf(target)); afterFocusMove(); return true; }
+    }
+  }
+
   let best = curScroller ? pick(pool.filter(el => curScroller.contains(el))) : null;
   if (!best) best = pick(pool);
   if (!best) best = Nav.wrapTarget(walkable, cur, dir);
@@ -1623,6 +1639,9 @@ function artUrl(name) {
 }
 
 function coverUrl(g) { return artUrl(g.coverFile); }
+
+/* A square picture, fetched only for a theme that asks for {{square}} (themeview.js). */
+function squareUrl(g) { return artUrl(g.squareFile); }
 
 /* The ~16:9 tile art. Falls back to the portrait cover so a landscape tile is never empty, but
    never to the hero: a 3:1 backdrop centre-cropped into a tile shows background, not the game. */
@@ -5325,9 +5344,11 @@ function gameMenuItems() {
   const running = S.gameRunning && S.runningGameId === g.id;
   // A fixed order, whatever the game: View game first, then what gets you playing (Resume,
   // Install, the other stores), then the rest. Art is changed from the detail page's Manage.
-  const top = [
-    { label: "View game", icon: "info", sub: "Full details page", action: () => { const f = gameMenu.from; closeGameMenu(); openDetail(g.id, f); } },
-  ];
+  const top = [];
+  // A theme that has the whole game on one screen says so with --menu-view-game: none, and its
+  // menu has no row that only leads to a page of the same.
+  if (getComputedStyle(document.documentElement).getPropertyValue("--menu-view-game").trim() !== "none")
+    top.push({ label: "View game", icon: "info", sub: "Full details page", action: () => { const f = gameMenu.from; closeGameMenu(); openDetail(g.id, f); } });
   if (running) top.push({ label: "Resume game", icon: "play", sub: "Back to the running game",
     action: () => { closeGameMenu(); send({ cmd: "resumeGame" }); } });
   // Install only while the game is on this PC nowhere. Once it is installed in one store, a second
@@ -7078,6 +7099,11 @@ function handleHostMessage(m) {
     case "achievementsUnlocked": onAchievementsUnlocked(m); break;
     // A trailer landed on disk. One field on one game, in place: a state push here would rebuild
     // the library under somebody browsing it, for a change nothing on screen shows.
+    case "square": {
+      const g = gameById(m.id);
+      if (g) { g.squareFile = m.file || null; squareLanded(); }
+      break;
+    }
     case "trailerCached": {
       const g = gameById(m.id);
       if (g) g.trailerFile = m.file || null;
@@ -7732,6 +7758,11 @@ function mockHandle(msg) {
     const g = S.games.find(x => x.id === msg.id);
     if (g && g.trailerUrl && !g.trailerFile)
       setTimeout(() => handleHostMessage({ type: "trailerCached", id: msg.id, file: g.trailerUrl }), 1500);
+  } else if (msg.cmd === "fetchSquares") {
+    (msg.ids || []).forEach((id, i) => setTimeout(() => {
+      if (/[aeiou]$/i.test(id)) return;   // some games have none, as on SteamGridDB
+      handleHostMessage({ type: "square", id, file: `https://picsum.photos/seed/${encodeURIComponent(id)}sq/512/512` });
+    }, 150 + i * 60));
   } else if (msg.cmd === "fetchMedia") {
     // The host would ask Steam or IGDB; here a game with no gallery gets stand-in pictures a
     // moment later, which is what an uninstalled game's page looks like filling in.

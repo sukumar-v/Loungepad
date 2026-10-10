@@ -6,10 +6,11 @@
  * exists for the same reason: a desktop binary cannot keep a secret, and Twitch's terms say the
  * client secret must never be exposed to users.
  *
- * Two endpoints, all GET, both about a game and never about a person:
+ * Three endpoints, all GET, each about a game and never about a person:
  *
  *   /v1/facts?title=<title>   description, developer, genres, release date, critic score
  *   /v1/art?title=<title>     portrait / tile / hero / logo image URLs
+ *   /v1/square?title=<title>  a square picture, for a theme that draws games as icons
  *
  * Both take an optional appid (a Steam app id) and facts takes an optional platform list; both
  * may answer 404, which means "no confident answer", not "something broke". The launcher treats a
@@ -78,6 +79,8 @@ export default {
     try {
       if (url.pathname === "/v1/facts") return await serve(env, ctx, "facts", title, appid, igdbFacts, request, platform);
       if (url.pathname === "/v1/art") return await serve(env, ctx, "art", title, appid, gridArt, request, "");
+      // A kind of its own, so adding it retired nothing already cached under "art".
+      if (url.pathname === "/v1/square") return await serve(env, ctx, "square", title, appid, squareArt, request, "");
       return json({ error: "not found" }, 404);
     } catch (err) {
       // Never leak an upstream error body: it can carry our own credentials back to the caller.
@@ -422,25 +425,24 @@ async function igdbToken(env, fresh = false) {
 
 /* ------------------------------------------------------------ SteamGridDB */
 
-async function gridArt(env, title, appid) {
-  // SteamGridDB indexes by Steam app id directly, so when the launcher has one there is no search
-  // and no matching -- the art is definitionally the right game's.
-  let id = null;
-  let name = null;
+/** The game on SteamGridDB: by Steam app id when there is one, so there is no search and no
+    matching and the art is definitionally the right game's; else by title. */
+async function sgdbGame(env, title, appid) {
   if (appid) {
     const g = await sgdb(env, `/games/steam/${appid}`);
-    if (g && g.data && g.data.id) { id = g.data.id; name = g.data.name || null; }
+    if (g && g.data && g.data.id) return { id: g.data.id, name: g.data.name || null };
   }
+  if (!title) return null;
+  const search = await sgdb(env, `/search/autocomplete/${encodeURIComponent(title)}`);
+  if (!search || !Array.isArray(search.data)) return null;
+  const hit = pick(title, search.data, g => g.name);
+  return hit && hit.id ? { id: hit.id, name: hit.name } : null;
+}
 
-  if (id === null) {
-    if (!title) return null;
-    const search = await sgdb(env, `/search/autocomplete/${encodeURIComponent(title)}`);
-    if (!search || !Array.isArray(search.data)) return null;
-    const hit = pick(title, search.data, g => g.name);
-    if (!hit || !hit.id) return null;
-    id = hit.id;
-    name = hit.name;
-  }
+async function gridArt(env, title, appid) {
+  const game = await sgdbGame(env, title, appid);
+  if (!game) return null;
+  const { id, name } = game;
 
   // Each shape is independent: a game with no art at a given size answers empty, which is normal.
   const [portrait, tile, hero, logo] = await Promise.all([
@@ -452,6 +454,15 @@ async function gridArt(env, title, appid) {
 
   if (!portrait && !tile && !hero && !logo) return null;
   return { name, portrait, tile, hero, logo };
+}
+
+/* The square: SteamGridDB's grids also come in 512x512 and 1024x1024 -- key art with the game's
+   name on it, the console's icon -- and no store publishes one. Static, safe images only. */
+async function squareArt(env, title, appid) {
+  const game = await sgdbGame(env, title, appid);
+  if (!game) return null;
+  const square = await firstUrl(env, `/grids/game/${game.id}?dimensions=512x512,1024x1024&types=static&nsfw=false&humor=false`);
+  return square ? { name: game.name, square } : null;
 }
 
 async function firstUrl(env, path) {

@@ -104,6 +104,32 @@ opens the game's page on A instead of launching it), in a live region, or straig
 template, like a search button in the top bar or a rail of them beside the game list. One that
 is not about a game needs a `data-focus-key` when the same action appears twice on a screen.
 
+### Where the D-pad goes
+
+The highlight moves to whatever is nearest in the direction pressed. A container can name a
+route of its own with `data-nav-up`, `data-nav-down`, `data-nav-left` or `data-nav-right`: a list
+of focus keys, taken when nothing inside the container lies that way. The nearest of the ones
+drawn is chosen.
+
+```html
+<!-- Down from any icon in the row goes to Play, not to the card under the icon. -->
+<div class="row" data-slot="continue" data-nav-down="act:play"></div>
+<!-- Up from the top of a game's hub goes back to that game's icon. -->
+<div class="hub" data-nav-up="cont:{{id}}"> … </div>
+<!-- Left from the grid's first column goes to the rail, not round to the end of the row. -->
+<div data-slot="grid" data-nav-left="rail:search rail:filter rail:add"></div>
+```
+
+The recents in the row have the keys `cont:<game id>`, the grid's tiles `tile:<game id>`, and a
+`data-act` button `act:<name>` (with `:<tab>` or `:<index>` after it) unless it gives its own.
+
+### Things a theme says in CSS
+
+- `--continue-max` on `.continue-row`, `--trailers` on `#backdrop` and `--trailer-surface` on
+  `#screen-detail`, above.
+- `--menu-view-game: none` on `:root` takes "View game" out of a game's menu, for a theme that
+  shows everything about a game on one screen anyway.
+
 Highlighting a `media` button changes the picture behind the screen to that screenshot, or plays
 that film after a short beat, as the built-in gallery does. A button keeps its place under the
 highlight when its region is drawn again. To control that yourself, give the button a
@@ -184,6 +210,7 @@ only the game in a live region fetches what isn't on the page yet.
 | `id`, `title`, `platform`, `platformIcon` | the store (`Steam`, `Epic`, …), and the name of its icon |
 | `installed`, `favorite`, `hidden`, `running`, `emulated`, `played` | true or false |
 | `cover`, `banner`, `hero`, `logo`, `backdrop` | picture URLs: 2:3 box art, 1.75:1 tile art, ~3:1 hero, the transparent wordmark, the best full-screen art. Empty when there is none |
+| `square` | a square picture (SteamGridDB's 512 and 1024 grids: key art with the name on it), for a theme that draws games as icons. Reading it is what asks for one: the first time a template prints `{{square}}` for a game, Loungepad looks it up, and the picture appears when it arrives. Empty until then, and for a game with none |
 | `initials` | two letters, for a game with no art |
 | `description`, `developer`, `publisher`, `genres`, `year`, `released`, `releaseDate` | the store's facts; `released` is formatted for reading |
 | `genreList` | list of `{name}` |

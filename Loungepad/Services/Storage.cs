@@ -300,6 +300,9 @@ public class LibraryStore
                     // against. It was missing from this list entirely, which meant every scan
                     // dropped it and the next enrich had to fetch it again.
                     s.BackdropFile = old.BackdropFile;
+                    // Nor a square, which only a theme's request ever fetches.
+                    s.SquareFile = old.SquareFile;
+                    s.SquareCheckedAt = old.SquareCheckedAt;
 
                     // Fetched metadata is not discoverable from disk at all. EVERY fetched field
                     // has to be listed here -- the same trap as CopySettings, and it fails the

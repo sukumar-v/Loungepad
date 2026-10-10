@@ -85,6 +85,9 @@ function gameModel(g, opts) {
   lazy(m, "avgSession", () => (g.sessions > 0 && g.playtimeMinutes > 0 ? fmtPlaytime(g.playtimeMinutes / g.sessions) : ""));
   lazy(m, "hasTrailer", () => !!trailerUrl(g));
   lazy(m, "platformIcon", () => platformIcon(g) || "");
+  // A square picture, for a theme that draws icons. Read by a template, it asks the host for one
+  // (batched, once a session): only a theme that prints {{square}} ever costs a lookup.
+  lazy(m, "square", () => { const u = squareUrl(g); if (!u) requestSquare(g); return u || ""; });
 
   // The age rating in the board Settings asks for, else the other one; the mark is the board's
   // own logo, at a URL the page serves.
@@ -155,6 +158,26 @@ function gameModel(g, opts) {
 
 /* The tiles' name for it, from before there was a model. */
 function gameView(g) { return gameModel(g); }
+
+/* ---- squares ---- */
+const squareAsked = new Set();
+let squareBatch = [], squareRedraw = null;
+
+function requestSquare(g) {
+  if (squareAsked.has(g.id)) return;
+  // Looked for this month and none found: the host would refuse anyway.
+  if (g.squareCheckedAt && Date.now() - Date.parse(g.squareCheckedAt) < 30 * 864e5) return;
+  squareAsked.add(g.id);
+  squareBatch.push(g.id);
+  if (squareBatch.length === 1) setTimeout(() => { const ids = squareBatch; squareBatch = []; send({ cmd: "fetchSquares", ids }); }, 200);
+}
+
+/* Squares arrive one by one; the library is drawn again once for a run of them, keeping its place. */
+function squareLanded() {
+  bumpLive();
+  if (squareRedraw) return;
+  squareRedraw = setTimeout(() => { squareRedraw = null; renderLibrary(); if (view === "detail") paintNav(); }, 900);
+}
 
 /* ---- achievements ----
    The counts ride every state push. The lists behind the hub's trophy card -- the latest
