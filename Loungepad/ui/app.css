@@ -450,11 +450,6 @@ body[data-view="detail"] #screen-library.under { opacity: 0; }
 }
 .cont-art .ph span { font-size: 36px; }
 
-/* The focused-game panel's wordmark and its Play and Options hints are for a theme that asks for
-   them; the panel itself is opt-in too (see index.html). */
-.fd-art-logo, .fd-actions { display: none; }
-.fd-art-logo { background-size: contain; background-position: left bottom; background-repeat: no-repeat; }
-
 /* ---- legend ---- */
 .legend {
   display: flex; align-items: center; gap: 44px;

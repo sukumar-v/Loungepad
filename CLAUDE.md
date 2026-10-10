@@ -2613,8 +2613,8 @@ Stop the scrolled grid from clipping through the All games header
   answered. Test with `--resolve api.loungepad.app:443:104.21.28.128`, or a `ConnectCallback` in
   .NET; never look a new name up before it exists.
 - **Nova, the console-home theme, is in `..\loungepad-addons\themes\nova`, not yet in `index.json`**
-  (Oct 9 2026; the user asked for it unpublished). It uses the focused-game panel's wordmark and
-  Play/Options hints (`#fdLogo`, `.fd-actions`), which ship from 1.9.0, hence its `minLauncher`.
+  (Oct 9 2026; the user asked for it unpublished). It is built on the layout engine below (live
+  regions, data-act, the game list's tabs), which ships from 1.9.0, hence its `minLauncher`.
   To preview it, junction the folder into `Loungepad\themes\nova` and push a `themes` message;
   **remove the junction before any build**, or the csproj embeds it as a bundled theme. No
   PlayStation name or marks in it: the add-ons repository is public.
@@ -2629,3 +2629,9 @@ Stop the scrolled grid from clipping through the All games header
   regions and `data-keep` on its art, film and shades so a layout never hides a film still playing.
   `achievementsPeek` answers a trophy card from the stored list and never fetches. Checked in the
   preview with a throwaway theme (scratchpad `_enginetest`), not yet in the real app.
+- **A sideways row inside a page that scrolls down** (Nova's trophies and media) needed two changes
+  to `navMove`'s scroller rules: the "finish this list first" pick takes anything INSIDE the
+  highlight's scroller, and a target is reachable when its scroller contains the highlight. Both
+  used direct membership, so Down skipped a media row for the button under it, and from the row
+  the page's off-screen buttons were unreachable. One key sequence over Shelf and Loungepad took
+  the same path before and after (checked by serving the committed app.js against the new one).

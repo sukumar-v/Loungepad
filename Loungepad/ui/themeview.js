@@ -325,6 +325,9 @@ function bumpLive() { liveVersion++; }
 
 function updateLiveRegions() {
   for (const host of document.querySelectorAll(".screen [data-render]")) {
+    // One the layout is not showing waits until it is: drawn hidden it would still ask the host
+    // for a gallery for every game the highlight passed (the home hub, under a theme's game list).
+    if (!host.getClientRects().length) continue;
     const screen = host.closest(".screen");
     const kind = host.dataset.model === "library" ? "library" : "game";
     let data = null, gameId = "";

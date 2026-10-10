@@ -272,7 +272,13 @@ window.Theme = (() => {
 
     // A region the theme did not ask for stays in the document but out of sight,
     // so $("gridScroll") still resolves and nothing has to null-check.
-    screen.__regionHome.forEach(({ el }) => { if (!used.has(el)) el.hidden = true; });
+    // Put back home, too: switching from one theme's layout to another's, a region the new one
+    // does not slot was still inside the old layout, and went out of the document with it.
+    screen.__regionHome.forEach(({ el, parent, next }) => {
+      if (used.has(el)) return;
+      el.hidden = true;
+      if (el.closest("[data-theme-layout]")) parent.insertBefore(el, next && next.parentNode === parent ? next : null);
+    });
 
     [...screen.children].forEach(c => { if (c.dataset.themeLayout !== undefined) c.remove(); });
     screen.append(layout);

@@ -541,7 +541,8 @@ function navMove(dir, within) {
   const curScroller = scrollerOf(cur);
   const reachable = (el) => {
     const sc = scrollerOf(el);
-    if (!sc || sc === curScroller) return true;
+    // In it counts from inside a row nested in it, too: a sideways row on a page that scrolls down.
+    if (!sc || sc === curScroller || sc.contains(cur)) return true;
     const r = el.getBoundingClientRect(), v = sc.getBoundingClientRect();
     return r.bottom > v.top && r.top < v.bottom && r.right > v.left && r.left < v.right;
   };
@@ -567,7 +568,10 @@ function navMove(dir, within) {
     return best;
   };
 
-  let best = curScroller ? pick(pool.filter(el => scrollerOf(el) === curScroller)) : null;
+  // Inside the scroller, not only directly in it: a theme's page that scrolls down can hold rows
+  // that scroll sideways, and on "directly" a Down from the row above skipped every one of them
+  // for the next button straight in the page.
+  let best = curScroller ? pick(pool.filter(el => curScroller.contains(el))) : null;
   if (!best) best = pick(pool);
   if (!best) best = Nav.wrapTarget(walkable, cur, dir);
   if (!best && pool.length !== walkable.length - 1) best = pick(walkable.filter(el => el !== cur));
@@ -891,13 +895,9 @@ function updateFocusDetail(g) {
   $("fdPlaytime").textContent = g ? fmtPlaytime(g.playtimeMinutes) : "";
   $("fdLastPlayed").textContent = g ? fmtLastPlayed(g.lastPlayed) : "";
   $("fdSize").textContent = g ? fmtSize(g.sizeBytes) : "";
-  const logo = $("fdLogo"), src = g ? logoUrl(g) : null;
-  logo.style.backgroundImage = src ? `url('${src}')` : "";
-  logo.closest(".focus-detail").classList.toggle("has-logo", !!src);
-  $("fdPlayLabel").textContent = g ? playLabel(g) : "Play";
 }
 
-/** What the Play button says for a game: the detail page's, and the focused-game panel's. */
+/** What the Play button says for a game: the detail page's, and a theme's ({{playLabel}}). */
 function playLabel(g) {
   return !g.installed ? (canInstall(g) ? "Install" : "Not installed")
     : (g.playtimeMinutes > 0 ? "Continue" : "Play");
@@ -3148,7 +3148,10 @@ function offerInstall(g) {
 function openDetail(id, from) {
   detailGameId = id;
   detailReturn = from || "library";
-  clearFocus(document.getElementById("screen-detail"));
+  const page = document.getElementById("screen-detail");
+  clearFocus(page);
+  // A theme that lays the page out in a scroller of its own: a new game starts at its top.
+  page.querySelectorAll(".theme-layout *").forEach(el => { if (el.scrollTop || el.scrollLeft) { el.scrollTop = 0; el.scrollLeft = 0; } });
   switchView("detail");
 }
 

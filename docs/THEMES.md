@@ -21,10 +21,8 @@ on, ships this way too; Shelf is the built-in look with no theme applied.
   the app moves its own regions into). A theme cannot run script: `<script>` and `on*` attributes
   are stripped. The header of `ui/theme.js` documents the binding. The library's slots are
   `topbar`, `playing`, `continue`, `grid`, `legend` and `focus-detail`, which only appears when a
-  theme asks for it and always shows the game under the highlight: its title (`.fd-logo`), a line
-  about it (`.fd-meta`), and two parts that are off until the theme shows them: its wordmark
-  (`.fd-art-logo`, with `.has-logo` on the panel while there is one) and Play and Options buttons
-  for what A and Y do (`.fd-actions`; a click on either is that button).
+  theme asks for it and always shows the title and a line about the game under the highlight. For
+  more than that, see "A layout of your own" below.
 - **`theme.json`** names the theme, and can set tokens and declare options:
 
   ```json
