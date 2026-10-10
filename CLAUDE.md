@@ -2658,8 +2658,10 @@ Stop the scrolled grid from clipping through the All games header
   goes one at a time 300 ms apart, waits a minute once on a 429, saves every twenty), stored as
   `<id>_sv_sq.<ext>` through `StoreRemoteAsync` (Slot.Square, bounds 0.85-1.18), and a game with
   none is stamped `SquareCheckedAt` and not asked again for 30 days. `MergeScanned` carries both
-  fields. The page redraws the library once for a run of `square` messages. **The worker has to be
-  deployed for any of it to happen**; until then every lookup is a 404 and Nova keeps its fallback.
+  fields. The page redraws the library once for a run of `square` messages. **Deployed Oct 10
+  2026** (version dcd106b5): the art, facts and title-only answers recorded before the deploy came
+  back byte-identical after it, fresh misses by app id and by title still answer, and 32 of the
+  user's 33 installed games have a square (Endacopia has none).
 - **`data-nav-<dir>` on a container is a theme's route out of it** (focus keys, taken when nothing
   inside lies that way). A key list written through a heredoc into a template literal lost its
   `\s` and split on the letter s, which mangled any key with an s in it; read regexes back after
