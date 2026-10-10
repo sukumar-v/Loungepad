@@ -118,21 +118,23 @@
 
   <!-- ============ DETAIL ============ -->
   <div class="screen" id="screen-detail" data-focus-scope>
-    <div class="detail-art" id="detailArt"></div>
+    <!-- data-keep: a theme that lays the page out itself still has the art, the film and the shades,
+         which the app goes on driving; it hides them in CSS if it wants them gone. -->
+    <div class="detail-art" id="detailArt" data-keep></div>
     <!-- The trailer, over the art and under the shades, on the same three-second clock. -->
-    <video id="detailVideo" class="detail-video" playsinline disablepictureinpicture preload="none"></video>
-    <div id="detailYt" class="trailer-yt detail-yt"><div id="detailYtHost"></div></div>
-    <div class="detail-shade-x"></div>
-    <div class="detail-shade-y"></div>
+    <video id="detailVideo" data-keep class="detail-video" playsinline disablepictureinpicture preload="none"></video>
+    <div id="detailYt" data-keep class="trailer-yt detail-yt"><div id="detailYtHost"></div></div>
+    <div class="detail-shade-x" data-keep></div>
+    <div class="detail-shade-y" data-keep></div>
 
     <div class="detail-content">
-      <div class="detail-top">
+      <div class="detail-top" data-region="header">
         <div class="crumb mono"><span>LIBRARY</span><span>/</span><span class="crumb-here" id="detailCrumb">STEAM</span></div>
         <!-- Where the game came from, opposite the breadcrumb that says the same thing in words. -->
         <div class="detail-platform" id="detailPlatform"></div>
       </div>
 
-      <div class="detail-main">
+      <div class="detail-main" data-region="main">
         <div class="detail-titleblock">
           <!-- The game's own wordmark when we have one, the title as text when we do not. Both
                are always in the DOM; renderDetail shows whichever applies. -->
@@ -175,7 +177,7 @@
         </div>
       </div>
 
-      <footer class="legend" id="detailFoot"></footer>
+      <footer class="legend" id="detailFoot" data-region="legend"></footer>
     </div>
   </div>
 
@@ -573,6 +575,9 @@
 <script src="theme.js"></script>
 <!-- The icons and button pictures, before the app: the browse window's bar draws from the same file. -->
 <script src="glyphs.js"></script>
+<!-- What a theme binds to and what it can make happen: the models, data-act and the live regions.
+     Before app.js, which draws the library while it loads; it only defines things itself. -->
+<script src="themeview.js"></script>
 <script src="app.js"></script>
 <script src="radial.js"></script>
 <script src="actions.js"></script>

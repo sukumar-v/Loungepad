@@ -47,6 +47,9 @@ let detailGameId = null;
 let detailReturn = "library";            // where B goes back to from detail
 
 /* filter & sort (session state) — empty sets mean "no restriction" */
+/* The library's two pages for a theme that has a game list (themeview.js): "home", and "games" on
+   one of its tabs. Shelf and Loungepad never leave home. */
+let themeLib = { page: "home", tab: "", returnKey: null };
 const F = { platforms: new Set(), status: new Set(), collections: new Set(), fav: false, hidden: false, sort: "az", search: "" };
 /* The stores. An emulated game's platform is its SYSTEM -- "Super Nintendo", "PlayStation" -- so
    the filter lists those too, but only the ones the library actually has (see emulatedPlatforms):
@@ -838,6 +841,7 @@ function afterFocusMove() {
 function paintNav() {
   const scope = Nav.activeScope();
   if (!scope) return;
+  updateLiveRegions();
   const show = focusVisible();
   const cur = focusEl();
 
@@ -1388,8 +1392,10 @@ function libraryTakesKeys() {
 function renderLibraryLegend() {
   const el = $("libraryFoot");
   if (!el) return;
-  const items = [...LIBRARY_LEGEND];
-  if (F.search) items.splice(1, 0, ["B", atLibraryTop(focusEl(document.getElementById("screen-library"))) ? "Clear search" : "Back"]);
+  const items = themeLib.page === "games"
+    ? [["A", "Launch"], ["B", "Back"], ["X", "Filter"], ["Y", "Options"], ["View", "Search"], ["LB", "Tab"], ["RB", "Tab"], ["Menu", "Settings"]]
+    : [...LIBRARY_LEGEND];
+  if (F.search && themeLib.page !== "games") items.splice(1, 0, ["B", atLibraryTop(focusEl(document.getElementById("screen-library"))) ? "Clear search" : "Back"]);
   const html = foot(...items.map(([b, label]) => [b, label, LIBRARY_KEYCAPS[b]])) + minimizeLegendItem();
   if (el.__html !== html) { el.innerHTML = html; el.__html = html; }
 }
@@ -2388,8 +2394,11 @@ function syncTrailers() {
     // menu, whose rows are not games, and asking it would stop the film the moment Y was pressed.
     const el = focusEl(document.getElementById("screen-library"));
     const g = el && el.dataset.gameId ? gameById(el.dataset.gameId) : null;
-    const url = g ? trailerUrl(g) : null;
-    if (url) lib = { g, url };
+    // On a theme's media row, the same rule as the page's strip: a film after a short beat, a
+    // picture and no film.
+    const item = focusedMediaItem();
+    const url = item ? (item.kind === "video" ? item.url : null) : g ? trailerUrl(g) : null;
+    if (url) lib = { g, url, delay: item ? GALLERY_DELAY_MS : undefined };
   } else if (!quiet && view === "detail") {
     const g = gameById(detailGameId);
     if (g) {
@@ -2408,8 +2417,8 @@ function syncTrailers() {
       }
     }
   }
-  if (!hard && mediaView && view === "detail") {
-    const g = gameById(detailGameId), item = mediaViewItems()[mediaView.idx];
+  if (!hard && mediaView) {
+    const g = mediaViewGame(), item = mediaViewItems()[mediaView.idx];
     if (g && item && item.kind === "video") full = { g, url: item.url, delay: 0 };
   }
 
@@ -2471,39 +2480,6 @@ function makeAddTile(onHover, onClick) {
  * {{playtime}} without knowing that the app stores minutes, but {{playtimeMinutes}} is there
  * for a theme that wants to do its own thing with it.
  */
-function gameView(g) {
-  return {
-    id: g.id, title: g.title, platform: g.platform, emulated: !!g.emulated,
-    installed: g.installed, favorite: g.favorite, hidden: g.hidden,
-    cover: coverUrl(g) || "", banner: bannerUrl(g) || "",
-    hero: heroUrl(g) || "", logo: logoUrl(g) || "",
-    backdrop: backdropUrl(g) || "",
-    playtimeMinutes: g.playtimeMinutes || 0, sizeBytes: g.sizeBytes || 0,
-    playtime: fmtPlaytime(g.playtimeMinutes),
-    lastPlayed: fmtLastPlayed(g.lastPlayed),
-    size: fmtSize(g.sizeBytes),
-    sessions: g.sessions || 0,
-    meta: g.installed ? shortMeta(g) : uninstalledMeta(g),
-    initials: initials(g.title),
-    // Fetched metadata. Empty string rather than undefined, so a template that prints one of
-    // these for a game we know nothing about leaves a gap instead of the word "undefined".
-    description: g.description || "",
-    developer: g.developer || "",
-    publisher: g.publisher || "",
-    genres: (g.genres || []).join(", "),
-    releaseDate: g.releaseDate || "",
-    year: releaseYear(g.releaseDate) || "",
-    score: typeof g.criticScore === "number" ? String(g.criticScore) : "",
-    pegi: typeof g.pegiRating === "number" ? String(g.pegiRating) : "",
-    // Achievements, for a template that wants to draw them: the counts as numbers, the share as
-    // a whole-number string, and `achievements` as the thing to test with data-if.
-    ...achievementView(g),
-    // What the extensions stored (addons.js): {{ext.<id>.<key>}}, and {{ext.<id>.<key>Text}} as
-    // the extension's manifest formats it. Empty for a game with nothing.
-    ext: extView(g),
-  };
-}
-
 /* A themed tile still gets the focus and identity attributes from here rather than trusting
    the template to carry them: a theme that forgets data-focusable would produce a grid you
    cannot navigate, which is a miserable thing to debug from a sofa. */
@@ -2742,7 +2718,8 @@ function contPerView(start = 0) {
 
 /** The furthest the row needs to go: the first start from which every remaining tile fits. */
 function contMaxScroll() {
-  const n = contItems.length;
+  const track = $("continueTrack");
+  const n = track ? track.children.length : contItems.length;
   for (let s = 0; s < n; s++) if (s + contPerView(s) >= n) return s;
   return 0;
 }
@@ -2813,6 +2790,7 @@ function libraryData() {
   let groups = collapseEditions(F.platforms.size ? base.filter(g => F.platforms.has(g.platform)) : base);
   if (F.fav) groups = groups.filter(x => x.members.some(m => m.favorite));
   if (F.collections.size) groups = groups.filter(x => x.members.some(gameInSelectedCollection));
+  if (themeLib.page === "games") groups = libraryTabFilter(groups, themeLib.tab);
   if (F.status.size === 1) {
     const wantInstalled = F.status.has("Installed");
     groups = groups.filter(x => x.rep.installed === wantInstalled);
@@ -2883,6 +2861,7 @@ function renderPlaying() {
 }
 
 function renderLibrary() {
+  syncLibraryPage();
   const { cont, rows, total } = libraryData();
   renderPlaying();
   contItems = cont;
@@ -2897,6 +2876,9 @@ function renderLibrary() {
   const titles = collapseEditions(visibleGames()).length;
   $("titleCount").textContent = `${titles} TITLE${titles === 1 ? "" : "S"}`;
   $("gridLabel").textContent = filterSummary(total);
+  libraryShown = total;
+  libraryShownSummary = filterSummary(total);
+  bumpLive();
 
   // Continue carousel (landscape banner art)
   const rowEl = $("continueRow");
@@ -2905,7 +2887,9 @@ function renderLibrary() {
   track.className = "continue-track";
   track.id = "continueTrack";
   rowEl.appendChild(track);
-  $("continueSection").style.display = cont.length ? "" : "none";
+  // A theme's own tile after the recents -- the way into its game list, typically.
+  const end = themeContinueEnd(cont.length);
+  $("continueSection").style.display = cont.length || end ? "" : "none";
   cont.forEach((g, i) => {
     let item = themedTile("continue-tile", g, "cont-item");
     if (!item) {
@@ -2935,6 +2919,7 @@ function renderLibrary() {
     item.addEventListener("click", () => { setFocusEl(item); updateLibraryFocus(true); libraryAccept("A"); });
     track.appendChild(item);
   });
+  if (end) track.appendChild(end);
 
   // Grid. Emptying a scroller snaps its scrollTop to 0, and this runs on every state push -- the
   // end of a scan, the end of a metadata pass, a favourite toggled -- so mid-browse the rows
@@ -3021,6 +3006,7 @@ function libraryAccept(btn) {
   if (!focusVisible()) return;   // pointer is over empty space: nothing is armed
   const el = focusEl();
   if (!el) return;
+  if (el.dataset.act && runThemeAction(el, btn)) return;
 
   const g = el.dataset.gameId ? gameById(el.dataset.gameId) : null;
   if (g) {
@@ -3051,7 +3037,9 @@ function libraryInput(btn) {
     case "View": openSearch(); break;
     // The Stats screen: play sessions and achievements across the library. LB was free (see
     // above), and it is claimed like View so a keyboard toggle bound to it still reaches here.
-    case "LB": openStats("library"); break;
+    // On a theme's game list the shoulders step through its tabs instead.
+    case "LB": if (themeLib.page === "games") stepLibraryTab(-1); else openStats("library"); break;
+    case "RB": if (themeLib.page === "games") stepLibraryTab(1); break;
     // Settings lost its tab, so this is the way in. Menu is the pad's ☰ button; holding it is
     // still the keyboard toggle, and only a tap gets here.
     case "Menu": switchView("settings"); break;
@@ -3059,6 +3047,8 @@ function libraryInput(btn) {
     // scrolls back to the top), the next one clears a standing search. Pressed repeatedly it
     // always ends on the whole library with the highlight at the top.
     case "B": {
+      // A theme's game list is a page of the library: B goes back to the home it came from.
+      if (themeLib.page === "games") { closeLibraryPage(); break; }
       const top = libraryTop();
       const cur = focusEl();
       const page = libraryScroller();
@@ -3384,6 +3374,7 @@ function renderDetailFacts(g) {
 function renderDetail() {
   const g = gameById(detailGameId);
   if (!g) { switchView(detailReturn); return; }
+  bumpLive();
 
   $("detailCrumb").textContent = g.platform.toUpperCase();
   $("detailTitle").textContent = g.title;
@@ -3468,10 +3459,12 @@ function detailMediaItems(g) {
 
 /** The strip item under the highlight, or null when the highlight is elsewhere on the page. */
 function focusedMediaItem() {
-  if (view !== "detail" || mediaView) return null;
-  const el = focusEl(document.getElementById("screen-detail"));
+  if (mediaView || (view !== "detail" && view !== "library")) return null;
+  const el = focusEl(document.getElementById(view === "detail" ? "screen-detail" : "screen-library"));
   if (!el || el.dataset.mediaIndex === undefined) return null;
-  return detailMediaItems(gameById(detailGameId))[parseInt(el.dataset.mediaIndex, 10)] || null;
+  // A theme's media row carries its game; the built-in strip is the page's.
+  const g = gameById(el.dataset.gameId || detailGameId);
+  return detailMediaItems(g)[parseInt(el.dataset.mediaIndex, 10)] || null;
 }
 
 /** The screenshot to hang behind the page instead of the game's own art, or null. */
@@ -3577,12 +3570,14 @@ let mediaView = null;      // { idx }
 let mediaViewTimer = null;
 const MEDIA_SEEK_S = 10;
 
-function mediaViewItems() { return detailMediaItems(gameById(detailGameId)); }
+function mediaViewGame() { return gameById((mediaView && mediaView.gameId) || detailGameId); }
+function mediaViewItems() { return detailMediaItems(mediaViewGame()); }
 
-function openMediaView(idx) {
-  const items = mediaViewItems();
+function openMediaView(idx, gameId) {
+  gameId = gameId || detailGameId;
+  const items = detailMediaItems(gameById(gameId));
   if (!items.length) return;
-  mediaView = { idx: Math.max(0, Math.min(idx, items.length - 1)) };
+  mediaView = { idx: Math.max(0, Math.min(idx, items.length - 1)), gameId };
   showOverlay("overlay-media");
   renderMediaView();
   clearInterval(mediaViewTimer);
@@ -3602,8 +3597,11 @@ function mediaViewStep(dir) {
   const items = mediaViewItems();
   if (!mediaView || !items.length) return;
   mediaView.idx = (mediaView.idx + dir + items.length) % items.length;
-  const el = document.querySelector(`#detailMediaTrack [data-media-index="${mediaView.idx}"]`);
-  if (el) { setFocusEl(el); updateMediaScroll(); }
+  // The strip's highlight follows, wherever the strip is: the page's own, or a theme's row.
+  const scr = document.querySelector(".screen.active");
+  const el = scr && [...scr.querySelectorAll(`[data-media-index="${mediaView.idx}"]`)]
+    .find(e => e.getClientRects().length && (e.dataset.gameId || detailGameId) === mediaView.gameId);
+  if (el) { setFocusEl(el); updateMediaScroll(); revealFocus(el); }
   renderMediaView();
 }
 
@@ -3658,7 +3656,7 @@ function mediaViewInput(btn) {
     case "A":
       if (!film) { mediaViewStep(1); break; }
       // A film that ran to its end, or would not start, plays again from the top.
-      if (!viewerTrailer.active()) viewerTrailer.arm(gameById(detailGameId), item.url, { delay: 0, again: true });
+      if (!viewerTrailer.active()) viewerTrailer.arm(mediaViewGame(), item.url, { delay: 0, again: true });
       else if (viewerTrailer.paused()) viewerTrailer.resume();
       else viewerTrailer.pause();
       renderMediaViewFoot();
@@ -3673,14 +3671,21 @@ const DETAIL_BTNS = ["play", "collect", "manage", "achievements", "activity"];
 
 function updateDetailFocus() {
   const scope = document.getElementById("screen-detail");
-  // Default to Play the first time in, then let the engine hold the position.
+  // Default to Play the first time in, then let the engine hold the position. A theme that draws
+  // the page itself has its own Play (data-act="play"); failing both, the first thing there is.
+  updateLiveRegions();
   if (!focusEl(scope)) setScopeKey(scope, "detail:play");
+  if (!focusEl(scope)) {
+    const play = [...scope.querySelectorAll('[data-render] [data-act="play"]')].find(el => el.getClientRects().length);
+    if (play) setFocusEl(play); else ensureFocus(scope);
+  }
   paintNav();
 }
 
 function detailActivate() {
   const g = gameById(detailGameId);
   const el = focusEl();
+  if (el && el.closest("[data-render]") && runThemeAction(el, "A")) return;
   if (el && el.dataset.mediaIndex !== undefined) { openMediaView(parseInt(el.dataset.mediaIndex, 10)); return; }
   const act = el ? el.dataset.act : null;
   if (act === "play" && g) { if (!g.installed) offerInstall(g); else launchGame(g); }
@@ -3695,6 +3700,8 @@ function detailInput(btn) {
   switch (btn) {
     case "Left": case "Right": case "Up": case "Down": navMove(btn); break;
     case "A": if (focusVisible()) detailActivate(); break;
+    // Y on a theme's button for the game: its menu, as on a tile.
+    case "Y": { const el = focusEl(); if (el && focusVisible() && el.closest("[data-render]")) runThemeAction(el, "Y"); break; }
     case "X": if (g) send({ cmd: "toggleFavorite", id: g.id }); break;
     case "B": switchView(detailReturn); break;
   }
@@ -6162,7 +6169,7 @@ function publishClaims() {
   const overlayUp = overlayOpen() || radialOpen || !!radialSub || actionWheelOpen || ingameOpen
     || document.body.classList.contains("overlay-mode");
   // View for search and LB for the Stats screen, both on the library only.
-  const want = view === "library" && !overlayUp && !searchOpen ? "View,LB" : "";
+  const want = view === "library" && !overlayUp && !searchOpen ? (themeLib.page === "games" ? "View,LB,RB" : "View,LB") : "";
   if (want === claimedButtons) return;
   claimedButtons = want;
   send({ cmd: "claimButtons", buttons: want ? want.split(",") : [] });
@@ -7055,7 +7062,8 @@ function handleHostMessage(m) {
       if (view === "onboarding") onOnboardingPlaynite(m);
       break;
     case "achievements": onAchievementsMessage(m); break;
-    case "achievementsSummary": onAchievementsSummary(m); break;
+    case "achievementsSummary": onAchievementsSummary(m); forgetAchPeek(m.id); break;
+    case "achievementsPeek": onAchievementsPeek(m); if (view === "library" || view === "detail") paintNav(); break;
     case "achievementsAll": onAchievementsAll(m); break;
     case "achievementsUnlocked": onAchievementsUnlocked(m); break;
     // A trailer landed on disk. One field on one game, in place: a state push here would rebuild
@@ -7070,7 +7078,9 @@ function handleHostMessage(m) {
       const g = gameById(m.id);
       if (!g) break;
       g.media = Array.isArray(m.media) ? m.media : [];
+      bumpLive();
       if (view === "detail" && detailGameId === m.id) { renderDetailMedia(g); updateDetailFocus(); }
+      else if (view === "library") paintNav();
       break;
     }
     // The host's folder dialog closed on a folder; the rest of adding it is asked here.
@@ -8016,6 +8026,16 @@ function mockHandle(msg) {
     const blocked = g && g.platform === "Xbox" && !set ? "Xbox has not seen this game played on this account yet" : null;
     handleHostMessage({ type: "achievements", id: msg.id, head: { blocked, fetching: !set && !blocked, provider: g && g.platform === "Steam" ? "steam" : "xbox", id: msg.id }, set: set || null });
     if (!set && !blocked) setTimeout(() => handleHostMessage({ type: "achievements", id: msg.id, head: null, set: { gameId: msg.id, source: "steam", fetchedAt: new Date().toISOString(), error: null, unlocked: 0, total: 0, score: 0, totalScore: 0, items: [] } }), 900);
+  } else if (msg.cmd === "achievementsPeek") {
+    const set = mockAct.sets[msg.id];
+    const items = set ? set.items : [];
+    const pct = (a) => (typeof a.percent === "number" ? a.percent : 101);
+    const peek = !set ? null : {
+      recent: items.filter(a => a.unlocked).sort((a, b) => new Date(b.unlockedAt || 0) - new Date(a.unlockedAt || 0)).slice(0, 8),
+      rarest: items.filter(a => a.unlocked && typeof a.percent === "number").sort((a, b) => a.percent - b.percent).slice(0, 8),
+      next: items.filter(a => !a.unlocked && !a.hidden).sort((a, b) => pct(b) - pct(a)).slice(0, 8),
+    };
+    setTimeout(() => handleHostMessage({ type: "achievementsPeek", id: msg.id, set: peek }), 120);
   } else if (msg.cmd === "achievementsClose") {
     /* nothing to release in the preview */
   } else if (msg.cmd === "achievementsRefresh") {

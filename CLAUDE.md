@@ -2618,3 +2618,14 @@ Stop the scrolled grid from clipping through the All games header
   To preview it, junction the folder into `Loungepad\themes\nova` and push a `themes` message;
   **remove the junction before any build**, or the csproj embeds it as a bundled theme. No
   PlayStation name or marks in it: the add-ons repository is public.
+- **Themes can lay out whole screens** (Oct 9 2026, for the console-home theme; docs/THEMES.md, "A
+  layout of your own"). `theme.js` binds `data-each`/`data-limit`/`data-bg` with a scope chain;
+  `themeview.js` holds the game and library models (lazy getters: a tile printing a title pays for
+  a title), `THEME_ACTS` (the only things a template can make happen) and the live regions
+  (`data-render` + `data-model`, drawn at the top of `paintNav` and again only when the game or
+  `liveVersion` changes). **themeview.js loads before app.js**: app.js draws the library while it
+  is still loading, and paintNav calls into it. The library's game list is `themeLib` (declared in
+  app.js) shown as `#screen-library[data-library-page]`; the game page has `header`/`main`/`legend`
+  regions and `data-keep` on its art, film and shades so a layout never hides a film still playing.
+  `achievementsPeek` answers a trophy card from the stored list and never fetches. Checked in the
+  preview with a throwaway theme (scratchpad `_enginetest`), not yet in the real app.

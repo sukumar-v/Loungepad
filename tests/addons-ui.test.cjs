@@ -225,7 +225,8 @@ ctx.addonsUi = { level: 'grid', kind: 'theme', key: null, sort: 'az' };
 // Wiring in app.js and index.html.
 assert.match(appJs, /\{ id: "addons",\s+label: "Add-ons" \}/);
 assert.match(appJs, /if \(settingsTab === "addons"\) return addonsSettingsRows\(\);/);
-assert.match(appJs, /ext: extView\(g\)/);
+// The game model lives in themeview.js now.
+assert.match(fs.readFileSync(path.join(__dirname, '../Loungepad/ui/themeview.js'), 'utf8'), /ext: extView\(g\)/);
 assert.match(appJs, /renderDetailExtFacts\(g\);/);
 assert.match(appJs, /case "addonProgress":/);
 const indexHtml = fs.readFileSync(path.join(__dirname, '../Loungepad/ui/index.html'), 'utf8');

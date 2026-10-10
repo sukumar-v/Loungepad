@@ -1131,6 +1131,17 @@ public class UiBridge
                 _achievementsOpenId = null;
                 break;
 
+            // A few of a game's achievements for a theme's trophy card (themeview.js): from what
+            // is on record only. Nothing is fetched; the background pass keeps the lists fresh.
+            case "achievementsPeek":
+            {
+                var id = msg["id"]?.GetValue<string>();
+                if (id is null) break;
+                var set = _achievements.Get(id);
+                Push(new { type = "achievementsPeek", id, set = set is null ? null : AchievementPeekDto(set) });
+                break;
+            }
+
             // Fetch again now: one game, or the whole library in the background pass.
             case "achievementsRefresh":
             {
@@ -3098,6 +3109,21 @@ public class UiBridge
         unlocked = set.Unlocked, total = set.Total, score = set.Score, totalScore = set.TotalScore,
         items = set.Items.Select(AchievementDto),
     };
+
+    /// <summary>Eight each of the latest unlocks, the rarest unlocks and the locked ones most
+    /// players have -- never a hidden one, which would give it away. The preview's mock answers
+    /// with the same three rules.</summary>
+    private static object AchievementPeekDto(GameAchievements set)
+    {
+        const int n = 8;
+        var unlocked = set.Items.Where(a => a.Unlocked).ToList();
+        return new
+        {
+            recent = unlocked.OrderByDescending(a => a.UnlockedAt ?? DateTime.MinValue).Take(n).Select(AchievementDto),
+            rarest = unlocked.Where(a => a.Percent is not null).OrderBy(a => a.Percent).Take(n).Select(AchievementDto),
+            next = set.Items.Where(a => !a.Unlocked && !a.Hidden).OrderByDescending(a => a.Percent ?? 101).Take(n).Select(AchievementDto),
+        };
+    }
 
     private static object AchievementDto(Achievement a) => new
     {

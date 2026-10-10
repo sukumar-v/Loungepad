@@ -33,10 +33,21 @@
       region rather than deleting it, so every $("id") lookup still resolves and
       the navigation engine skips it (focusables() ignores [hidden]).
 
-   BINDING is deliberately tiny -- {{field}} in text and attributes, plus
-   data-if / data-unless on an element. No expressions, no loops, no script:
-   a theme is markup, and the interesting layout freedom is in CSS anyway now
-   that navigation follows geometry.
+   BINDING is deliberately small -- {{field}} in text and attributes, data-if /
+   data-unless on an element, data-each to repeat one for every entry of a list,
+   and data-bg to put a picture behind one. No expressions and no script: a theme
+   is markup, and the interesting layout freedom is in CSS anyway now that
+   navigation follows geometry.
+
+     <div data-each="media" data-limit="8" data-bg="{{thumb}}">{{name}}</div>
+
+   Inside a data-each, a name is looked up on the entry first and then outwards,
+   so {{title}} still finds the game's title from inside its media; {{@index}},
+   {{@number}}, {{@count}}, {{@first}} and {{@last}} say where in the list it is,
+   and {{@value}} is the entry itself when it is a plain string or number.
+
+   What the fields ARE, and what a [data-act] in a template does, is the app's
+   (themeview.js); docs/THEMES.md lists both.
    ============================================================================ */
 
 window.Theme = (() => {
@@ -90,30 +101,95 @@ window.Theme = (() => {
   function source() { return loadedFrom; }
   function names() { return Object.keys(templates); }
 
-  /* {{a.b}} against the data object. Missing values render empty rather than
-     "undefined" -- a theme referencing a field the app does not have should
-     leave a gap, not print a word. */
-  const FIELD = /\{\{\s*([\w.]+)\s*\}\}/g;
+  /* {{a.b}} against a chain of scopes, innermost first: inside a data-each the entry, then
+     whatever was outside it. Missing values render empty rather than "undefined" -- a theme
+     referencing a field the app does not have should leave a gap, not print a word. */
+  const FIELD = /\{\{\s*(@?[\w.]+)\s*\}\}/g;
 
-  function lookup(data, path) {
-    let v = data;
-    for (const part of path.split(".")) {
+  function walk(v, parts) {
+    for (const part of parts) {
       if (v === null || v === undefined) return undefined;
       v = v[part];
     }
     return v;
   }
 
-  function substitute(text, data) {
+  function lookup(scopes, path) {
+    if (!Array.isArray(scopes)) scopes = [scopes];
+    const parts = path.split(".");
+    for (const sc of scopes) {
+      if (sc !== null && typeof sc === "object" && sc[parts[0]] !== undefined) return walk(sc, parts);
+    }
+    return undefined;
+  }
+
+  function substitute(text, scopes) {
     return text.replace(FIELD, (_, path) => {
-      const v = lookup(data, path);
-      return v === undefined || v === null ? "" : String(v);
+      const v = lookup(scopes, path);
+      return v === undefined || v === null || typeof v === "object" ? "" : String(v);
     });
   }
 
   function truthy(v) {
     return !(v === undefined || v === null || v === false || v === "" || v === 0
              || (Array.isArray(v) && v.length === 0));
+  }
+
+  /* A URL for background-image, quoted so that nothing in it can end the url() and start a
+     declaration of its own. Titles and store answers end up in these. */
+  function cssUrl(u) {
+    const safe = String(u).replace(/[\\"\n\r\f]/g, c => "%" + c.charCodeAt(0).toString(16).padStart(2, "0"));
+    return 'url("' + safe + '")';
+  }
+
+  /** Bind one node and everything under it, against `scopes`. */
+  function bindNode(node, scopes) {
+    if (node.nodeType === 3) {
+      if (node.nodeValue.includes("{{")) node.nodeValue = substitute(node.nodeValue, scopes);
+      return;
+    }
+    if (node.nodeType !== 1) return;
+    const el = node;
+
+    // A list: one copy of the element per entry, each bound with the entry as the innermost
+    // scope. The copies go where the element was; the element itself was only the pattern.
+    if (el.hasAttribute("data-each")) {
+      const list = lookup(scopes, el.getAttribute("data-each").trim());
+      const limit = parseInt(el.getAttribute("data-limit"), 10);
+      el.removeAttribute("data-each");
+      el.removeAttribute("data-limit");
+      const items = Array.isArray(list) ? (limit > 0 ? list.slice(0, limit) : list) : [];
+      items.forEach((item, i) => {
+        const copy = el.cloneNode(true);
+        const where = { "@index": i, "@number": i + 1, "@count": items.length, "@first": i === 0, "@last": i === items.length - 1 };
+        if (item === null || typeof item !== "object") where["@value"] = item;
+        el.parentNode.insertBefore(copy, el);
+        bindNode(copy, [where, item, ...scopes]);
+      });
+      el.remove();
+      return;
+    }
+
+    // Conditionals before anything else: no point binding something about to be dropped.
+    if (el.hasAttribute("data-if") || el.hasAttribute("data-unless")) {
+      const showIf = el.hasAttribute("data-if") ? truthy(lookup(scopes, el.getAttribute("data-if").trim())) : true;
+      const hideIf = el.hasAttribute("data-unless") ? truthy(lookup(scopes, el.getAttribute("data-unless").trim())) : false;
+      if (!showIf || hideIf) { el.remove(); return; }
+      el.removeAttribute("data-if");
+      el.removeAttribute("data-unless");
+    }
+
+    // Attribute values go through setAttribute, never innerHTML, so a game title full of angle
+    // brackets cannot become markup.
+    for (const attr of [...el.attributes]) {
+      if (attr.value.includes("{{")) el.setAttribute(attr.name, substitute(attr.value, scopes));
+    }
+    if (el.hasAttribute("data-bg")) {
+      const url = el.getAttribute("data-bg").trim();
+      el.removeAttribute("data-bg");
+      if (url) el.style.backgroundImage = cssUrl(url);
+    }
+    [...el.childNodes].forEach(child => bindNode(child, scopes));
   }
 
   /**
@@ -127,27 +203,7 @@ window.Theme = (() => {
     if (!tpl) return null;
 
     const frag = tpl.content.cloneNode(true);
-
-    // Conditionals first: no point binding text into something about to be dropped.
-    frag.querySelectorAll("[data-if],[data-unless]").forEach(el => {
-      const showIf = el.dataset.if ? truthy(lookup(data, el.dataset.if)) : true;
-      const hideIf = el.dataset.unless ? truthy(lookup(data, el.dataset.unless)) : false;
-      if (!showIf || hideIf) el.remove();
-      else { delete el.dataset.if; delete el.dataset.unless; }
-    });
-
-    // Attributes, then text. Attribute values are set with setAttribute rather
-    // than innerHTML anywhere, so a game title full of angle brackets cannot
-    // become markup.
-    frag.querySelectorAll("*").forEach(el => {
-      for (const attr of [...el.attributes]) {
-        if (attr.value.includes("{{")) el.setAttribute(attr.name, substitute(attr.value, data));
-      }
-    });
-    const walker = document.createTreeWalker(frag, NodeFilter.SHOW_TEXT);
-    const texts = [];
-    while (walker.nextNode()) if (walker.currentNode.nodeValue.includes("{{")) texts.push(walker.currentNode);
-    texts.forEach(n => { n.nodeValue = substitute(n.nodeValue, data); });
+    [...frag.childNodes].forEach(child => bindNode(child, [data]));
 
     // One element per item, so the caller has something to attach handlers and
     // focus attributes to. A template with several roots gets wrapped.
@@ -223,10 +279,12 @@ window.Theme = (() => {
     // Whatever is still a direct child is scaffolding the theme has replaced. A wrapper whose
     // regions all moved into slots is now empty; one the theme did not ask for is hidden
     // anyway. Either way it must stop taking up room.
-    screen.__shellHome.forEach(({ el }) => { if (el.parentNode === screen) el.hidden = true; });
+    // Except what the screen marks data-keep: the game page's art, film and shades, which the app
+    // goes on driving whatever the layout -- a film hidden by a layout would still be heard.
+    screen.__shellHome.forEach(({ el }) => { if (el.parentNode === screen && el.dataset.keep === undefined) el.hidden = true; });
     screen.__themed = true;
     return true;
   }
 
-  return { load, clear, has, render, applyScreen, source, names };
+  return { load, clear, has, render, applyScreen, source, names, lookup, cssUrl };
 })();
