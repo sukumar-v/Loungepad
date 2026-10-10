@@ -2683,3 +2683,17 @@ Stop the scrolled grid from clipping through the All games header
   stamps from before `MetadataService.SquareRouteLive` (08:02:05Z, from `wrangler deployments
   list`) are ignored by the bridge and the page. Checked in the real app over CDP: 252 squares in
   four minutes, about one a second, 8 genuine "none", the rest left for the next session.
+- **A rebuild must not replay the highlight** (`rebuildQuietly`, Oct 10 2026; "the focused game
+  blinks every few seconds", in every theme, from the moment Nova was used). New elements are laid
+  out once without `.focused`/`.zone-dim` (the kept scrollTop, the focus lookup) and paintNav then
+  adds them, so every state push faded the ring and the row dimming in again. Nova's squares made
+  it constant: one landed a second for minutes, each redrew the library, and the queue carried on
+  after switching theme. `renderLibrary` now runs with `.rebuilding` (transitions off), forces the
+  style with the final classes, and switches them back on; live regions do the same until the next
+  frame. Counted with `document.getAnimations()` in the preview: a redraw started 25 transitions in
+  Shelf, 4 in Loungepad, 9 in Nova, and now none; a D-pad step still starts its 18. Square redraws
+  are batched (2 s) and skipped under a theme that has not read `{{square}}`.
+- **This PC's DNS cache held `store.steampowered.com` as 192.168.1.254 (the router)** on Oct 10
+  2026, so every appdetails call failed with "The SSL connection could not be established" while
+  the CDN and the service worked; a fresh lookup gave Steam's address. `ipconfig /flushdns`, or wait
+  out the TTL. Check `ipconfig /displaydns` before blaming the code for a run of SSL failures.

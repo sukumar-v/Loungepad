@@ -862,6 +862,9 @@ body.no-motion .pill-primary.focused { animation: none; }
 
 /* ---- overlays ---- */
 /* z-index sits above focused tiles (which lift to 3 so their glow isn't clipped) */
+/* A rebuild in progress (rebuildQuietly in app.js): the new elements take their final look at once. */
+.rebuilding, .rebuilding * { transition: none !important; }
+
 .overlay {
   position: absolute; inset: 0; display: none;
   align-items: center; justify-content: center;

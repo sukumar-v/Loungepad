@@ -87,7 +87,7 @@ function gameModel(g, opts) {
   lazy(m, "platformIcon", () => platformIcon(g) || "");
   // A square picture, for a theme that draws icons. Read by a template, it asks the host for one
   // (batched, once a session): only a theme that prints {{square}} ever costs a lookup.
-  lazy(m, "square", () => { const u = squareUrl(g); if (!u) requestSquare(g); return u || ""; });
+  lazy(m, "square", () => { squareTheme = (S.settings && S.settings.theme) || ""; const u = squareUrl(g); if (!u) requestSquare(g); return u || ""; });
 
   // The age rating in the board Settings asks for, else the other one; the mark is the board's
   // own logo, at a URL the page serves.
@@ -163,6 +163,9 @@ function gameView(g) { return gameModel(g); }
 const squareAsked = new Set();
 const SQUARE_ROUTE_LIVE = Date.parse("2026-10-10T08:02:05Z");
 let squareBatch = [], squareRedraw = null;
+// The theme that last drew a square. A run of them asked for under it goes on arriving after a
+// switch to a theme that draws none, and redrawing that theme's library for each was pointless.
+let squareTheme = null;
 
 function requestSquare(g) {
   if (squareAsked.has(g.id)) return;
@@ -178,8 +181,15 @@ function requestSquare(g) {
 /* Squares arrive one by one; the library is drawn again once for a run of them, keeping its place. */
 function squareLanded() {
   bumpLive();
-  if (squareRedraw) return;
-  squareRedraw = setTimeout(() => { squareRedraw = null; renderLibrary(); if (view === "detail") paintNav(); }, 900);
+  if (squareRedraw || squareTheme !== ((S.settings && S.settings.theme) || "")) return;
+  // Every two seconds at most: a run of them is one redraw, not one a second.
+  squareRedraw = setTimeout(() => {
+    squareRedraw = null;
+    // Asked again at the time: the theme may have changed while this waited.
+    if (squareTheme !== ((S.settings && S.settings.theme) || "")) return;
+    renderLibrary();
+    if (view === "detail") paintNav();
+  }, 2000);
 }
 
 /* ---- achievements ----
@@ -393,6 +403,11 @@ function liveGame(host, screen) {
 }
 
 function fillLive(host, data, gameId) {
+  // Drawn again under the highlight (a state push, a gallery arriving) without it blinking; see
+  // rebuildQuietly. The classes are applied by the paintNav this runs inside, so the quiet window
+  // is the rest of that paint: closed on the next frame.
+  host.classList.add("rebuilding");
+  nextFrame(() => { void host.offsetWidth; host.classList.remove("rebuilding"); });
   const el = data ? Theme.render(host.dataset.render, data) : null;
   // The same game drawn again keeps where its rows were scrolled to; a different one starts over.
   const same = host.__gameId === gameId;

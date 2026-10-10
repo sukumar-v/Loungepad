@@ -2892,7 +2892,29 @@ function renderPlaying() {
   card.onclick = () => { setFocusEl(card); updateLibraryFocus(true); send({ cmd: "resumeGame" }); };
 }
 
+/*
+ * Rebuild a part of the page without its transitions replaying. A rebuild makes new elements that
+ * have never been drawn with .focused (or a row's .zone-dim): the first thing that reads layout --
+ * the kept scrollTop, the focus lookup -- computes them without it, and when paintNav adds it the
+ * highlight's ring, glow and lift transition in from nothing. Every state push did that to the tile
+ * under the highlight: the metadata pass's checkpoints, an extension's saves, squares landing once
+ * a second -- "the focused game blinks every few seconds", in every theme (Oct 10 2026). So the
+ * rebuild runs with transitions off, the final classes are computed while they are off, and they
+ * are switched back on: nothing changes value after that, so nothing animates. Only transitions:
+ * an animation switched off and on again would restart.
+ */
+function rebuildQuietly(root, fn) {
+  if (!root) return fn();
+  root.classList.add("rebuilding");
+  try { return fn(); }
+  finally { void root.offsetWidth; root.classList.remove("rebuilding"); }
+}
+
 function renderLibrary() {
+  return rebuildQuietly(document.getElementById("screen-library"), renderLibraryNow);
+}
+
+function renderLibraryNow() {
   syncLibraryPage();
   const { cont, rows, total } = libraryData();
   renderPlaying();
