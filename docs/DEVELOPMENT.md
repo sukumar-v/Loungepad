@@ -72,7 +72,7 @@ Loungepad/
     RomTitles.cs          A game's title out of a ROM's file name (No-Intro / GoodTools tags)
     EmulatorLaunch.cs     The emulator command line for a ROM: {rom}, {core} and friends
     EmulatorDetection.cs  Finds installed emulators (folders, registry, Start Menu, Steam) and
-                          ROM sources (RetroArch playlists, PCSX2/DuckStation game lists,
+                          ROM sources (RetroArch playlists, PCSX2/DuckStation/KytyPS5 game lists,
                           folders named after a system)
     RetroArchPlaylists.cs Reads RetroArch's .lpl playlists: ROM path, database label, core
     GamepadService.cs     Gamepad polling: UI navigation events + gamepad-mouse (SendInput/SetCursorPos),

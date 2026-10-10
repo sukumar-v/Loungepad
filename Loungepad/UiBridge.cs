@@ -2922,7 +2922,7 @@ public class UiBridge
                 platforms = EmulatedPlatforms.All.Select(p => new
                 {
                     id = p.Id, name = p.Name, shortName = p.Short,
-                    extensions = p.Extensions, hasCores = p.Cores.Length > 0,
+                    extensions = p.Extensions, hasCores = p.Cores.Length > 0, gameFile = p.GameFile,
                 }),
             }
         });

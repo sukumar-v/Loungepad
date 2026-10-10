@@ -80,6 +80,7 @@ public class LibraryScanner
         if (platform is null) { Log.Info($"ROM folder {folder.Path}: unknown platform '{folder.PlatformId}'"); return games; }
         if (folder.Playlist) return ScanPlaylist(folder, platform);
         if (!Directory.Exists(folder.Path)) { Log.Info($"ROM folder {folder.Path} is not there"); return games; }
+        if (platform.GameFile is not null) return ScanGameFolders(folder, platform);
 
         IEnumerable<string> extList = folder.Extensions is { Count: > 0 } own ? own : platform.Extensions;
         var exts = extList
@@ -126,6 +127,115 @@ public class LibraryScanner
             });
         }
         return games;
+    }
+
+    /// <summary>
+    /// A system whose games are folders (<see cref="EmulatedPlatforms.Def.GameFile"/>), walked the
+    /// way KytyPS5's own launcher walks them: a folder holding the game file is one game and is
+    /// not looked into further. Listing every file instead would visit a whole dump -- tens of
+    /// thousands of files a game -- for one name. Every game file is called eboot.bin, so the
+    /// title is the dump's own (sce_sys\param.json), else the folder's name. A single-file
+    /// archive of a whole game (.zar) is taken wherever the walk passes one, titled by its file
+    /// name: reading its param.json would mean opening the archive format. Without Recurse, the
+    /// walk stops one level down, which is where a folder of game folders keeps them.
+    /// </summary>
+    private static List<Game> ScanGameFolders(RomFolderDef folder, EmulatedPlatforms.Def platform)
+    {
+        var games = new List<Game>();
+        IEnumerable<string> extList = folder.Extensions is { Count: > 0 } own ? own : platform.Extensions;
+        var exts = extList
+            .Select(e => "." + e.Trim().TrimStart('.').ToLowerInvariant())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var files = new EnumerationOptions { IgnoreInaccessible = true, AttributesToSkip = FileAttributes.Hidden | FileAttributes.System };
+        // Links are not followed below the folder itself, as the launcher does not follow them:
+        // a junction back up the tree would be a walk that never ends.
+        var dirs = new EnumerationOptions { IgnoreInaccessible = true, AttributesToSkip = FileAttributes.Hidden | FileAttributes.System | FileAttributes.ReparsePoint };
+
+        var pending = new Queue<(string Dir, int Depth)>();
+        pending.Enqueue((folder.Path, 0));
+        while (pending.Count > 0)
+        {
+            var (dir, depth) = pending.Dequeue();
+            try
+            {
+                var gameFile = Path.Combine(dir, platform.GameFile!);
+                if (File.Exists(gameFile))
+                {
+                    long folderSize = 0;
+                    try { folderSize = new DirectoryInfo(dir).EnumerateFiles("*", SearchOption.AllDirectories).Sum(f => f.Length); }
+                    catch { /* size is cosmetic */ }
+                    games.Add(EmulatedGame(gameFile, dir,
+                        DumpTitle(Path.Combine(dir, "sce_sys", "param.json")) ?? RomTitles.FromLabel(Path.GetFileName(dir.TrimEnd('\\', '/'))),
+                        folderSize, platform, folder));
+                    continue;
+                }
+                foreach (var file in Directory.EnumerateFiles(dir, "*", files))
+                {
+                    if (!exts.Contains(Path.GetExtension(file))) continue;
+                    long size = 0;
+                    try { size = new FileInfo(file).Length; } catch { /* cosmetic */ }
+                    games.Add(EmulatedGame(file, Path.GetDirectoryName(file), RomTitles.FromFileName(file), size, platform, folder));
+                }
+                if (depth == 0 || folder.Recurse)
+                    foreach (var sub in Directory.EnumerateDirectories(dir, "*", dirs))
+                        pending.Enqueue((sub, depth + 1));
+            }
+            catch (Exception ex) { Log.Info($"ROM folder {folder.Path}: {dir} skipped: {ex.Message}"); }
+        }
+        return games;
+    }
+
+    private static Game EmulatedGame(string romPath, string? installDir, string title, long size,
+        EmulatedPlatforms.Def platform, RomFolderDef folder) => new()
+    {
+        Id = "rom:" + PathHash(romPath),
+        Title = title,
+        Platform = platform.Name,
+        PlatformId = platform.Id,
+        Emulated = true,
+        RomPath = romPath,
+        RomFolderId = folder.Id,
+        InstallDir = installDir,
+        SizeBytes = size,
+        Installed = true,
+    };
+
+    /// <summary>
+    /// A PS5 dump's title, from its sce_sys\param.json: the title in the dump's default language,
+    /// else in US English, else the first there is -- the order KytyPS5's launcher reads them
+    /// in. The trademark signs some titles carry go, since the metadata lookup wants the bare
+    /// name. Null when there is no file or no title in it.
+    /// </summary>
+    internal static string? DumpTitle(string paramJson)
+    {
+        try
+        {
+            var info = new FileInfo(paramJson);
+            if (!info.Exists || info.Length > 1024 * 1024) return null;
+            using var doc = JsonDocument.Parse(File.ReadAllBytes(paramJson));
+            if (doc.RootElement.ValueKind != JsonValueKind.Object
+                || !doc.RootElement.TryGetProperty("localizedParameters", out var localized)
+                || localized.ValueKind != JsonValueKind.Object) return null;
+
+            string? TitleIn(string? language) =>
+                language is not null && localized.TryGetProperty(language, out var entry)
+                && entry.ValueKind == JsonValueKind.Object
+                && entry.TryGetProperty("titleName", out var name) && name.ValueKind == JsonValueKind.String
+                    ? Clean(name.GetString()) : null;
+
+            var preferred = localized.TryGetProperty("defaultLanguage", out var lang) && lang.ValueKind == JsonValueKind.String
+                ? lang.GetString() : null;
+            return TitleIn(preferred) ?? TitleIn("en-US")
+                ?? localized.EnumerateObject().Select(p => TitleIn(p.Name)).FirstOrDefault(t => t is not null);
+        }
+        catch { return null; }
+
+        static string? Clean(string? title)
+        {
+            if (title is null) return null;
+            title = Regex.Replace(title.Replace("™", "").Replace("®", "").Replace("©", ""), @"\s+", " ").Trim();
+            return title.Length > 0 ? title : null;
+        }
     }
 
     /// <summary>

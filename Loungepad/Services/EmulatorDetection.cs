@@ -412,16 +412,93 @@ public static class EmulatorDetection
         {
             var dir = Path.GetDirectoryName(e.ExePath) ?? "";
             var docs = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+            // KytyPS5's launcher keeps Kyty.ini beside itself when one is there (portable), and
+            // otherwise in ProgramData -- Qt's system-wide settings folder on Windows.
+            var programData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
             var (inis, platformId) = e.Preset switch
             {
                 "pcsx2" => (new[] { Path.Combine(dir, "inis", "PCSX2.ini"), Path.Combine(docs, "PCSX2", "inis", "PCSX2.ini") }, "ps2"),
                 "duckstation" => (new[] { Path.Combine(dir, "settings.ini"), Path.Combine(docs, "DuckStation", "settings.ini") }, "ps1"),
+                "kytyps5" => (new[] { Path.Combine(dir, "Kyty.ini"), Path.Combine(programData, "Kyty", "Kyty.ini") }, "ps5"),
                 _ => (Array.Empty<string>(), ""),
             };
             foreach (var ini in inis)
-                foreach (var listed in GameListPaths(ini))
+                foreach (var listed in e.Preset == "kytyps5" ? KytyGameDirs(ini) : GameListPaths(ini))
                     if (Directory.Exists(listed) && seen.Add(listed)) yield return (listed, platformId, e.Preset);
         }
+    }
+
+    /// <summary>
+    /// The game folders KytyPS5's launcher was given: [Launcher] game_dirs, a list, and the
+    /// single game_dir that older builds wrote. Qt writes a list as "a, b"; an entry holding a
+    /// comma or a quote is wrapped in quotes with backslash escapes, a character outside ASCII
+    /// may be written as \x and its hex code, and an empty list is "@Invalid()".
+    /// </summary>
+    internal static List<string> KytyGameDirs(string ini)
+    {
+        var paths = new List<string>();
+        try
+        {
+            if (!File.Exists(ini)) return paths;
+            var inSection = false;
+            foreach (var raw in File.ReadLines(ini))
+            {
+                var line = raw.Trim();
+                if (line.StartsWith('[')) { inSection = line.Equals("[Launcher]", StringComparison.OrdinalIgnoreCase); continue; }
+                if (!inSection) continue;
+                var eq = line.IndexOf('=');
+                if (eq < 0) continue;
+                var key = line[..eq].Trim();
+                if (!key.Equals("game_dirs", StringComparison.OrdinalIgnoreCase)
+                    && !key.Equals("game_dir", StringComparison.OrdinalIgnoreCase)) continue;
+                var value = line[(eq + 1)..].Trim();
+                if (value.StartsWith('@')) continue;
+                foreach (var entry in QtIniList(value))
+                    if (entry.Length > 0 && !paths.Contains(entry, StringComparer.OrdinalIgnoreCase)) paths.Add(entry);
+            }
+        }
+        catch { /* not readable; nothing to suggest */ }
+        return paths;
+    }
+
+    /// <summary>A QSettings INI value split into its entries, unescaped.</summary>
+    private static List<string> QtIniList(string value)
+    {
+        var entries = new List<string>();
+        var current = new System.Text.StringBuilder();
+        var quoted = false;
+        for (var i = 0; i < value.Length; i++)
+        {
+            var c = value[i];
+            if (c == '"') { quoted = !quoted; continue; }
+            if (c == ',' && !quoted)
+            {
+                entries.Add(current.ToString().Trim());
+                current.Clear();
+                continue;
+            }
+            if (c == '\\' && i + 1 < value.Length)
+            {
+                var next = value[++i];
+                if (next is 'x' or 'X')
+                {
+                    var hex = 0;
+                    var digits = 0;
+                    while (digits < 4 && i + 1 < value.Length && Uri.IsHexDigit(value[i + 1]))
+                    {
+                        hex = hex * 16 + Convert.ToInt32(value[++i].ToString(), 16);
+                        digits++;
+                    }
+                    if (digits > 0) current.Append((char)hex);
+                    continue;
+                }
+                current.Append(next switch { 'n' => '\n', 't' => '\t', 'r' => '\r', '0' => '\0', _ => next });
+                continue;
+            }
+            current.Append(c);
+        }
+        entries.Add(current.ToString().Trim());
+        return entries;
     }
 
     /// <summary>The [GameList] Paths / RecursivePaths of a PCSX2 or DuckStation ini. Both write
@@ -451,9 +528,9 @@ public static class EmulatorDetection
         return paths;
     }
 
-    /// <summary>True when the folder holds at least one file of the system's kind. Stops at the
-    /// first, and gives up after a few thousand files so a folder full of something else cannot
-    /// stall the scan.</summary>
+    /// <summary>True when the folder holds at least one file of the system's kind (for a system
+    /// of game folders, its game file). Stops at the first, and gives up after a few thousand
+    /// files so a folder full of something else cannot stall the scan.</summary>
     private static bool HasRoms(string dir, EmulatedPlatforms.Def platform)
     {
         var exts = platform.Extensions.Select(e => "." + e).ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -464,6 +541,7 @@ public static class EmulatorDetection
                          new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true }))
             {
                 if (exts.Contains(Path.GetExtension(f))) return true;
+                if (platform.GameFile is { } gameFile && Path.GetFileName(f).Equals(gameFile, StringComparison.OrdinalIgnoreCase)) return true;
                 if (++looked > 5000) return false;
             }
         }

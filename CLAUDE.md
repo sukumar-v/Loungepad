@@ -1549,6 +1549,59 @@ Stop the scrolled grid from clipping through the All games header
   `C:\RetroArch-Win64`, PCSX2 at `C:\PCSX2`, a GBA and a DS playlist -- so it will need its
   expectations changed on another machine.
 
+## PlayStation 5 and KytyPS5
+
+- **A PS5 game is a folder, not a file** (Oct 10 2026): a decrypted dump with `eboot.bin` at its
+  top, or a ZArchive (`.zar`) of one. `EmulatedPlatforms.Def.GameFile` ("eboot.bin", PS5 only)
+  switches `ScanRomFolder` to `ScanGameFolders`, which walks folders the way KytyPS5's own
+  launcher does: a folder holding the game file is one game and is not looked into further, and
+  links below the top are not followed. A file walk would visit tens of thousands of files a dump.
+  `RomPath` is the `eboot.bin`, so it stays a file for `EmulatorLaunch`'s `File.Exists` and the
+  id hash. The title is `sce_sys\param.json`'s `localizedParameters` (`defaultLanguage`, then
+  `en-US`, then any; ™ ® © dropped), else the folder name; a `.zar` is titled by its file name.
+  The size is the whole folder, summed on every scan as the Xbox scan does. IGDB platform 167.
+- **Only `kyty_emulator.exe` is the preset**, with `--fullscreen --game "{rom}"`. `launcher.exe`
+  is a Qt settings window that builds the emulator's whole command line from `Kyty.ini` and
+  passes `--game <folder>\eboot.bin`, the same thing. **The emulator keeps no settings of its
+  own** (checked in `src/main.cpp` and the launcher's `CreateEmulatorArgs`): resolution, key
+  mapping, AMD CPU patches all arrive as arguments, so a game Loungepad starts runs on KytyPS5's
+  defaults (1280x720 window, made borderless by `--fullscreen`) unless the folder's or game's
+  arguments add them. `kyty_emulator --help` lists them.
+- **`kyty_emulator.exe` is a console program** (PE subsystem 3), and its launcher opens it in a
+  visible console on purpose (`cmd /K`, `CREATE_NEW_CONSOLE`). Started with `UseShellExecute`
+  like every other emulator, that console would sit on the TV beside the game. The preset's
+  `HideConsole` sends it through `GameLaunchService.StartWithoutConsole`: no window, both streams
+  drained into `%APPDATA%\Loungepad\kytyps5.log` (fresh per launch, 1 MB cap, colour codes
+  stripped; draining matters, a full pipe stalls the emulator), and a plain shell start if the exe
+  ever wants elevation. Its log is Silent by default (`printf_direction`, which despite the
+  `--help` text directs the emulator's WHOLE log, not just the guest's), so the file holds the
+  start-up lines and any fatal error. MAME is a console program too and was left as it is.
+- **What the real KytyPS5 does with a fake dump** (build 2026-10-08-aa3b2cd, through
+  `StartWithoutConsole`): an SDL window titled "Game", owned by the emulator's pid, at ~0.5 s;
+  exit code 321 at ~0.9 s; the file ends with `elf is not valid: <path>\eboot.bin`. No console.
+- **The stand-in dump** (Oct 10 2026, the user's ask): `C:\Users\Sukumar\Games\Emulated\PS5\
+  Loungepad stand-in (not a real game)\`, a 4 KB zero `eboot.bin`, a `param.json` naming ASTRO
+  BOT (title id PPSA00000) and a README. Written with the sandbox off, so it is in the real
+  folder. Delete it when the testing is done.
+- **`Kyty.ini` is where KytyPS5 lists its game folders**: `[Launcher] game_dirs` (a QSettings
+  list: "a, b", quoted entries with backslash escapes, `\x` hex escapes, `@Invalid()` for empty)
+  and the older `game_dir`. QSettings puts it beside the launcher when one is there, else in
+  `%ProgramData%\Kyty\Kyty.ini` (SystemScope; this PC's). `EmulatorDetection.KytyGameDirs`
+  reads both, only for an emulator with the `kytyps5` preset, like PCSX2's and DuckStation's ini.
+- The user's KytyPS5 is at `Downloads\Applications\KytyPS5-<date>-<commit>-Windows-x64`, which
+  emulator detection does NOT reach (Downloads is walked one level, and `Applications` does not
+  look like an emulator folder): it is added by hand. Its `Kyty.ini` names
+  `C:\Users\Sukumar\Games\Emulated\PS5` (empty until the stand-in below): `HasRoms` wants a game
+  file in a folder before detection adds it.
+- Folder names: "PS5" and "PlayStation 5" guess PS5. Before, "PlayStation 5" guessed PS1 (the
+  longest name it contained was "playstation").
+- No PS5 game could be run here: there is no legal test content (KytyPS5's compatibility list is
+  300 retail titles, no homebrew). The scratch harness (`ps5-harness`, Loungepad.dll, the real log
+  held shut) checks the scan on a fake dump tree with a junction loop, the titles, `Kyty.ini`
+  parsing, the command line, detection end to end, and `StartWithoutConsole` with cmd.exe (no
+  console window against a control that shows one, both streams kept, a 45,000-line flood capped
+  without a stall): 59 checks.
+
 ## Trailers
 
 - **Steam's `appdetails` `movies` no longer names a playable file.** It used to carry `webm`/`mp4`

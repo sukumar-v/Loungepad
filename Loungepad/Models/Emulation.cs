@@ -77,7 +77,16 @@ public class RomFolderDef
 /// </summary>
 public static class EmulatedPlatforms
 {
-    public sealed record Def(string Id, string Name, string Short, string[] Extensions, int[] IgdbIds, string[] Cores);
+    public sealed record Def(string Id, string Name, string Short, string[] Extensions, int[] IgdbIds, string[] Cores)
+    {
+        /// <summary>
+        /// Set for a system whose games are folders, not files: a PS5 dump is a folder with
+        /// eboot.bin at its top and tens of thousands of files under it. The scan stops at a
+        /// folder holding this file and lists it as one game, the file being the game's path;
+        /// the extensions are then only single-file archives of a whole game (.zar).
+        /// </summary>
+        public string? GameFile { get; init; }
+    }
 
     private static Def P(string id, string name, string shortName, string exts, int[] igdb, params string[] cores) =>
         new(id, name, shortName,
@@ -108,6 +117,7 @@ public static class EmulatedPlatforms
         P("ps1",       "PlayStation",                   "PS1",           "cue,chd,pbp,m3u,ecm,mds",    new[] { 7 },           "mednafen_psx_hw_libretro.dll", "swanstation_libretro.dll", "pcsx_rearmed_libretro.dll", "mednafen_psx_libretro.dll"),
         P("ps2",       "PlayStation 2",                 "PS2",           "iso,chd,cso,zso,gz",         new[] { 8 },           "pcsx2_libretro.dll", "play_libretro.dll"),
         P("psp",       "PlayStation Portable",          "PSP",           "iso,cso,pbp,chd",            new[] { 38 },          "ppsspp_libretro.dll"),
+        P("ps5",       "PlayStation 5",                 "PS5",           "zar",                        new[] { 167 }) with { GameFile = "eboot.bin" },
         // ---- Sega ----
         P("sms",       "Sega Master System",            "Master System", Z("sms"),                     new[] { 64 },          "genesis_plus_gx_libretro.dll", "smsplus_libretro.dll"),
         P("genesis",   "Sega Genesis / Mega Drive",     "Genesis",       Z("md,gen,smd,bin"),          new[] { 29 },          "genesis_plus_gx_libretro.dll", "picodrive_libretro.dll", "blastem_libretro.dll"),
@@ -190,6 +200,7 @@ public static class EmulatedPlatforms
         ("family computer", "nes"), ("famicom", "nes"), ("nintendo entertainment system", "nes"), ("nes", "nes"), ("fds", "nes"),
         ("satellaview", "snes"), ("sufami", "snes"),
         ("playstation 2", "ps2"), ("ps2", "ps2"),
+        ("playstation 5", "ps5"), ("ps5", "ps5"),
         ("playstation portable", "psp"), ("psp", "psp"),
         ("playstation", "ps1"), ("psx", "ps1"), ("ps1", "ps1"), ("psone", "ps1"),
         ("master system", "sms"), ("mastersystem", "sms"), ("sms", "sms"),
@@ -234,7 +245,12 @@ public static class EmulatedPlatforms
 /// </summary>
 public static class EmulatorPresets
 {
-    public sealed record Preset(string Key, string Name, string[] ExeNames, string Args, string[] Platforms);
+    public sealed record Preset(string Key, string Name, string[] ExeNames, string Args, string[] Platforms)
+    {
+        /// <summary>A console program whose console has nothing to show, started without one
+        /// (see GameLaunchService.StartWithoutConsole) rather than with a window beside the game.</summary>
+        public bool HideConsole { get; init; }
+    }
 
     private static Preset P(string key, string name, string exes, string args, string platforms) =>
         new(key, name,
@@ -270,6 +286,10 @@ public static class EmulatorPresets
         P("mame",        "MAME",        "mame.exe,mame64.exe",                   "-rompath \"{romdir}\" {romname}",  "arcade,neogeo"),
         P("xemu",        "xemu",        "xemu.exe",                              "-full-screen -dvd_path " + Rom,    "xbox_og"),
         P("xenia",       "Xenia",       "xenia.exe,xenia_canary.exe",            Rom,                                "x360"),
+        // The emulator, never launcher.exe beside it: that is a settings window which starts
+        // kyty_emulator.exe itself, with --game set to the dump's eboot.bin -- what this sends too.
+        // A console program, whose launcher shows the console on purpose; here it gets none.
+        P("kytyps5",     "KytyPS5",     "kyty_emulator.exe",                     "--fullscreen --game " + Rom,       "ps5") with { HideConsole = true },
         P("mednafen",    "Mednafen",    "mednafen.exe",                          Rom,                                "ps1,saturn,tg16,tgcd,ngp,ws,lynx,vb,nes,snes,gb,gbc,gba,sms,genesis,gg"),
         P("blastem",     "BlastEm",     "blastem.exe",                           "-f " + Rom,                        "genesis"),
         P("fusion",      "Kega Fusion", "fusion.exe",                            Rom + " -fullscreen",               "genesis,sms,gg,segacd,32x"),

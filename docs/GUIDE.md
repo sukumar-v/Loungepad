@@ -215,20 +215,20 @@ in a portable folder at a drive root or from Steam, anything installed under Pro
 `%LOCALAPPDATA%`, a folder in Downloads or Desktop, an `Emulators` collection, the registry's
 uninstall entries and the Start Menu's shortcuts. Games are found from **RetroArch's playlists**
 first, which already say which system each ROM is and which core plays it, then from the game
-folders PCSX2 and DuckStation keep in their settings, then from any folder named after a system
-that holds a file of that system's kind: an EmuDeck-style `Emulation\roms\snes`, a `D:\ROMs\PS1`,
-RetroArch's own `downloads\GBA`. Everything found gets a row under **Settings → Library →
-Emulators & ROM folders**, marked *found automatically*, and anything you remove there stays
-removed. **Find emulators and ROMs automatically** turns the whole thing off.
+folders PCSX2, DuckStation and KytyPS5 keep in their settings, then from any folder named after
+a system that holds a file of that system's kind: an EmuDeck-style `Emulation\roms\snes`, a
+`D:\ROMs\PS1`, RetroArch's own `downloads\GBA`. Everything found gets a row under **Settings →
+Library → Emulators & ROM folders**, marked *found automatically*, and anything you remove there
+stays removed. **Find emulators and ROMs automatically** turns the whole thing off.
 
 For anything the scan does not find, the same section adds it by hand, entirely from the gamepad:
 
 1. **Add an emulator.** Point to its `.exe`. RetroArch, Dolphin, PCSX2, DuckStation, PPSSPP,
    Cemu, yuzu, Ryujinx, Citra/Azahar, melonDS, mGBA, Snes9x, bsnes, Mesen, Project64, ares,
-   Flycast, Redream, MAME, xemu, Xenia, Mednafen, BlastEm, Kega Fusion, BizHawk and a few more
-   are recognised from the file name and set up with the right command line. Anything else is
-   started with the ROM's path and can be given arguments from its own row (`{rom}` is the file,
-   `{romdir}`, `{romname}`, `{romfile}`, `{core}` and `{emudir}` also expand).
+   Flycast, Redream, MAME, xemu, Xenia, KytyPS5, Mednafen, BlastEm, Kega Fusion, BizHawk and a
+   few more are recognised from the file name and set up with the right command line. Anything
+   else is started with the ROM's path and can be given arguments from its own row (`{rom}` is
+   the file, `{romdir}`, `{romname}`, `{romfile}`, `{core}` and `{emudir}` also expand).
 2. **Add a ROM folder.** Pick the folder, say which system it is for (the folder's name is the
    first guess — `SNES`, `psx`, `MegaDrive` all land on the right one) and which emulator runs
    it. One folder per system, which is how every ROM collection is organised anyway; the
@@ -242,6 +242,17 @@ with the No-Intro and GoodTools tags stripped — `Legend of Zelda, The - A Link
 metadata lookup runs on, so a game the file name does not describe (a MAME set called `sf2`)
 can be renamed from its Manage menu and fetches again. Multi-disc games listed in an `.m3u`
 are one game; `.bin` tracks named by a `.cue` are not listed twice.
+
+PlayStation 5 games are folders rather than files: a dump of a game you own, with `eboot.bin` at
+its top, or a `.zar` archive of one. Point a **PlayStation 5** folder at the folder that holds
+them and each dump is one game, titled from its own `sce_sys\param.json`. They run in
+[KytyPS5](https://github.com/KytyPS5/KytyPS5): add its `kyty_emulator.exe` (not `launcher.exe`),
+and the game folders you gave KytyPS5's launcher are found on the next scan. KytyPS5's launcher
+keeps its per-game settings to itself, so Loungepad starts each game with `--fullscreen` and
+KytyPS5's defaults; anything else KytyPS5 takes on its command line can go in the folder's or
+the game's launch arguments. KytyPS5 runs without the console window its own launcher opens, and
+whatever it prints, such as the reason a game would not start, is kept in `kytyps5.log` beside
+Loungepad's own log.
 
 Every system is a platform in the library's filter, under its own **Emulated** heading, so a
 shelf of SNES games is one press away. An emulated game never merges with a store copy of the

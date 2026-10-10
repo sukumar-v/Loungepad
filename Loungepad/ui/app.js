@@ -6013,7 +6013,8 @@ function openPlatformChoice(currentId, onPick, onBack, title) {
   const list = S.emulation && S.emulation.platforms || [];
   const items = list.map(p => ({
     label: p.name, icon: "cartridge", radio: true, checked: p.id === currentId,
-    sub: (p.extensions || []).slice(0, 6).map(e => "." + e).join("  "),
+    // A system of game folders (PS5) counts a folder holding its game file, archives beside.
+    sub: (p.gameFile ? [`${p.gameFile} folders`] : []).concat((p.extensions || []).slice(0, 6).map(e => "." + e)).join("  "),
     action: () => onPick(p.id),
   }));
   const i = items.findIndex(x => x.checked);
@@ -6082,8 +6083,9 @@ function openRomFolderOptions(f) {
     action: () => openInput("FOLDER LAUNCH ARGUMENTS", f.args || (emu ? emu.args : ""),
       v => send({ cmd: "romFolderUpdate", id: f.id, args: emu && v === emu.args ? "" : v })),
   });
-  // A playlist lists its files by name; there are no extensions to choose.
-  if (!f.playlist) items.push({
+  // A playlist lists its files by name, and a folder of game folders finds them by their game
+  // file; neither has extensions to choose.
+  if (!f.playlist && !(p && p.gameFile)) items.push({
     label: "File types", icon: "file", sub: exts.map(e => "." + e).join("  "),
     action: () => openInput("FILE TYPES, COMMA SEPARATED", exts.join(", "),
       v => send({ cmd: "romFolderUpdate", id: f.id, extensions: v })),
@@ -7334,6 +7336,7 @@ const mockEmulation = {
     { id: "gba", name: "Game Boy Advance", shortName: "GBA", extensions: ["gba", "zip", "7z"], hasCores: true },
     { id: "ps1", name: "PlayStation", shortName: "PS1", extensions: ["cue", "chd", "pbp", "m3u"], hasCores: true },
     { id: "ps2", name: "PlayStation 2", shortName: "PS2", extensions: ["iso", "chd", "cso"], hasCores: true },
+    { id: "ps5", name: "PlayStation 5", shortName: "PS5", extensions: ["zar"], hasCores: false, gameFile: "eboot.bin" },
     { id: "genesis", name: "Sega Genesis / Mega Drive", shortName: "Genesis", extensions: ["md", "gen", "bin", "zip"], hasCores: true },
     { id: "arcade", name: "Arcade", shortName: "Arcade", extensions: ["zip", "7z", "chd"], hasCores: true },
   ],

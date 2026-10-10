@@ -235,6 +235,8 @@ public class GameLaunchService
             var cmd = ResolveEmulated(game, out var problem)
                       ?? throw new InvalidOperationException(problem ?? "The emulator could not be resolved");
             Log.Info($"Emulated launch: \"{cmd.Exe}\" {cmd.Args}");
+            if (EmulatorPresets.Detect(cmd.Exe) is { HideConsole: true } preset)
+                return StartWithoutConsole(cmd, preset.Key);
             return Process.Start(new ProcessStartInfo(cmd.Exe)
             {
                 UseShellExecute = true,
@@ -273,6 +275,83 @@ public class GameLaunchService
         if (!string.IsNullOrWhiteSpace(game.Args)) psi.Arguments = game.Args;
         return Process.Start(psi);
     }
+
+    private const long MaxConsoleLogBytes = 1024 * 1024;
+
+    /// <summary>
+    /// An emulator that is a console program with nothing to show in its console: KytyPS5, whose
+    /// own launcher opens one on purpose for its log. Started the ordinary way, a console window
+    /// would sit on the TV beside the game for the whole session. So it gets none, and what it
+    /// prints -- with its log at its default of Silent, a few lines at start and any fatal error,
+    /// the line worth having when a game will not boot -- goes to "&lt;preset&gt;.log" beside
+    /// Loungepad's own log, started afresh each launch and capped at a megabyte. Both streams are
+    /// always drained, file or no file: a full pipe would stall the emulator.
+    /// </summary>
+    private static Process? StartWithoutConsole(EmulatorCommand cmd, string key)
+    {
+        Process? process;
+        try
+        {
+            process = Process.Start(new ProcessStartInfo(cmd.Exe)
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                Arguments = cmd.Args,
+                WorkingDirectory = cmd.WorkingDir,
+            });
+        }
+        catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 740)
+        {
+            // An exe that asks to run elevated can only be started by the shell, console and all.
+            return Process.Start(new ProcessStartInfo(cmd.Exe)
+            {
+                UseShellExecute = true,
+                Arguments = cmd.Args,
+                WorkingDirectory = cmd.WorkingDir,
+            });
+        }
+        if (process is null) return null;
+
+        var path = Path.Combine(Paths.DataDir, key + ".log");
+        StreamWriter? writer = null;
+        try { writer = new StreamWriter(new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.ReadWrite)) { AutoFlush = true }; }
+        catch (Exception ex) { Log.Info($"Emulator output not kept: {ex.Message}"); }
+        var gate = new object();
+        long written = 0;
+        var open = 2;
+        void Take(string? line)
+        {
+            lock (gate)
+            {
+                if (line is null)
+                {
+                    if (--open == 0) { writer?.Dispose(); writer = null; }
+                    return;
+                }
+                if (writer is null || written >= MaxConsoleLogBytes) return;
+                // Colour codes, which a console would have drawn.
+                line = AnsiEscape.Replace(line, "");
+                try
+                {
+                    writer.WriteLine(line);
+                    written += line.Length + 2;
+                    if (written >= MaxConsoleLogBytes) writer.WriteLine("(the rest was not kept)");
+                }
+                catch { writer.Dispose(); writer = null; }
+            }
+        }
+        process.OutputDataReceived += (_, e) => Take(e.Data);
+        process.ErrorDataReceived += (_, e) => Take(e.Data);
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
+        Log.Info($"{Path.GetFileName(cmd.Exe)} started with no console; what it prints goes to {path}");
+        return process;
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex AnsiEscape =
+        new(@"\x1B\[[0-9;?]*[ -/]*[@-~]", System.Text.RegularExpressions.RegexOptions.Compiled);
 
     /// <summary>
     /// Poll running processes until one's image path is inside the game's install dir. Every
