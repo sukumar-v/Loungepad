@@ -14,8 +14,8 @@
     <!--
       AllowsTransparency is safe here, unlike on MainWindow: the trouble it causes is that WPF
       hosts a layered window and a hosted WebView2 then receives no mouse or wheel messages. There
-      is no WebView2 in here, and the keyboard is driven entirely by the gamepad, so it never needs
-      a mouse message at all. What it buys is real rounded corners over a game.
+      is no WebView2 in here, so the keyboard can use a layered window while still handling pointer
+      presses on its keys and close button. What it buys is real rounded corners over a game.
 
       The keys themselves are built in code from the layout tables (KeyboardLayout): the layout is
       data, and placing keys on a canvas by column is less machinery than binding blocks of
@@ -33,6 +33,34 @@
                                FontFamily="Segoe UI" HorizontalAlignment="Left" VerticalAlignment="Center"/>
                     <Border x:Name="GripBar" Background="#59F6F5F3" CornerRadius="99"
                             HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    <Button x:Name="CloseButton" ToolTip="Close keyboard"
+                            Width="28" Height="28" Padding="0" Margin="0,0,2,0"
+                            HorizontalAlignment="Right" VerticalAlignment="Center"
+                            Focusable="False" IsTabStop="False" Cursor="Hand"
+                            Foreground="#CFF6F5F3"
+                            Background="Transparent" BorderThickness="0">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border x:Name="ButtonBackground" Background="{TemplateBinding Background}"
+                                        CornerRadius="7">
+                                    <Path Width="12" Height="12" HorizontalAlignment="Center"
+                                          VerticalAlignment="Center" Stretch="None" Fill="{x:Null}"
+                                          Stroke="{TemplateBinding Foreground}" StrokeThickness="1.8"
+                                          StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                          Data="M 2,2 L 10,10 M 10,2 L 2,10"/>
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="ButtonBackground" Property="Background" Value="#40FFFFFF"/>
+                                        <Setter Property="Foreground" Value="#FFFFFFFF"/>
+                                    </Trigger>
+                                    <Trigger Property="IsPressed" Value="True">
+                                        <Setter TargetName="ButtonBackground" Property="Background" Value="#66FFFFFF"/>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Button.Template>
+                    </Button>
                 </Grid>
             </Border>
             <Canvas x:Name="Board" HorizontalAlignment="Left"/>
