@@ -40,7 +40,17 @@ internal sealed class InputInjector
     {
         new INPUT { type = INPUT_MOUSE, u = new() { mi = new() { dx = x, dy = y, mouseData = unchecked((uint)data), dwFlags = flags } } }
     });
-    public void ReleaseMouse() => Mouse(MOUSEEVENTF_LEFTUP | MOUSEEVENTF_RIGHTUP);
+    public void ReleaseMouse()
+    {
+        // A release is an input transition too. Sending RIGHTUP unconditionally when a worker
+        // starts can open the desktop context menu even though this process never pressed it.
+        // Clear only buttons Windows currently considers held (for example, after a worker died
+        // between a synthetic down and up).
+        uint flags = 0;
+        if ((NativeMethods.GetAsyncKeyState(NativeMethods.VK_LBUTTON) & 0x8000) != 0) flags |= MOUSEEVENTF_LEFTUP;
+        if ((NativeMethods.GetAsyncKeyState(NativeMethods.VK_RBUTTON) & 0x8000) != 0) flags |= MOUSEEVENTF_RIGHTUP;
+        if (flags != 0) Mouse(flags);
+    }
     public void Release()
     {
         var release = _keys.Values.Select(input => { input.u.ki.dwFlags |= KEYEVENTF_KEYUP; return input; }).ToList();

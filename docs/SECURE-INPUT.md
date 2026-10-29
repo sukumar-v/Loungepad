@@ -296,6 +296,15 @@ It applies to the Default desktop only. A healthy Winlogon heartbeat during a UA
 verifies worker startup and controller detection, but physical mapping and keyboard behavior on
 those screens still require the signed installed build to be exercised with a controller.
 
+To check the input worker's startup mouse-button cleanup without installing the service, run:
+
+```powershell
+dotnet run --project tests/Loungepad.Input.Tests -- --startup-mouse-release-probe
+```
+
+It reads the current button state and intercepts `SendInput`, reporting which releases the worker
+would send. No mouse events are injected.
+
 Read-only hardware/timer measurements are available with `--input-timing-probe`. This compares
 controller reads, device discovery, ordinary waits and the precise input timer. It briefly
 requests and restores a 1 ms timer resolution only in the benchmark process for comparison;

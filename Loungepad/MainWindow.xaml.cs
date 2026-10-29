@@ -49,11 +49,19 @@ public partial class MainWindow : Window
     private UiBridge? _bridge;
     private IntPtr _hwnd;
     private bool _suppressRefocus;
+    private readonly bool _startMinimized;
+    private bool _uiReady;
+    private bool _showWhenReady;
+    private bool _webViewInitStarted;
 
-    public MainWindow(bool windowed)
+    public MainWindow(bool windowed, bool startMinimized = false)
     {
         _windowed = windowed;
+        _startMinimized = startMinimized;
+        _parked = startMinimized;
+        _suppressRefocus = startMinimized;
         InitializeComponent();
+        if (startMinimized) ShowActivated = false;
 
         // NOT AllowsTransparency. It made the radial menu float over the desktop, but WPF
         // implements it as a layered window (WS_EX_LAYERED) and the hosted WebView2 then never
@@ -198,7 +206,7 @@ public partial class MainWindow : Window
         _gamepad.KeyboardArmed = () => _kb?.Armed ?? true;
 
         SourceInitialized += OnSourceInitialized;
-        Loaded += async (_, _) => await InitWebViewAsync();
+        Loaded += (_, _) => StartWebViewInitialization();
         Deactivated += OnDeactivated;
         // Keyboard focus into the page whenever the window is the active one. Nothing in the page
         // is focused otherwise and keydown never fires -- which is why a keyboard used to do
@@ -263,7 +271,8 @@ public partial class MainWindow : Window
     {
         _hwnd = new WindowInteropHelper(this).Handle;
         _windows.SetOwnWindow(_hwnd);
-        PositionOnTargetDisplay();
+        if (_startMinimized) PositionOffScreen();
+        else PositionOnTargetDisplay();
         // Non-XInput pads report through this window as WM_INPUT, whoever is in front (see
         // HidGamepadReader). Registered here because it needs the HWND, and before the poll
         // loop starts so the first snapshot already knows what is attached.
@@ -279,6 +288,24 @@ public partial class MainWindow : Window
         _gamepad.Start();
         _serviceInput.Start(_settings.Settings);
     }
+
+    /// <summary>Keep the initialized WPF/WebView host outside every connected display.</summary>
+    private void PositionOffScreen()
+    {
+        int x = NativeMethods.GetSystemMetrics(NativeMethods.SM_XVIRTUALSCREEN);
+        int y = NativeMethods.GetSystemMetrics(NativeMethods.SM_YVIRTUALSCREEN);
+        int width = NativeMethods.GetSystemMetrics(NativeMethods.SM_CXVIRTUALSCREEN);
+        int height = NativeMethods.GetSystemMetrics(NativeMethods.SM_CYVIRTUALSCREEN);
+        Left = x + width + 64;
+        Top = y + height + 64;
+        Width = 1280;
+        Height = 720;
+        NativeMethods.SetWindowPos(_hwnd, NativeMethods.HWND_NOTOPMOST,
+            x + width + 64, y + height + 64, 1280, 720,
+            NativeMethods.SWP_SHOWWINDOW | NativeMethods.SWP_NOACTIVATE);
+    }
+
+    private async void StartWebViewInitialization() => await InitWebViewAsync();
 
     private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
@@ -354,6 +381,8 @@ public partial class MainWindow : Window
 
     private async Task InitWebViewAsync()
     {
+        if (_webViewInitStarted) return;
+        _webViewInitStarted = true;
         try
         {
             // Trailers start on their own once the highlight has rested on a game, and Chromium
@@ -763,12 +792,30 @@ public partial class MainWindow : Window
     /// <summary>Bring it back to the TV and to the foreground.</summary>
     public void Unpark()
     {
+        // Do not expose the host window until the first state has rendered. Showing it while
+        // WebView2 is still starting leaves a black window which can look like a failed launch.
+        if (_startMinimized && !_uiReady)
+        {
+            _showWhenReady = true;
+            return;
+        }
+
         _parked = false;
         _suppressRefocus = false;
         Show();                      // PositionOnTargetDisplay restores Topmost for the TV
         PositionOnTargetDisplay();
         Activate();
         TakeForeground();
+    }
+
+    /// <summary>Called after the page has received and rendered its first complete state.</summary>
+    public void OnUiReady()
+    {
+        _uiReady = true;
+        if (!_startMinimized) return;
+
+        if (_showWhenReady) Unpark();
+        else Park();
     }
 
     /// <summary>

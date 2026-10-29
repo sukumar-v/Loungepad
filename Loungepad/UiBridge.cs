@@ -225,6 +225,10 @@ public class UiBridge
                 _ = Task.Run(() => _addons.RefreshCatalogueAsync(force: false));
                 break;
 
+            case "uiReady":
+                _window.OnUiReady();
+                break;
+
             case "launch":
             {
                 var id = msg["id"]?.GetValue<string>();
@@ -426,7 +430,8 @@ public class UiBridge
                 var incoming = msg["settings"].Deserialize<AppSettings>(JsonOpts);
                 if (incoming is null) break;
                 var displayChanged = incoming.TvDeviceName != _settings.Settings.TvDeviceName;
-                var startupChanged = incoming.LaunchOnStartup != StartupService.IsRegistered();
+                var startupChanged = incoming.LaunchOnStartup != StartupService.IsRegistered()
+                                     || (incoming.LaunchOnStartup && incoming.StartMinimizedOnStartup != StartupService.IsMinimized());
                 // Flipping the Steam library on should show the games now, not on the next start,
                 // and flipping it off should take them away just as promptly. A new key is a new
                 // route to the same answer, so it re-asks too.
@@ -451,7 +456,7 @@ public class UiBridge
                 if (achievementsChanged && !storesChanged) _ = _achievements.RefreshAllAsync(force: false);
                 if (startupChanged)
                 {
-                    try { StartupService.SetRegistered(incoming.LaunchOnStartup); }
+                    try { StartupService.SetRegistered(incoming.LaunchOnStartup, incoming.StartMinimizedOnStartup); }
                     catch (Exception ex) { Push(new { type = "toast", message = $"Startup registration failed: {ex.Message}" }); }
                 }
                 if (displayChanged) _window.PositionOnTargetDisplay();
@@ -488,12 +493,13 @@ public class UiBridge
                     TvDeviceName = _settings.Settings.TvDeviceName,
                     OnboardingVersion = _settings.Settings.OnboardingVersion,
                 };
-                var startupChanged = defaults.LaunchOnStartup != StartupService.IsRegistered();
+                var startupChanged = defaults.LaunchOnStartup != StartupService.IsRegistered()
+                                     || (defaults.LaunchOnStartup && defaults.StartMinimizedOnStartup != StartupService.IsMinimized());
                 CopySettings(defaults);
                 _settings.Save();
                 if (startupChanged)
                 {
-                    try { StartupService.SetRegistered(defaults.LaunchOnStartup); }
+                    try { StartupService.SetRegistered(defaults.LaunchOnStartup, defaults.StartMinimizedOnStartup); }
                     catch (Exception ex) { Push(new { type = "toast", message = $"Startup registration failed: {ex.Message}" }); }
                 }
                 _window.RefreshBuiltinKeyboard();
@@ -2258,6 +2264,7 @@ public class UiBridge
         t.RepositionGameWindow = s.RepositionGameWindow;
         t.KeepFocus = s.KeepFocus;
         t.LaunchOnStartup = s.LaunchOnStartup;
+        t.StartMinimizedOnStartup = s.StartMinimizedOnStartup;
         t.AutoUpdate = s.AutoUpdate;
         t.OnboardingVersion = Math.Max(0, s.OnboardingVersion);
         t.RestAfterMinutes = Math.Clamp(s.RestAfterMinutes, 0, 1440);

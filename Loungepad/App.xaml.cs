@@ -22,7 +22,7 @@ public partial class App : Application
 
     protected override void OnStartup(StartupEventArgs e)
     {
-        RestartArgs = e.Args.Where(a => a == "--windowed").ToArray();
+        RestartArgs = e.Args.Where(a => a is "--windowed" or "--minimized").ToArray();
         UpdatedFrom = ArgValue(e.Args, "--updated-from");
         // Started by an update: the copy that installed it is on its way out and still holds the
         // mutex, so wait for it rather than handing over to it.
@@ -80,8 +80,12 @@ public partial class App : Application
 
         base.OnStartup(e);
 
-        var window = new MainWindow(e.Args.Contains("--windowed"));
+        bool startMinimized = e.Args.Contains("--minimized");
+        var window = new MainWindow(e.Args.Contains("--windowed"), startMinimized);
         MainWindow = window;
+        // The minimized window is shown outside the virtual desktop without activation, so WPF
+        // and WebView2 initialize normally without appearing on any display. It parks in the
+        // tray once the page has rendered its first state.
         window.Show();
 
         ListenForSecondLaunch(window, WakeEventName);

@@ -89,6 +89,11 @@ internal static class Program
                 InputTimingProbe.Run();
                 return 0;
             }
+            if (args is ["--startup-mouse-release-probe"])
+            {
+                StartupMouseReleaseProbe();
+                return 0;
+            }
             if (args.Length is 1 or 2 && args[0] == "--service-mouse-probe")
             {
                 InstalledServiceProbe.Run(args.Length == 2 ? args[1] : null).GetAwaiter().GetResult();
@@ -512,8 +517,43 @@ internal static class Program
             mapper.Update(new(1, false, false, default, new(true, "playstation", "DualSense", "test", new() { sThumbLX = -32767 }, 1, 0, 0, 0, 0, false)), 50);
             Check(output.Any(i => i.type == INPUT_MOUSE && (i.u.mi.dwFlags & MOUSEEVENTF_MOVE) != 0)
                 && output.All(i => i.type != INPUT_KEYBOARD), "HID joystick produces mouse movement, not arrow keys");
+
+            output.Clear();
+            using var disabledMapper = new SecureMapper(new InputProfile { KeyboardToggle = "Off", MouseEnabled = false }, new InputInjector(), "Default");
+            var dpadReply = new AgentReply(1, false, true, new() { Gamepad = new() { wButtons = XINPUT_GAMEPAD_DPAD_UP } }, default);
+            disabledMapper.Update(dpadReply, 60);
+            Check(output.Count == 0, "D-pad does not produce arrow keys when mouse mapping is disabled on Default desktop");
+
+            using var winlogonMapper = new SecureMapper(new InputProfile { KeyboardToggle = "Off", MouseEnabled = false }, new InputInjector(), "Winlogon");
+            winlogonMapper.Update(dpadReply, 70);
+            Check(output.Any(i => i.type == INPUT_KEYBOARD && i.u.ki.wVk == VK_UP), "D-pad produces arrow keys for navigation on Winlogon desktop even when mouse is disabled");
         }
         finally { NativeMethods.InputSink = original; }
+    }
+
+    /// <summary>
+    /// Runs the input agent's startup mouse cleanup against the current desktop state while
+    /// intercepting SendInput. It verifies what would be released without injecting a click.
+    /// </summary>
+    private static void StartupMouseReleaseProbe()
+    {
+        var sent = new List<INPUT>();
+        var original = NativeMethods.InputSink;
+        bool leftDown = (NativeMethods.GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+        bool rightDown = (NativeMethods.GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0;
+        NativeMethods.InputSink = inputs => { sent.AddRange(inputs); return (uint)inputs.Length; };
+        try { new InputInjector().ReleaseMouse(); }
+        finally { NativeMethods.InputSink = original; }
+
+        uint flags = sent.Aggregate(0u, (value, input) => value | input.u.mi.dwFlags);
+        Console.WriteLine($"Mouse buttons reported down: left={leftDown}, right={rightDown}");
+        Console.WriteLine($"Startup cleanup would send: {(flags == 0 ? "nothing" : $"0x{flags:X}")}");
+        Check((flags & ~(MOUSEEVENTF_LEFTUP | MOUSEEVENTF_RIGHTUP)) == 0,
+            "startup cleanup emits releases only, never a mouse press");
+        Check(((flags & MOUSEEVENTF_LEFTUP) != 0) == leftDown
+              && ((flags & MOUSEEVENTF_RIGHTUP) != 0) == rightDown,
+            "startup cleanup releases only buttons currently reported down");
+        Console.WriteLine("Dry run only: SendInput was intercepted; no mouse events were sent.");
     }
 
     private static void SecureKeyboard()

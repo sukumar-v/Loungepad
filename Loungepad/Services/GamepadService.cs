@@ -487,8 +487,9 @@ internal class GamepadService : IDisposable
             bool gameFocused = _isGameFocused();
             bool launcherFg = _isLauncherForeground();
             // The keyboard needs the cursor alive even inside a game: pointing at a key is one
-            // of the two ways to drive it.
-            bool serviceActive = !gameFocused || MouseInGameNow(s) || KeyboardOwnsPad;
+            // of the two ways to drive it. Outside a focused game, the joystick mouse switch
+            // decides whether the pad drives desktop mouse and keyboard actions.
+            bool serviceActive = launcherFg || (gameFocused ? MouseInGameNow(s) : s.GamepadMouseEnabled) || KeyboardOwnsPad;
 
             ushort buttons = state.Gamepad.wButtons;
             ushort pressed = (ushort)(buttons & ~prevButtons);

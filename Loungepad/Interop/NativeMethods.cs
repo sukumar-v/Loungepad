@@ -94,6 +94,9 @@ internal static class NativeMethods
     public static extern IntPtr GetForegroundWindow();
 
     [DllImport("user32.dll")]
+    public static extern short GetAsyncKeyState(int vKey);
+
+    [DllImport("user32.dll")]
     public static extern IntPtr GetDesktopWindow();
 
     [DllImport("user32.dll")]
@@ -495,6 +498,7 @@ internal static class NativeMethods
     public const uint KEYEVENTF_EXTENDEDKEY = 0x0001;
     public const uint KEYEVENTF_UNICODE = 0x0004;
 
+    public const int VK_LBUTTON = 0x01, VK_RBUTTON = 0x02;
     public const ushort VK_BACK = 0x08, VK_TAB = 0x09, VK_RETURN = 0x0D, VK_ESCAPE = 0x1B;
     public const ushort VK_LEFT = 0x25, VK_RIGHT = 0x27, VK_HOME = 0x24, VK_END = 0x23, VK_DELETE = 0x2E;
 

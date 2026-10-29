@@ -15,13 +15,23 @@ public static class StartupService
         return k?.GetValue(ValueName) is not null;
     }
 
-    public static void SetRegistered(bool enabled)
+    public static bool IsMinimized()
+    {
+        using var k = Registry.CurrentUser.OpenSubKey(RunKey);
+        return k?.GetValue(ValueName) is string val && val.Contains("--minimized");
+    }
+
+    public static void SetRegistered(bool enabled, bool minimized = false)
     {
         using var k = Registry.CurrentUser.CreateSubKey(RunKey);
         if (enabled)
         {
             var exe = Environment.ProcessPath ?? Process.GetCurrentProcess().MainModule?.FileName;
-            if (exe is not null) k.SetValue(ValueName, $"\"{exe}\"");
+            if (exe is not null)
+            {
+                var val = minimized ? $"\"{exe}\" --minimized" : $"\"{exe}\"";
+                k.SetValue(ValueName, val);
+            }
         }
         else
         {

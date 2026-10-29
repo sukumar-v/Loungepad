@@ -73,11 +73,12 @@ internal sealed class DesktopWorker
         _hid.RefreshDirectDevices();
         if (_desktop == "Winlogon") { _sink = new RawInputSink(_hid); _hid.ReadXboxThroughRawInput(_sink.Handle); }
         _hid.SetQuiet(true);
-        _mapper = new SecureMapper(_profile, _injector);
+        _mapper = new SecureMapper(_profile, _injector, _desktop);
         // On a thread of its own: a low-level hook whose thread stalls past Windows' timeout is
         // removed silently, and this dispatcher thread shows the secure keyboard, a WPF window.
         using var navigation = _navigation = new GamepadNavigationFilter(() => _profile.MouseEnabled);
-        // Clear synthetic drags left by a terminated desktop worker before accepting fresh presses.
+        // Clear mouse buttons left held by a terminated desktop worker before accepting fresh
+        // presses. ReleaseMouse checks the current state so this cannot emit an orphaned button-up.
         // Not fatal: a Default worker starting just as the desktops switch (the lock screen coming
         // up) had this first injection refused with ERROR_ACCESS_DENIED (Win32 5, Oct 9 2026,
         // 11:09) and died for it, to be restarted by the supervisor a moment later. The release is
@@ -340,7 +341,7 @@ internal sealed class DesktopWorker
         if (request.Profile is { } profile && profile != _profile)
         {
             MachineInputSettings.Save(profile); _profile = profile;
-            _mapper!.Dispose(); _mapper = new SecureMapper(profile, _injector);
+            _mapper!.Dispose(); _mapper = new SecureMapper(profile, _injector, _desktop);
         }
         // Direct HID reads already honor quiet mode and avoid keeping displays awake.
         var snapshot = Capture();

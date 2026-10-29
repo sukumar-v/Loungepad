@@ -15,6 +15,7 @@ internal sealed class SecureMapper : IDisposable
     private readonly TouchpadGestures _touch = new();
     private readonly StickPointer.Mover _mover = new();
     private readonly Dictionary<ushort, double> _repeat = new();
+    private readonly string _desktop;
     private KeyboardWindow? _keyboard;
     private Process? _external;
     private NativeMethods.XINPUT_GAMEPAD _lastX, _lastH;
@@ -22,9 +23,9 @@ internal sealed class SecureMapper : IDisposable
     private ushort _previous;
     private double _lastTick, _toggleAt = -1, _wheel, _hWheel;
 
-    public SecureMapper(InputProfile profile, InputInjector injector)
+    public SecureMapper(InputProfile profile, InputInjector injector, string desktop = "Default")
     {
-        _profile = profile; _injector = injector;
+        _profile = profile; _injector = injector; _desktop = desktop;
         _settings = new()
         {
             TouchpadSensitivity = profile.TouchpadSensitivity, TouchpadTapToClick = profile.TouchpadTapToClick,
@@ -97,7 +98,7 @@ internal sealed class SecureMapper : IDisposable
                 Click(held, pressed, ButtonMask(_profile.LeftClick), ref _left, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP);
                 Click(keyboardVisible ? (ushort)(held & ~XINPUT_GAMEPAD_B) : held, pressed, ButtonMask(_profile.RightClick), ref _right, MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP);
             }
-            if (!keyboardVisible) foreach (var (mask, key) in new[] { (XINPUT_GAMEPAD_DPAD_UP, VK_UP), (XINPUT_GAMEPAD_DPAD_DOWN, VK_DOWN),
+            if (!keyboardVisible && (_profile.MouseEnabled || _desktop == "Winlogon")) foreach (var (mask, key) in new[] { (XINPUT_GAMEPAD_DPAD_UP, VK_UP), (XINPUT_GAMEPAD_DPAD_DOWN, VK_DOWN),
                 (XINPUT_GAMEPAD_DPAD_LEFT, VK_LEFT), (XINPUT_GAMEPAD_DPAD_RIGHT, VK_RIGHT), (XINPUT_GAMEPAD_START, VK_RETURN) })
                 if ((pressed & mask) != 0) SendVirtualKey(key);
         }

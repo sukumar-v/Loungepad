@@ -4186,6 +4186,8 @@ function allSettingsRows() {
   rows.push({ section: "STARTUP & LOCK SCREEN", cat: "general" });
   rows.push(toggleRow("Launch Loungepad at login", "Registers a startup entry so the launcher is ready after wake or reboot",
     () => s.launchOnStartup, v => set(() => s.launchOnStartup = v)));
+  rows.push(toggleRow("Start minimized at login", "Starts in the system tray and background on boot instead of opening fullscreen on display",
+    () => s.startMinimizedOnStartup, v => set(() => s.startMinimizedOnStartup = v)));
   rows.push({
     name: "Couch setup guide", hint: "Gamepad keyboard layout, PIN sign-in, controller wake, auto-start",
     type: "action", label: "Open guide",
@@ -7167,6 +7169,7 @@ function handleHostMessage(m) {
         switchView("settings");
         toast("Welcome — pick which display is your TV");
       }
+      if (firstState) send({ cmd: "uiReady" });
       break;
     }
     // The last scan and the passes after it, source by source: the first-run setup's strip.

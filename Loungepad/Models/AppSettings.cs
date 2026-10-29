@@ -209,6 +209,7 @@ public class AppSettings
     /// <summary>On by default: a launcher you have to go and find on the desktop is not a
     /// launcher anyone uses from a sofa.</summary>
     public bool LaunchOnStartup { get; set; } = true;
+    public bool StartMinimizedOnStartup { get; set; } = false;
     /// <summary>Check GitHub for a new release every few hours, download it in the background and
     /// install it the next time the app starts. Off, nothing is fetched until Settings or the tray
     /// asks. See UpdateService.</summary>
