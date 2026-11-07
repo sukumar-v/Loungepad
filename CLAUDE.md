@@ -1209,6 +1209,16 @@ Stop the scrolled grid from clipping through the All games header
   per-account `userdata/<id>/config/librarycache/*.json` are achievement pointers, `licensecache`
   is encrypted, and `appcache/librarycache` is shared between every account that has logged in on
   the PC, so it mixes libraries.
+- **Steam family games come from `IFamilyGroupsService`** (Nov 2026): `GetFamilyGroupForUser` for
+  the group id (a uint64, a string in JSON), then `GetSharedLibraryApps` with `include_own=false`,
+  `include_excluded=false`, `include_non_games=false`, with the same credential as the owned list.
+  Without one it answers 401. They are `OwnedGame.Shared` in steam-owned.json, become the usual
+  uninstalled `steam:<appid>` tiles, and are counted apart (`SharedCount`). They get no last-played
+  date, because the answer does not say whose it is. A failed family fetch keeps the last answer's
+  shared games. Nothing local lists them: localconfig.vdf has no family keys. **Not yet verified
+  live**: no Steam sign-in on this PC; the field names come from SteamDatabase's
+  `webui/service_familygroups.proto`. Whether a user's Web API key works there (rather than only the
+  sign-in's token) is also unknown; a refusal is logged and ignored.
 - The account is read from `config/loginusers.vdf`. `MostRecent` is missing on some installs, so
   the newest `Timestamp` is the fallback.
 - The answer is cached in `steam-owned.json`, keyed by SteamID, and held for six hours; a manual

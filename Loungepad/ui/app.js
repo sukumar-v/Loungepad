@@ -4656,8 +4656,14 @@ function steamAccountHint() {
   if (!S.settings || !S.settings.steamShowOwned)
     return `${who}. Lists your whole Steam library, with anything not on disk greyed out and installable with [[A]]`;
   if (a.error) return `${who} · ${a.error}`;
-  if (a.fetchedAt) return `${who} · ${a.ownedCount} game${a.ownedCount === 1 ? "" : "s"} in your library`;
+  if (a.fetchedAt) return `${who} · ${steamLibraryCount(a)}`;
   return `${who} · fetching your library…`;
+}
+/* "212 games in your library", and the Steam family's lent games apart from them: a family can
+   lend hundreds, and folded into one number they would read as the account's own. */
+function steamLibraryCount(a) {
+  const own = `${a.ownedCount} game${a.ownedCount === 1 ? "" : "s"} in your library`;
+  return a.sharedCount ? `${own}, ${a.sharedCount} from your Steam family` : own;
 }
 
 /* One row per store you sign in to, the way Playnite's library plugins work. Being signed in IS the
@@ -4698,7 +4704,7 @@ function steamSignInRow() {
   const hint = !signedIn
     ? "Sign in on Steam's own page and the games you own and your achievements are read from Steam with that sign-in, whatever your profile's privacy settings. Your password never reaches Loungepad, and your account's data goes to Steam and nowhere else"
     : why ? `Signed in as ${who} · ${why}`
-    : a.fetchedAt ? `Signed in as ${who} · ${a.ownedCount} game${a.ownedCount === 1 ? "" : "s"} in your library`
+    : a.fetchedAt ? `Signed in as ${who} · ${steamLibraryCount(a)}`
     : `Signed in as ${who} · fetching your library…`;
   return {
     name: "Steam sign-in", hint, type: "action", label: signedIn ? "Sign out" : "Sign in",
@@ -8627,7 +8633,7 @@ function mockHandle(msg) {
       collections: mockCollections,
       achievements: mockAchSummaries(),
       sessionStart: mockHandle._running ? new Date(Date.now() - 72 * 60000).toISOString() : null,
-      steamAccount: { steamId: "76561198000000000", personaName: "couchplayer", ownedCount: 212,
+      steamAccount: { steamId: "76561198000000000", personaName: "couchplayer", ownedCount: 212, sharedCount: 38,
         fetchedAt: new Date().toISOString(), error: null },
       stores: {
         epic: { signedIn: true, user: "couchplayer", count: 35, fetchedAt: new Date().toISOString(), error: null },

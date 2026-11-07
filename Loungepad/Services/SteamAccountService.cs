@@ -18,6 +18,8 @@ public class OwnedGame
     public string Name { get; set; } = "";
     public double PlaytimeMinutes { get; set; }
     public DateTime? LastPlayed { get; set; }
+    /// <summary>Lent by another member of the account's Steam family rather than owned.</summary>
+    public bool Shared { get; set; }
 }
 
 /// <summary>The last successful answer, kept on disk so an offline start keeps the library.</summary>
@@ -34,6 +36,8 @@ public class SteamAccountStatus
     public string? SteamId { get; set; }
     public string? PersonaName { get; set; }
     public int OwnedCount { get; set; }
+    /// <summary>Games the account's Steam family lends it, on top of <see cref="OwnedCount"/>.</summary>
+    public int SharedCount { get; set; }
     public DateTime? FetchedAt { get; set; }
     /// <summary>Why the last fetch did not answer, in words meant for the Settings row. Null when
     /// it did, or when nothing has been asked for yet.</summary>
@@ -208,10 +212,12 @@ public class SteamAccountService
                 return Report(cached);
             }
 
+            var own = games.Count;
+            games.AddRange(await FamilyAsync($"key={Uri.EscapeDataString(key)}", account.SteamId, games, cached, ct));
             var lib = new OwnedLibrary { SteamId = account.SteamId, FetchedAt = DateTime.UtcNow, Games = games };
             SaveCache(lib);
             Status.Error = null;
-            Log.Info($"Steam library: {games.Count} game(s) owned by {account.PersonaName}");
+            Log.Info($"Steam library: {own} game(s) owned by {account.PersonaName}, {games.Count - own} from the family");
             return Report(lib);
         }
         catch (Exception ex)
@@ -273,10 +279,13 @@ public class SteamAccountService
                 Status.Error = "Steam answered with no library for this account";
                 return Report(cached);
             }
+            var own = games.Count;
+            games.AddRange(await FamilyAsync($"access_token={Uri.EscapeDataString(auth.Value.Token)}",
+                auth.Value.SteamId, games, cached, ct));
             var lib = new OwnedLibrary { SteamId = steamId, FetchedAt = DateTime.UtcNow, Games = games };
             SaveCache(lib);
             Status.Error = null;
-            Log.Info($"Steam library: {games.Count} game(s), through the sign-in");
+            Log.Info($"Steam library: {own} game(s), through the sign-in, {games.Count - own} from the family");
             return Report(lib);
         }
         catch (Exception ex)
@@ -289,9 +298,82 @@ public class SteamAccountService
         }
     }
 
+    /// <summary>
+    /// The games the account's Steam family lends it (Steam Families, 2024): the family group the
+    /// account belongs to, then that group's shared library, both from IFamilyGroupsService with
+    /// the same credential that read the account's own list (field names checked against Steam's
+    /// service_familygroups.proto, SteamDatabase's mirror, Nov 2026). Asked for without the
+    /// account's own games, without anything Steam excludes from sharing, and without tools,
+    /// soundtracks and the like (include_non_games). Never throws: an account in no family answers an
+    /// empty list, and a fetch that fails keeps the shared games from the last good answer, so a
+    /// flaky request does not take a borrowed game off the shelf for six hours.
+    /// </summary>
+    private static async Task<List<OwnedGame>> FamilyAsync(string credential, string steamId,
+        IReadOnlyCollection<OwnedGame> own, OwnedLibrary? cached, CancellationToken ct)
+    {
+        var mine = own.Select(g => g.AppId).ToHashSet(StringComparer.Ordinal);
+        List<OwnedGame> Kept() => cached?.Games.Where(g => g.Shared && !mine.Contains(g.AppId)).ToList() ?? new();
+        try
+        {
+            const string api = "https://api.steampowered.com/IFamilyGroupsService/";
+            using var groupRes = await Http.GetAsync($"{api}GetFamilyGroupForUser/v1/?{credential}&steamid={steamId}", ct);
+            if (!groupRes.IsSuccessStatusCode)
+            {
+                Log.Info($"Steam family: {(int)groupRes.StatusCode} for the family group");
+                return Kept();
+            }
+            string? groupId;
+            using (var doc = JsonDocument.Parse(await groupRes.Content.ReadAsStringAsync(ct)))
+            {
+                if (!doc.RootElement.TryGetProperty("response", out var r)) return Kept();
+                if (r.TryGetProperty("is_not_member_of_any_group", out var none) && none.ValueKind == JsonValueKind.True)
+                    return new();
+                // A fixed64, which Steam's JSON writes as a string.
+                groupId = r.TryGetProperty("family_groupid", out var gid)
+                    ? gid.ValueKind == JsonValueKind.String ? gid.GetString() : gid.ValueKind == JsonValueKind.Number ? gid.GetRawText() : null
+                    : null;
+            }
+            if (groupId is null or "" or "0") return new();
+
+            using var appsRes = await Http.GetAsync($"{api}GetSharedLibraryApps/v1/?{credential}" +
+                $"&family_groupid={Uri.EscapeDataString(groupId)}&steamid={steamId}" +
+                "&include_own=false&include_excluded=false&include_non_games=false&language=english", ct);
+            if (!appsRes.IsSuccessStatusCode)
+            {
+                Log.Info($"Steam family: {(int)appsRes.StatusCode} for the shared library");
+                return Kept();
+            }
+            using var apps = JsonDocument.Parse(await appsRes.Content.ReadAsStringAsync(ct));
+            if (!apps.RootElement.TryGetProperty("response", out var resp)) return Kept();
+            var list = new List<OwnedGame>();
+            if (!resp.TryGetProperty("apps", out var arr) || arr.ValueKind != JsonValueKind.Array) return list;
+            foreach (var a in arr.EnumerateArray())
+            {
+                var appId = JsonNum.Long(a, "appid");
+                var name = a.TryGetProperty("name", out var n) && n.ValueKind == JsonValueKind.String ? n.GetString() : null;
+                if (appId is null or <= 0 || string.IsNullOrWhiteSpace(name)) continue;
+                // Anything Steam will not lend (a licence that cannot be shared, a game the owner
+                // keeps back) carries a reason; include_excluded=false should already drop them.
+                if (JsonNum.Long(a, "exclude_reason") is { } why && why != 0) continue;
+                var id = appId.Value.ToString();
+                if (!mine.Add(id)) continue;
+                // No last-played or playtime: the answer does not say whose they are, and a family
+                // member's evening on a game must not put it in this account's recents.
+                list.Add(new OwnedGame { AppId = id, Name = name!.Trim(), Shared = true });
+            }
+            return list;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            Log.Info($"Steam family fetch failed: {ex.Message}");
+            return Kept();
+        }
+    }
+
     private IReadOnlyList<OwnedGame> Report(OwnedLibrary? lib)
     {
-        Status.OwnedCount = lib?.Games.Count ?? 0;
+        Status.SharedCount = lib?.Games.Count(g => g.Shared) ?? 0;
+        Status.OwnedCount = (lib?.Games.Count ?? 0) - Status.SharedCount;
         Status.FetchedAt = lib?.FetchedAt;
         return lib?.Games ?? new List<OwnedGame>();
     }
