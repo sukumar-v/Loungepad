@@ -107,6 +107,51 @@ public static class Log
     }
 }
 
+/// <summary>
+/// Writing a store so that a process ended halfway leaves the old file whole. File.WriteAllText
+/// empties the file first and writes after, and an exit (closing for an update, a crash, a kill)
+/// ends whatever background save is running -- the metadata pass's checkpoint, the achievements
+/// pass -- leaving a truncated file the next start cannot read.
+/// </summary>
+public static class SafeFile
+{
+    /// <summary>Written beside the file, flushed to disk, then renamed over it. The rename is
+    /// atomic on NTFS, so readers see the old file or the new one and never part of either.</summary>
+    public static void WriteAllText(string path, string text)
+    {
+        var tmp = path + ".tmp";
+        using (var fs = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None))
+        {
+            fs.Write(new System.Text.UTF8Encoding(false).GetBytes(text));
+            fs.Flush(flushToDisk: true);
+        }
+        File.Move(tmp, path, overwrite: true);
+    }
+
+    /// <summary>A copy that is either whole or not there.</summary>
+    public static void Copy(string from, string to)
+    {
+        var tmp = to + ".tmp";
+        File.Copy(from, tmp, overwrite: true);
+        File.Move(tmp, to, overwrite: true);
+    }
+
+    /// <summary>Moves an unreadable file out of the way under a name nothing else writes,
+    /// <c>name.unreadable-yyyyMMdd-HHmmss</c>, and never over an earlier one. The new name, or
+    /// null when it could not be moved.</summary>
+    public static string? SetAside(string path)
+    {
+        try
+        {
+            var aside = $"{path}.unreadable-{DateTime.Now:yyyyMMdd-HHmmss}";
+            for (int n = 2; File.Exists(aside); n++) aside = $"{path}.unreadable-{DateTime.Now:yyyyMMdd-HHmmss}-{n}";
+            File.Move(path, aside);
+            return aside;
+        }
+        catch { return null; }
+    }
+}
+
 public class SettingsStore
 {
     private static readonly JsonSerializerOptions JsonOpts = new()
@@ -176,7 +221,10 @@ public class SettingsStore
         }
         catch (Exception ex)
         {
-            Log.Info($"Settings load failed, using defaults: {ex.Message}");
+            // Kept, not saved over: the defaults are written on the next change, and the file
+            // that would not load is still there to recover by hand.
+            var aside = ex is JsonException && File.Exists(Paths.SettingsFile) ? SafeFile.SetAside(Paths.SettingsFile) : null;
+            Log.Info($"Settings load failed, using defaults: {ex.Message}" + (aside is null ? "" : $"; kept as {Path.GetFileName(aside)}"));
             Settings = new AppSettings();
         }
     }
@@ -184,7 +232,7 @@ public class SettingsStore
     public void Save()
     {
         Paths.EnsureCreated();
-        File.WriteAllText(Paths.SettingsFile, JsonSerializer.Serialize(Settings, JsonOpts));
+        SafeFile.WriteAllText(Paths.SettingsFile, JsonSerializer.Serialize(Settings, JsonOpts));
     }
 }
 
@@ -230,40 +278,80 @@ public class LibraryStore
     public List<string> IgnoredEmulatorPaths { get; private set; } = new();
     public List<string> IgnoredRomFolderPaths { get; private set; } = new();
 
+    /// <summary>Why nothing may be written over library.json this session, or null. Set when the
+    /// file was there and could not be read: it may be perfectly good, and a save would replace
+    /// it with whatever this session managed to load.</summary>
+    private string? _saveBlocked;
+    private bool _saveBlockedLogged;
+
+    /// <summary>
+    /// A file that cannot be read is never written over (a user's report, Nov 2026: hand-added
+    /// games gone after an update). It used to start empty, and the scan that follows every start
+    /// saved the store games it found over the top -- everything a scan cannot find again (manual
+    /// games, playtime, collections, emulators) gone for good. The file was unreadable because a
+    /// save was cut off: Save truncated it first and wrote after, and closing for an update ends
+    /// the process with a metadata checkpoint still writing (a harness killing a saving process
+    /// left it unreadable 8 times in 30). Now: a locked file is retried, then the last good copy
+    /// is shown and nothing saved; a broken file is kept beside it and the last good copy loaded.
+    /// </summary>
     public void Load()
     {
-        try
+        _saveBlocked = null;
+        _saveBlockedLogged = false;
+        LibraryFileData? data = null;
+        if (File.Exists(_file))
         {
-            if (File.Exists(_file))
+            string? text = null;
+            // Something else may have it open as we start (a sync client, a virus scanner).
+            for (int attempt = 1; text is null; attempt++)
             {
-                var text = File.ReadAllText(_file);
-                if (text.TrimStart().StartsWith('['))
+                try { text = File.ReadAllText(_file); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
-                    // pre-collections format: a bare game array
-                    Games = JsonSerializer.Deserialize<List<Game>>(text) ?? new List<Game>();
+                    if (attempt < 10) { Thread.Sleep(200); continue; }
+                    _saveBlocked = $"library.json could not be read ({ex.Message})";
+                    Log.Info($"Library: {_saveBlocked}. Nothing will be saved over it this session");
+                    break;
+                }
+            }
+            if (text is not null)
+            {
+                data = Parse(text, out var why);
+                if (data is null)
+                {
+                    var aside = SafeFile.SetAside(_file);
+                    if (aside is null) _saveBlocked = $"library.json is unreadable ({why}) and could not be moved aside";
+                    Log.Info(aside is null
+                        ? $"Library: {_saveBlocked}. Nothing will be saved over it this session"
+                        : $"Library: library.json is unreadable ({why}); kept as {Path.GetFileName(aside)}");
                 }
                 else
                 {
-                    var data = JsonSerializer.Deserialize<LibraryFileData>(text) ?? new LibraryFileData();
-                    Games = data.Games;
-                    Collections = data.Collections;
-                    Emulators = data.Emulators ?? new();
-                    RomFolders = data.RomFolders ?? new();
-                    IgnoredEmulatorPaths = data.IgnoredEmulatorPaths ?? new();
-                    IgnoredRomFolderPaths = data.IgnoredRomFolderPaths ?? new();
+                    // The last copy that loaded, for the start that finds this one broken.
+                    try { SafeFile.Copy(_file, BackupFile); }
+                    catch (Exception ex) { Log.Info($"Library: could not keep a backup copy: {ex.Message}"); }
                 }
             }
+            if (data is null && File.Exists(BackupFile))
+            {
+                try
+                {
+                    data = Parse(File.ReadAllText(BackupFile), out var why);
+                    Log.Info(data is null
+                        ? $"Library: the backup copy is unreadable too ({why})"
+                        : $"Library: restored {data.Games.Count} games from the copy kept on {File.GetLastWriteTime(BackupFile):yyyy-MM-dd HH:mm}");
+                }
+                catch (Exception ex) { Log.Info($"Library: the backup copy could not be read: {ex.Message}"); }
+            }
+            if (data is null) Log.Info("Library: starting empty");
         }
-        catch (Exception ex)
-        {
-            Log.Info($"Library load failed, starting empty: {ex.Message}");
-            Games = new List<Game>();
-            Collections = new List<CollectionDef>();
-            Emulators = new List<EmulatorDef>();
-            RomFolders = new List<RomFolderDef>();
-            IgnoredEmulatorPaths = new List<string>();
-            IgnoredRomFolderPaths = new List<string>();
-        }
+        data ??= new LibraryFileData();
+        Games = data.Games ?? new();
+        Collections = data.Collections ?? new();
+        Emulators = data.Emulators ?? new();
+        RomFolders = data.RomFolders ?? new();
+        IgnoredEmulatorPaths = data.IgnoredEmulatorPaths ?? new();
+        IgnoredRomFolderPaths = data.IgnoredRomFolderPaths ?? new();
 
         // A critic score is Metacritic's or nothing. Older builds filled the gaps with IGDB's own
         // average, and those go here rather than showing until the metadata pass reaches each
@@ -276,10 +364,38 @@ public class LibraryStore
         }
     }
 
+    private string BackupFile => _file + ".bak";
+
+    /// <summary>The file's contents, or null with the reason when they are not a library.</summary>
+    private static LibraryFileData? Parse(string text, out string why)
+    {
+        why = "";
+        try
+        {
+            // pre-collections format: a bare game array
+            if (text.TrimStart().StartsWith('['))
+                return JsonSerializer.Deserialize<List<Game>>(text) is { } games ? new LibraryFileData { Games = games } : Null(out why);
+            return JsonSerializer.Deserialize<LibraryFileData>(text) ?? Null(out why);
+        }
+        catch (Exception ex)
+        {
+            why = ex.Message;
+            return null;
+        }
+
+        static LibraryFileData? Null(out string why) { why = "it holds null"; return null; }
+    }
+
     public void Save()
     {
         lock (_gate)
         {
+            if (_saveBlocked is not null)
+            {
+                if (!_saveBlockedLogged) Log.Info($"Library: not saved, {_saveBlocked}");
+                _saveBlockedLogged = true;
+                return;
+            }
             Paths.EnsureCreated();
             Directory.CreateDirectory(Path.GetDirectoryName(_file)!);
             var data = new LibraryFileData
@@ -287,7 +403,7 @@ public class LibraryStore
                 Games = Games, Collections = Collections, Emulators = Emulators, RomFolders = RomFolders,
                 IgnoredEmulatorPaths = IgnoredEmulatorPaths, IgnoredRomFolderPaths = IgnoredRomFolderPaths,
             };
-            File.WriteAllText(_file, JsonSerializer.Serialize(data, JsonOpts));
+            SafeFile.WriteAllText(_file, JsonSerializer.Serialize(data, JsonOpts));
         }
     }
 

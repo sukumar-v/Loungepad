@@ -73,7 +73,7 @@ public sealed class ActivityStore
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(_file)!);
-                File.WriteAllText(_file, JsonSerializer.Serialize(new ActivityFile { Sessions = _sessions }, JsonOpts));
+                SafeFile.WriteAllText(_file, JsonSerializer.Serialize(new ActivityFile { Sessions = _sessions }, JsonOpts));
             }
             catch (Exception ex) { Log.Info($"Activity save failed: {ex.Message}"); }
         }

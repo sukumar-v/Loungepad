@@ -332,6 +332,43 @@ Stop the scrolled grid from clipping through the All games header
   previous run is also non-empty and testing emptiness would make stale data
   uncorrectable. Controller support is always Steam's: IGDB has no equivalent.
 
+## Saving the library
+
+- **A library.json that will not load is never saved over** (Nov 2026; a user's report: hand-added
+  games gone after an update). `Load` used to start empty on any failure, and the scan that follows
+  every start saved the store games it found over the top: manual games, playtime, collections and
+  emulators gone for good, since a scan cannot find any of them again. The file was unreadable
+  because `Save` was a plain `File.WriteAllText`, which empties the file before writing, and
+  closing for an update ends the process with a background save (the metadata pass's 20 s
+  checkpoint, the achievements pass) still running. A harness killing a saving process at random
+  left library.json unreadable 8 times in 30.
+- **`SafeFile.WriteAllText`** writes `<file>.tmp`, flushes it to disk and renames it over the file
+  (atomic on NTFS). library.json, settings.json and activity.json go through it; actions.json and
+  shortcuts.json already wrote a temp file and moved it.
+- **Every start that loads the library keeps a copy**, `library.json.bak`. A file that does not
+  parse is moved to `library.json.unreadable-<yyyyMMdd-HHmmss>` (never over an earlier one) and the
+  `.bak` is loaded; with no `.bak` it starts empty, and the broken file is still on disk. A file that
+  cannot be READ (locked) is retried for 2 s, then the `.bak` is shown and `Save` does nothing that
+  session (`_saveBlocked`): the file may be fine. settings.json that does not parse is set aside the
+  same way. Each case logs a `Library:` line saying what happened.
+- The harness is a scratch console project over Loungepad.dll (`lib-harness`, real log held shut):
+  the kill test, truncated, empty, zeroed and locked files each followed by `MergeScanned`, a new
+  install, the bare-array format, a stale `.tmp`. 19 checks; the old code failed all 11 checks in
+  the kill test and the five file cases.
+- **Checked through a real update** (Nov 7 2026): single-file builds published with `-p:Version=`
+  (pre-fix ones from a worktree of the commit before), the next one staged by hand as
+  `%LOCALAPPDATA%\Loungepad\updates\<version>\Loungepad.exe` plus `staged.json` (`{"Version", "Dir"}`;
+  the version must be above the running one), `AutoUpdate` false in the test data so it waits, then
+  the bridge's `updateInstall` over CDP with library.json cut in half just before. Pre-fix to pre-fix:
+  `Library load failed, starting empty`, and the scan saved 54 games and no hand-added ones
+  (reproduced). Fixed to fixed: the broken file kept, 56 games restored from `.bak`, both hand-added
+  games there after the scan. **Pre-fix to fixed still loses them**: the cut is made by the OUTGOING
+  version, and the fixed one has no `.bak` on its first start, so it starts from the scan with the
+  broken file kept beside it. The data folder was renamed aside for the test and back, hash-checked.
+- **Closing cancels the extension pass, and its `finally` saves** -- right as the process ends, which
+  made a cut-off save likely on an update rather than a 20 s checkpoint's bad luck. Harmless now
+  that the save is atomic.
+
 ## Settings, themes and the keyboard
 
 - A bundled theme is installed once and then kept up to date by `ThemeService.SyncBuiltIn`, which
@@ -777,8 +814,8 @@ Stop the scrolled grid from clipping through the All games header
   is kept the last row of General).
 - Verified in the windowed Debug build with keys (Sept 30 2026): every step renders over the real
   bridge with this PC's launchers, store counts, RetroArch playlists, PIN and Vortex 2.7. **Close a
-  test instance with WM_CLOSE, not Stop-Process**: `LibraryStore.Save` is a plain WriteAllText, and a
-  kill during the metadata pass's 20 s checkpoint can truncate library.json. Back it up first.
+  test instance with WM_CLOSE, not Stop-Process**: a kill used to truncate library.json mid-save. Saves
+  are atomic now (see "Saving the library"), but back it up first anyway.
 
 ## Running two copies
 
