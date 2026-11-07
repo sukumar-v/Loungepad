@@ -2037,6 +2037,24 @@ Stop the scrolled grid from clipping through the All games header
 
 ## The menu combo: tap and hold
 
+- **Superseded (Nov 2026): the one combo is now two settings**, the Power Wheel button
+  (`WheelCombo` + `WheelGesture`) and the Loungepad button (`LauncherCombo` + `LauncherGesture` +
+  `LauncherComboAction` "Toggle" | "ShowOnly"), each any recorded chord or "Off" (the user's
+  report: a stray hold hid Loungepad and showed the desktop). Defaults reproduce the old one: Guide,
+  tap the wheel, hold Loungepad. `SettingsStore.MigrateMenuCombo` turns an old file's
+  `MinimizeCombo`/`MenuComboMode` into the pair. `ComboSet` keeps one `ComboGesture` per distinct
+  chord wanting the gestures of every setting on it; the same chord and gesture on both goes to the
+  wheel, and Settings warns. A press held past `HoldMs` is never a tap any more, so with the
+  Loungepad button unset a habitual hold of Guide does not open the wheel on release. Scratch
+  harness with a fake clock: 17 traces. The rest of this section is the history.
+- **Every button setting is recorded, not picked** (`recordRow` in app.js): A on the row lists
+  "Record a button…", a few picks and Unset, and an unset row always shows a warning saying what
+  no longer has a button (the user's rule). Recording is the actions' capture with `anyButton`, so
+  A and Guide alone come back to the page, whose `check` decides; B alone still cancels. The click
+  buttons take one button and no trigger; the keyboard button may be a chord (it fires when the
+  chord is whole and leaves its buttons to the UI). The input service only knows single buttons
+  and refuses a whole profile over one it does not, so `ServiceInputClient.ServiceButton` sends a
+  chord or a D-pad direction as Off: no keyboard toggle on UAC for a chord, said in its hint.
 - **Tap opens the Power Wheel, hold (500 ms) shows or hides Loungepad** (`MenuComboMode`
   "TapHold", the default since Sept 2026, at the user's request: the double tap was finicky and
   opened the wrong thing). "DoubleTap" keeps the old shape. The tap fires on the release; the
@@ -2433,7 +2451,46 @@ Stop the scrolled grid from clipping through the All games header
   `KeyboardWindow.Output` and `Probe` are replaceable, so it records strokes instead of typing into
   whatever is in front, and a `DisplayInfo` at -6000,-6000 keeps the window off every real screen;
   `RenderTargetBitmap` of `kb.Content` gives the pictures. Do not reference Loungepad.dll instead:
-  its `Log` writes the user's real loungepad.log. 83 checks pass (Sept 2026).
+  its `Log` writes the user's real loungepad.log. 83 checks pass (Sept 2026). Compile
+  `NativeMethods.cs` into it directly (with `AllowUnsafeBlocks`) rather than referencing
+  Loungepad.Input: the class is internal there. `ClipboardState` is replaceable too (Nov 2026), so
+  a run never reads or writes the user's real clipboard.
+- **The grab bar and its close button scale with the keys** (Nov 2026, the user's report: at 30%
+  the keys shrank and the bar did not). The close button (a mouse-only X, from a contributor's PR)
+  had floored `GripHeight` at its fixed 28px; it is now `GripHeight` square, its cross in a
+  Viewbox so the stroke scales too. Harness: grip/key stays 0.42-0.45 from 30% to 160%.
+- **Paste is the middle suggestion before anything is typed** (Nov 2026, the user's ask, "like an
+  iPhone"): `PasteOffer` shows "Paste “first line…”", "Paste image" or "Paste files" while
+  `_typedAny` is false (reset on a fresh show and on `TargetClicked`) and the clipboard's sequence
+  number is not the one this keyboard last pasted. Backspace, Delete and the caret keys do not
+  count as typing (`Typed(adds: false)`; the user's report: clearing a field took the offer
+  away). Drawn as the paste icon (E77F) and the text, never the word "Paste" (the user's ask).
+  Taking it sends Ctrl+V, so any kind of content pastes the app's own way. Words flow round it (`WordIndex`), so RS still takes the first word. A
+  copy made while the keyboard is up arrives through `WM_CLIPBOARDUPDATE`. Never on the secure
+  keyboard, and not with word suggestions off (there is no bar).
+- **A controller click on a text field outside the launcher opens the keyboard**
+  (`KeyboardOnTextFields`, default on; Nov 2026, the user's ask; a switch in Settings → Keyboard →
+  Loungepad keyboard and a sixth switch on the keyboard's gear page, which goes to two columns so
+  the page keeps the keys' height). `GamepadService.PadClicked` (the stick's click button, and the
+  touchpad's clicks) → `MainWindow.KeyboardForClickedField`, which asks at 60 ms and then every
+  150 ms up to 1.6 s, off the UI thread: a visible system caret in the foreground
+  (`TextFieldProbe.CaretInForeground`), or UI Automation's focused element. **Asked once, it only
+  ever worked in Notepad and the browsers' own address bars** (the user's report): Chrome and
+  Firefox build the page's tree on the first request (~280 ms on throwaway instances of both) and
+  the page's focus reaches it a beat later, so the one answer was always the bare window or the
+  page. A real mouse never triggers it (the user's call: at a desk there is a real keyboard).
+  `TextFieldProbe.Classify` is the rule: Edit unless its value is read-only; Document/Group/Custom
+  only with a writable value or writable text (WPF RichTextBox, a page's contenteditable, which
+  Chromium and Firefox call a Group); a ComboBox only with writable text -- Firefox's address bar,
+  Google's search box and every role="combobox" input are ComboBoxes with editable text, where a
+  `<select>` claims a writable value but has no text at all. Checked in a
+  scratch harness against WPF and Win32 controls, Chromium in an off-screen WebView2, and
+  throwaway Chrome and Firefox (own profiles in the scratchpad, started with SW_SHOWNOACTIVATE
+  off-screen or minimized -- both still took the foreground for a moment -- and killed by pid
+  after). Chrome needs `--disable-backgrounding-occluded-windows --disable-features=
+  CalculateNativeWinOcclusion` off-screen or it builds no page tree; Firefox exposes HTML ids as
+  AutomationIds once its first-run notice is gone. A field focused through UIA's `SetFocus` (no
+  click) was caught by the loop at 75-83 ms in both.
 
 ## Play sessions and achievements
 

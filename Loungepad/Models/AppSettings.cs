@@ -287,17 +287,34 @@ public class AppSettings
     // Button bindings (used outside the launcher UI; inside it A/B/Y/X/MENU follow the on-screen legend)
     public string LeftClickButton { get; set; } = "A";
     public string RightClickButton { get; set; } = "B";
-    /// <summary>Gamepad combo that minimizes/restores the launcher, e.g. "LS + RS". "Off" disables
-    /// it. Guide is the button a console player already reaches for, so that is the default --
-    /// Windows and Steam both grab it, and the Settings row says so and how to free it.</summary>
-    public string MinimizeCombo { get; set; } = "Guide";
     /// <summary>
-    /// What the menu combo does. "TapHold": a tap opens the Power Wheel and a hold shows or hides
-    /// Loungepad (the in-game menu while a game runs). "DoubleTap": a tap shows or hides Loungepad
-    /// and a double tap opens the Power Wheel -- the original, kept for anyone whose Windows still
-    /// takes a long press of the Xbox button. See ComboGesture.
+    /// The button or combo that opens the Power Wheel from anywhere, e.g. "Guide" or "LS + RS";
+    /// "Off" for none. Any chord can be recorded in Settings. Guide is the button a console player
+    /// already reaches for, so that is the default -- Windows and Steam both grab it, and the
+    /// Settings row says so and how to free it.
     /// </summary>
-    public string MenuComboMode { get; set; } = "TapHold";
+    public string WheelCombo { get; set; } = "Guide";
+    /// <summary>"Tap", "Hold" or "DoubleTap": how <see cref="WheelCombo"/> is pressed. The same
+    /// chord can carry both actions on different gestures (Guide: tap the wheel, hold Loungepad,
+    /// the default). See ComboGesture.</summary>
+    public string WheelGesture { get; set; } = "Tap";
+    /// <summary>The button or combo that shows or hides Loungepad (the in-game menu while a game
+    /// runs); "Off" for none, in which case the Power Wheel is the way back.</summary>
+    public string LauncherCombo { get; set; } = "Guide";
+    /// <summary>"Tap", "Hold" or "DoubleTap", as <see cref="WheelGesture"/>.</summary>
+    public string LauncherGesture { get; set; } = "Hold";
+    /// <summary>
+    /// "Toggle": the button shows Loungepad and, with Loungepad in front, hides it. "ShowOnly": it
+    /// only ever brings Loungepad (or the in-game menu) forward, so a stray press can never drop
+    /// you on the desktop -- the reason it was split from the Power Wheel (the user's report,
+    /// Nov 2026). Minimize Loungepad on the library's hint bar, H, and the tray still hide it.
+    /// </summary>
+    public string LauncherComboAction { get; set; } = "Toggle";
+
+    /// <summary>The gestures a combo can be pressed with.</summary>
+    public static readonly string[] Gestures = { "Tap", "Hold", "DoubleTap" };
+    public static string CleanGesture(string? g, string fallback) =>
+        Gestures.FirstOrDefault(x => string.Equals(x, g, StringComparison.OrdinalIgnoreCase)) ?? fallback;
     /// <summary>Gamepad button or combo that taps the screenshot key. "Off" disables it.
     /// Evaluated even inside a focused game, which is the only place it is any use.</summary>
     public string ScreenshotCombo { get; set; } = "Off";
@@ -335,6 +352,13 @@ public class AppSettings
     /// always allowed regardless, so this can never strand one on screen.
     /// </summary>
     public bool KeyboardInGame { get; set; }
+    /// <summary>
+    /// The Loungepad keyboard comes up by itself when a controller click (the joystick mouse's click
+    /// button, or a touchpad press or tap) lands in a text field outside the launcher -- a browser,
+    /// Notepad, a sign-in box -- the way a phone's keyboard does. A real mouse never does it: at a
+    /// desk there is a real keyboard. Over a game only with <see cref="KeyboardInGame"/>.
+    /// </summary>
+    public bool KeyboardOnTextFields { get; set; } = true;
     /// <summary>Builtin (the Loungepad keyboard) | TabTip | Osk. The Loungepad keyboard by default:
     /// it is driven by the pad out of the box and never takes the foreground, where TabTip answers a
     /// pad only on a layout picked by hand in its own settings, and Osk not at all.</summary>

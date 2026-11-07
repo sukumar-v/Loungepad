@@ -33,8 +33,11 @@
                                FontFamily="Segoe UI" HorizontalAlignment="Left" VerticalAlignment="Center"/>
                     <Border x:Name="GripBar" Background="#59F6F5F3" CornerRadius="99"
                             HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    <!-- Sized from the keys in Build(): the button, its corner, the cross and its
+                         stroke all scale together (the Viewbox scales the stroke too), so at 30% the
+                         grab bar is as small as the keys under it. -->
                     <Button x:Name="CloseButton" ToolTip="Close keyboard"
-                            Width="28" Height="28" Padding="0" Margin="0,0,2,0"
+                            Width="28" Height="28" Padding="8" Margin="0,0,2,0" Tag="7"
                             HorizontalAlignment="Right" VerticalAlignment="Center"
                             Focusable="False" IsTabStop="False" Cursor="Hand"
                             Foreground="#CFF6F5F3"
@@ -42,12 +45,13 @@
                         <Button.Template>
                             <ControlTemplate TargetType="Button">
                                 <Border x:Name="ButtonBackground" Background="{TemplateBinding Background}"
-                                        CornerRadius="7">
-                                    <Path Width="12" Height="12" HorizontalAlignment="Center"
-                                          VerticalAlignment="Center" Stretch="None" Fill="{x:Null}"
-                                          Stroke="{TemplateBinding Foreground}" StrokeThickness="1.8"
-                                          StrokeStartLineCap="Round" StrokeEndLineCap="Round"
-                                          Data="M 2,2 L 10,10 M 10,2 L 2,10"/>
+                                        CornerRadius="{Binding Tag, RelativeSource={RelativeSource TemplatedParent}}">
+                                    <Viewbox Margin="{TemplateBinding Padding}" Stretch="Uniform">
+                                        <Path Width="12" Height="12" Stretch="None" Fill="{x:Null}"
+                                              Stroke="{TemplateBinding Foreground}" StrokeThickness="1.8"
+                                              StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                              Data="M 2,2 L 10,10 M 10,2 L 2,10"/>
+                                    </Viewbox>
                                 </Border>
                                 <ControlTemplate.Triggers>
                                     <Trigger Property="IsMouseOver" Value="True">

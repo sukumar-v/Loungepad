@@ -74,6 +74,10 @@ internal class GamepadService : IDisposable
     /// this one click is the pad.
     /// </summary>
     public event Action? TouchClick;
+    /// <summary>A controller click went to the desktop: the click button with the joystick mouse,
+    /// or the touchpad. Raised as it is sent; the launcher asks afterwards whether it landed in a
+    /// text field, to bring the keyboard up.</summary>
+    public event Action? PadClicked;
     /// <summary>The right stick's scroll speed while the launcher is in front, in wheel notches per
     /// second, up positive; 0 when it is let go. The page scrolls by it every frame.</summary>
     public event Action<double>? UiScroll;
@@ -167,7 +171,10 @@ internal class GamepadService : IDisposable
     /// <summary>A press that cannot be a binding: A or Guide on their own. Recording carries on.</summary>
     public event Action<string>? CaptureRejected;
 
-    public void BeginCapture() { _captureStart = true; _capturing = true; }
+    /// <summary>Record a chord. A setting's button (<paramref name="anyButton"/>) may be A or Guide on
+    /// its own -- the page decides which it takes -- where an action's never may.</summary>
+    public void BeginCapture(bool anyButton = false) { _captureAny = anyButton; _captureStart = true; _capturing = true; }
+    private volatile bool _captureAny;
     public void CancelCapture() => _capturing = false;
 
     public bool Connected { get; private set; }
@@ -250,7 +257,8 @@ internal class GamepadService : IDisposable
         var repeat = new Dictionary<ushort, long>();      // button -> next repeat time (ms)
         long toggleDownAt = -1;
         bool toggleFired = false, leftDown = false, rightDown = false;
-        var combo = new ComboGesture();
+        bool toggleChordHeld = false;                      // a keyboard button that is a combo, held
+        var combos = new ComboSet();
         bool shotLatched = false;
         bool ltLatched = false;
         bool prevTrigger = false;                          // trigger edge, used only while suspended
@@ -298,7 +306,7 @@ internal class GamepadService : IDisposable
         var touch = new TouchpadGestures
         {
             PointerMoved = () => SetInputMode("pointer"),
-            Clicking = () => TouchClick?.Invoke(),
+            Clicking = () => { TouchClick?.Invoke(); PadClicked?.Invoke(); },
         };
 
         using var cadence = new Loungepad.Input.InputCadence();
@@ -307,7 +315,7 @@ internal class GamepadService : IDisposable
             cadence.Wait();
             if (!InputDesktopAccess.Available())
             {
-                prevButtons = 0; repeat.Clear(); combo.Reset();
+                prevButtons = 0; repeat.Clear(); combos.Reset();
                 leftDown = rightDown = false; toggleDownAt = -1;
                 touch.Reset(); awaitNeutral = true;
                 Thread.Sleep(100);
@@ -471,12 +479,12 @@ internal class GamepadService : IDisposable
                     var recorded = ComboName(_captureMask, _captureLT, _captureRT);
                     _captureMask = 0; _captureLT = _captureRT = false;
                     if (recorded == "B") { _capturing = false; Captured?.Invoke(null); }
-                    else if (recorded is "A" or "Guide") CaptureRejected?.Invoke(recorded);
+                    else if (recorded is "A" or "Guide" && !_captureAny) CaptureRejected?.Invoke(recorded);
                     else { _capturing = false; Captured?.Invoke(recorded); }
                 }
                 prevButtons = held;
                 prevTrigger = lt || rt;
-                combo.Reset(); shotLatched = false; toggleDownAt = -1;
+                combos.Reset(); shotLatched = false; toggleDownAt = -1;
                 touch.Reset();
                 continue;
             }
@@ -495,30 +503,21 @@ internal class GamepadService : IDisposable
             ushort pressed = (ushort)(buttons & ~prevButtons);
             ushort released = (ushort)(prevButtons & ~buttons);
 
-            // ---- menu combo ----
+            // ---- the Power Wheel and Loungepad buttons ----
             // Evaluated BEFORE the serviceActive gate below: inside a focused game the rest of
-            // the pad is deliberately silent, but this combo is the only way back out, so it has
+            // the pad is deliberately silent, but these are the only way back out, so they have
             // to keep working there.
             //
-            // Tap and hold (default): tap = the Power Wheel, hold = show or hide Loungepad (the
-            // in-game menu while a game runs). Double tap: tap = Loungepad, double tap = the
-            // Power Wheel. See ComboGesture for why each fires when it does.
-            bool comboNow = ComboPressed(state.Gamepad, s.MinimizeCombo);
-            bool tapHold = !string.Equals(s.MenuComboMode, "DoubleTap", StringComparison.OrdinalIgnoreCase);
-            var gesture = combo.Update(comboNow, now, tapHold, out bool comboRising);
-            if (comboRising) { toggleDownAt = -1; toggleFired = true; }   // swallow any keyboard chord inside the combo
-            switch (gesture)
+            // Two settings, each a chord and a gesture (tap, hold or double tap), and by default
+            // the same chord: Guide, a tap for the wheel and a hold for Loungepad. A chord both use
+            // is one recognizer wanting both gestures; see ComboSet and ComboGesture.
+            var comboJobs = combos.Update(HeldMask(state.Gamepad), now, s, out bool comboRising);
+            foreach (var job in comboJobs)
             {
-                case ComboGesture.Fire.Tap:
-                    if (tapHold) WheelTapRequested?.Invoke(); else MinimizeToggleRequested?.Invoke();
-                    break;
-                case ComboGesture.Fire.DoubleTap:
-                    RadialRequested?.Invoke();
-                    break;
-                case ComboGesture.Fire.Hold:
-                    MinimizeToggleRequested?.Invoke();
-                    break;
+                if (job == ComboSet.Job.Wheel) WheelTapRequested?.Invoke();
+                else MinimizeToggleRequested?.Invoke();
             }
+            if (comboRising) { toggleDownAt = -1; toggleFired = true; }   // swallow any keyboard chord inside the combo
 
             // ---- screenshot combo ----
             // Also evaluated before the serviceActive gate: a screenshot is only ever wanted while
@@ -590,7 +589,13 @@ internal class GamepadService : IDisposable
             // Inside a focused game the toggle is skipped entirely unless the user has opted in:
             // every button there belongs to the game. Closing a keyboard that is already up is the
             // exception and is always allowed, or an opted-out player could strand one on screen.
-            ushort toggleMask = ButtonMask(s.KeyboardToggleButton);
+            // The keyboard button can be a combo (or a trigger), recorded in Settings. A single
+            // button keeps the press/tap handling below, which can take the press away from the UI;
+            // a combo fires on the poll it is complete and leaves its buttons to everything else,
+            // like the Power Wheel's combo does.
+            uint toggleChord = ChordMask(s.KeyboardToggleButton);
+            bool toggleIsChord = toggleChord > 0xFFFF || (toggleChord & (toggleChord - 1)) != 0;
+            ushort toggleMask = toggleIsChord ? (ushort)0 : (ushort)toggleChord;
             ushort claimedMask = 0;
             foreach (var claimed in UiClaimedButtons) claimedMask |= ButtonMask(claimed);
             // The page wants this button for itself (View for search, on the library). Leave it
@@ -621,6 +626,25 @@ internal class GamepadService : IDisposable
                 toggleFired = true;
                 KeyboardToggleRequested?.Invoke();
             }
+            if (toggleIsChord)
+            {
+                bool held = (HeldMask(state.Gamepad) & toggleChord) == toggleChord;
+                if (held && !toggleChordHeld)
+                {
+                    toggleDownAt = now;
+                    toggleFired = false;
+                    if (!holdToToggle && toggleAllowed) { toggleFired = true; KeyboardToggleRequested?.Invoke(); }
+                }
+                else if (held && holdToToggle && toggleDownAt >= 0 && !toggleFired
+                         && now - toggleDownAt >= s.KeyboardToggleHoldMs && toggleAllowed)
+                {
+                    toggleFired = true;
+                    KeyboardToggleRequested?.Invoke();
+                }
+                if (!held) toggleDownAt = -1;
+                toggleChordHeld = held;
+            }
+            else toggleChordHeld = false;
             bool toggleReleasedAsTap = (released & toggleMask) != 0 && !toggleFired && toggleDownAt >= 0;
             if ((released & toggleMask) != 0) toggleDownAt = -1;
 
@@ -747,6 +771,7 @@ internal class GamepadService : IDisposable
                     {
                         SendClick(NativeMethods.MOUSEEVENTF_LEFTDOWN); leftDown = true;
                         if (keyboardDriving) KeyboardInput?.Invoke("PointerClick");
+                        PadClicked?.Invoke();
                     }
                     if ((released & lMask) != 0 && leftDown) { SendClick(NativeMethods.MOUSEEVENTF_LEFTUP); leftDown = false; }
                     if ((pressed & rMask) != 0 && !rightDown && (modalTaken & rMask) == 0)
@@ -932,14 +957,17 @@ internal class GamepadService : IDisposable
         return true;
     }
 
-    /// <summary>The menu and screenshot combos as masks (<see cref="ChordMask"/>), so a binding equal
-    /// to one never fires. Rebuilt only when the settings change: this is asked on every poll.</summary>
-    private (string? Min, string? Shot, uint[] Masks) _reserved;
+    /// <summary>The Power Wheel, Loungepad and screenshot combos as masks (<see cref="ChordMask"/>),
+    /// so a binding equal to one never fires. Rebuilt only when the settings change: this is asked
+    /// on every poll.</summary>
+    private (string? Wheel, string? Launcher, string? Shot, uint[] Masks) _reserved;
     private uint[] ReservedCombos(AppSettings s)
     {
-        if (_reserved.Masks is null || _reserved.Min != s.MinimizeCombo || _reserved.Shot != s.ScreenshotCombo)
-            _reserved = (s.MinimizeCombo, s.ScreenshotCombo,
-                new[] { ChordMask(s.MinimizeCombo), ChordMask(s.ScreenshotCombo) }.Where(m => m != 0).ToArray());
+        if (_reserved.Masks is null || _reserved.Wheel != s.WheelCombo || _reserved.Launcher != s.LauncherCombo
+            || _reserved.Shot != s.ScreenshotCombo)
+            _reserved = (s.WheelCombo, s.LauncherCombo, s.ScreenshotCombo,
+                new[] { ChordMask(s.WheelCombo), ChordMask(s.LauncherCombo), ChordMask(s.ScreenshotCombo) }
+                    .Where(m => m != 0).Distinct().ToArray());
         return _reserved.Masks;
     }
 

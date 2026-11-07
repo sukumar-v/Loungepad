@@ -135,6 +135,7 @@ public partial class MainWindow : Window
         });
         _gamepad.ConnectedChanged += c => Dispatcher.BeginInvoke(() => _bridge?.PushPadConnected(c));
         _gamepad.TouchClick += () => Dispatcher.BeginInvoke(() => _bridge?.PushPadClick());
+        _gamepad.PadClicked += () => Dispatcher.BeginInvoke(KeyboardForClickedField);
         _gamepad.UiScroll += v => Dispatcher.BeginInvoke(() => _bridge?.PushStickScroll(v));
         _gamepad.KeyboardToggleRequested += () => Dispatcher.BeginInvoke(() => _keyboard.Toggle());
         // On the pad's thread, like the combo always was: SendInput needs no window, and the key
@@ -977,8 +978,18 @@ public partial class MainWindow : Window
             return;
         }
         if (_launcher.GameRunning) _ = ShowOverlay("ingame");
-        else ToggleParked();
+        else if (_parked || !ShowOnlyButton) ToggleParked();
+        // Show only: Loungepad up but behind something (Keep focus off) comes to the front; in
+        // front already, the press does nothing, which is the whole point of the setting.
+        else if (NativeMethods.GetForegroundWindow() != _hwnd)
+        {
+            Unpark();
+            _gamepad.ResetInputMode();
+        }
     }
+
+    private bool ShowOnlyButton =>
+        string.Equals(_settings.Settings.LauncherComboAction, "ShowOnly", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Put Loungepad away without a pad: H on the keyboard, Minimize Loungepad in the library's hint
@@ -1181,6 +1192,71 @@ public partial class MainWindow : Window
         _gamepad.KeyboardOwnsPad = true;
     }
 
+    private int _fieldProbeSeq;
+
+    /// <summary>
+    /// A controller click landed somewhere outside the launcher. If it put the focus in a text field
+    /// -- a browser's address bar or a form, Notepad, a chat box -- bring the Loungepad keyboard up,
+    /// as a phone does. Inside the launcher the page does this itself (focusPage). Only the latest
+    /// click counts.
+    ///
+    /// Asked again and again for about a second and a half, not once: Chrome and Firefox build the
+    /// page's accessibility tree only when something first asks for it (about 300 ms, measured on
+    /// throwaway instances of both), Chrome drops it again after a while unused, and the page's own
+    /// focus reaches the tree a beat after the click. Asked once, the answer was the browser's bare
+    /// window or the page before its focus moved -- "no" -- so only the browsers' own address bars
+    /// ever worked (the user's report, Nov 2026). The text caret is the second signal, for an app
+    /// that answers UI Automation with nothing useful: a blinking caret is a place to type.
+    /// </summary>
+    private void KeyboardForClickedField()
+    {
+        var s = _settings.Settings;
+        if (!s.KeyboardOnTextFields || s.KeyboardApp != "Builtin" || _kb is { IsVisible: true }) return;
+        if (_overlayActive || NativeMethods.GetForegroundWindow() == _hwnd) return;
+        if (!s.KeyboardInGame && _launcher.IsGameForeground()) return;
+        int seq = ++_fieldProbeSeq;
+        int pid = Environment.ProcessId;
+        _ = Task.Run(async () =>
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            // The first ask is early on purpose: it is what wakes a browser's accessibility tree.
+            int wait = 60;
+            while (clock.ElapsedMilliseconds < 1600)
+            {
+                await Task.Delay(wait);
+                wait = 150;
+                if (seq != _fieldProbeSeq) return;
+                string? why = TextFieldProbe.CaretInForeground(_hwnd) ? "a text caret" : null;
+                if (why is null)
+                {
+                    try
+                    {
+                        var ask = Task.Run(() => TextFieldProbe.Focused(pid));
+                        if (await Task.WhenAny(ask, Task.Delay(1500)) != ask) return;   // an app not answering
+                        if (ask.Result == TextFieldProbe.Answer.Yes) why = "a text field";
+                    }
+                    catch (Exception ex)
+                    {
+                        // An element can vanish between two questions about it; ask again.
+                        if (clock.ElapsedMilliseconds > 1400)
+                            Log.Info($"Keyboard: could not read the focused control ({ex.GetType().Name}: {ex.Message})");
+                        continue;
+                    }
+                }
+                if (why is null) continue;
+                long ms = clock.ElapsedMilliseconds;
+                _ = Dispatcher.BeginInvoke(() =>
+                {
+                    if (seq != _fieldProbeSeq || _kb is { IsVisible: true } || _overlayActive
+                        || NativeMethods.GetForegroundWindow() == _hwnd) return;
+                    Log.Info($"Keyboard: a controller click landed in {why} ({ms} ms); showing the keyboard");
+                    _keyboard.Show();
+                });
+                return;
+            }
+        });
+    }
+
     /// <summary>Re-apply the keyboard settings while it is up, so the size slider is live.</summary>
     public void RefreshBuiltinKeyboard()
     {
@@ -1330,7 +1406,7 @@ public partial class MainWindow : Window
         Log.Info($"Screenshot: {source} → {(steam ? "F12 (Steam)" : "Win+PrintScreen")}");
     }
 
-    public void BeginActionCapture() => _gamepad.BeginCapture();
+    public void BeginActionCapture(bool anyButton = false) => _gamepad.BeginCapture(anyButton);
     public void CancelActionCapture() => _gamepad.CancelCapture();
 
     /// <summary>

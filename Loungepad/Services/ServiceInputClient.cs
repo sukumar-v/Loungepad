@@ -315,14 +315,24 @@ internal sealed class ServiceInputClient : IDisposable
     public void UpdateProfile(AppSettings s) => Volatile.Write(ref _profile, new InputProfile
     {
         MouseEnabled = s.GamepadMouseEnabled, Deadzone = s.Deadzone, Sensitivity = s.Sensitivity, AccelExponent = s.AccelExponent,
-        BoostButton = s.BoostButton, BoostMultiplier = s.BoostMultiplier, LeftClick = s.LeftClickButton, RightClick = s.RightClickButton,
+        BoostButton = ServiceButton(s.BoostButton), BoostMultiplier = s.BoostMultiplier,
+        LeftClick = ServiceButton(s.LeftClickButton), RightClick = ServiceButton(s.RightClickButton),
         TouchpadMouse = s.TouchpadMouse, TouchpadSensitivity = s.TouchpadSensitivity, TouchpadTapToClick = s.TouchpadTapToClick,
         TouchpadTapDrag = s.TouchpadTapDrag, TouchpadNaturalScroll = s.TouchpadNaturalScroll, TouchpadScrollSpeed = s.TouchpadScrollSpeed,
-        KeyboardApp = s.KeyboardApp, KeyboardToggle = s.KeyboardToggleButton, KeyboardToggleMode = s.KeyboardToggleMode,
+        KeyboardApp = s.KeyboardApp, KeyboardToggle = ServiceButton(s.KeyboardToggleButton), KeyboardToggleMode = s.KeyboardToggleMode,
         KeyboardToggleHoldMs = s.KeyboardToggleHoldMs, KeyboardScale = s.KeyboardScale, FunctionKeys = s.KeyboardFunctionKeys,
         NavKeys = s.KeyboardNavKeys, Numpad = s.KeyboardNumpad, Modifiers = s.KeyboardModifiers,
         RepeatDelayMs = s.KeyRepeatDelayMs, RepeatIntervalMs = s.KeyRepeatIntervalMs, Display = s.TvDeviceName,
     }.Validate());
+
+    /// <summary>
+    /// A button the input service knows, or Off. Settings can record any button or combo now, but an
+    /// installed service only takes the single buttons it was built with, and refuses the whole
+    /// profile over one it does not know. So a combo or a D-pad direction does nothing on UAC and the
+    /// sign-in screen, rather than costing every other setting there; Settings says so.
+    /// </summary>
+    internal static string ServiceButton(string? b) => b is "A" or "B" or "X" or "Y" or "LB" or "RB" or "LT" or "RT"
+        or "LS" or "RS" or "Back" or "View" or "Start" or "Menu" or "Guide" ? b : "Off";
 
     public void Dispose()
     {

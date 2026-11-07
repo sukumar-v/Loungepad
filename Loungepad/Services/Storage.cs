@@ -121,6 +121,25 @@ public class SettingsStore
     public static bool IsHexColor(string? value) =>
         value is not null && value.Length == 7 && value[0] == '#' && value.Skip(1).All(Uri.IsHexDigit);
 
+    /// <summary>
+    /// Up to 1.11 one "menu combo" (MinimizeCombo) did both jobs, its gesture (MenuComboMode)
+    /// deciding which: tap-and-hold was a tap for the Power Wheel and a hold for Loungepad, double
+    /// tap the other way round. They are two settings now; a file from before carries the old pair
+    /// and not the new, and becomes the same two jobs on the same button.
+    /// </summary>
+    internal static void MigrateMenuCombo(System.Text.Json.Nodes.JsonObject o, AppSettings s)
+    {
+        if (o.ContainsKey(nameof(AppSettings.WheelCombo)) || o["MinimizeCombo"] is not { } old) return;
+        string combo = old.GetValueKind() == JsonValueKind.String ? old.GetValue<string>() : "Guide";
+        bool doubleTap = o["MenuComboMode"] is { } m && m.GetValueKind() == JsonValueKind.String
+            && string.Equals(m.GetValue<string>(), "DoubleTap", StringComparison.OrdinalIgnoreCase);
+        s.WheelCombo = s.LauncherCombo = string.IsNullOrWhiteSpace(combo) ? "Off" : combo;
+        s.WheelGesture = doubleTap ? "DoubleTap" : "Tap";
+        s.LauncherGesture = doubleTap ? "Tap" : "Hold";
+        s.LauncherComboAction = "Toggle";
+        Log.Info($"Settings: the menu combo ({combo}, {(doubleTap ? "double tap" : "tap and hold")}) is now the Power Wheel and Loungepad buttons");
+    }
+
     public void Load()
     {
         try
@@ -132,9 +151,12 @@ public class SettingsStore
                 // Written before the first-run setup existed: this install was set up by hand, so it
                 // counts as having been through the first version of the setup. Only a file with
                 // no settings at all is a new install.
-                if (System.Text.Json.Nodes.JsonNode.Parse(text) is System.Text.Json.Nodes.JsonObject o
-                    && !o.ContainsKey(nameof(AppSettings.OnboardingVersion)))
-                    Settings.OnboardingVersion = 1;
+                if (System.Text.Json.Nodes.JsonNode.Parse(text) is System.Text.Json.Nodes.JsonObject o)
+                {
+                    if (!o.ContainsKey(nameof(AppSettings.OnboardingVersion)))
+                        Settings.OnboardingVersion = 1;
+                    MigrateMenuCombo(o, Settings);
+                }
             }
 
             // The accent reaches the UI as a CSS value, so a hand-edited file must not be able to

@@ -58,10 +58,8 @@ const PAD_FAMILY_NAMES = { xbox: "Xbox controller", playstation: "PlayStation co
 
 /* How to get back to Loungepad once it has stepped aside, in the words of the combo in force. */
 function comeBackText() {
-  const s = S.settings || {};
-  const combo = s.minimizeCombo && s.minimizeCombo !== "Off" ? s.minimizeCombo : null;
-  if (!combo) return "start Loungepad again to come back";
-  return `${s.menuComboMode === "DoubleTap" ? "press" : "hold"} ${comboName(combo, padFamily)} to come back`;
+  const back = comeBackPress(padFamily);
+  return back ? `${back} to come back` : "start Loungepad again to come back";
 }
 
 /* ---- opening, moving, finishing ---- */
@@ -294,13 +292,15 @@ const ONB_PAGES = {
   xbox() {
     const s = S.settings;
     const xb = S.xboxButton || {};
-    const guideCombo = /\bGuide\b/.test(s.minimizeCombo || "");
-    const tapHold = s.menuComboMode !== "DoubleTap";
-    const combo = s.minimizeCombo && s.minimizeCombo !== "Off" ? `[[${s.minimizeCombo.split("+").map(p => p.trim()).join("]] + [[")}]]` : null;
-    const lede = !combo ? "The menu combo is off, so nothing brings the Power Wheel up from inside a game. Pick one below."
-      : (tapHold ? `Tap ${combo} for the Power Wheel, from anywhere, a game included. Hold it to show or hide Loungepad.`
-                 : `Press ${combo} to show or hide Loungepad, from anywhere, a game included. Double-tap it for the Power Wheel.`)
-        + (guideCombo ? " Windows and Steam listen for the same button. Turn them off here, so one press does one thing." : "");
+    const marks = (c) => comboOff(c) ? null : `[[${c.split("+").map(p => p.trim()).join("]] + [[")}]]`;
+    const wheel = marks(s.wheelCombo), home = marks(s.launcherCombo);
+    const guideCombo = /\bGuide\b/.test(`${s.wheelCombo || ""} ${s.launcherCombo || ""}`);
+    const verb = (g) => g === "Hold" ? "Hold" : g === "DoubleTap" ? "Double-tap" : "Tap";
+    const lede = (!wheel ? "No button opens the Power Wheel, so nothing brings it up from inside a game. Pick one below."
+        : `${verb(s.wheelGesture)} ${wheel} for the Power Wheel, from anywhere, a game included.`)
+      + (home ? ` ${verb(s.launcherGesture)} ${home} to ${s.launcherComboAction === "ShowOnly" ? "bring Loungepad back" : "show or hide Loungepad"}.` : "")
+      + (guideCombo ? " Windows and Steam listen for the same button. Turn them off here, so one press does one thing." : "");
+    const combo = wheel;
     // Always listed, whatever the combo: even with the menu on other buttons, Steam or Game Bar
     // opening over a game on a stray press of the Xbox button is the thing this step is for.
     const items = [{ section: "WINDOWS AND STEAM" }];
@@ -308,9 +308,9 @@ const ONB_PAGES = {
     items.push(...others);
     if (!others.some(r => r.type === "toggle" && r.value) && !xb.steamBusy)
       items.push({ note: "Nothing else reacts to the Xbox button now.", tone: "ok" });
-    items.push({ section: "THE COMBO" });
+    items.push({ section: "THE BUTTONS" });
     items.push(...menuComboRows(s, onbSet, "above"));
-    if (combo) items.push({ note: tapHold ? `Try it: tap ${combo} to open the Power Wheel, and tap again to close it.` : `Try it: double-tap ${combo} to open the Power Wheel.` });
+    if (combo) items.push({ note: `Try it: ${verb(s.wheelGesture).toLowerCase()} ${combo} to open the Power Wheel, and again to close it.` });
     return { title: guideTitle(), lede, items };
   },
 
@@ -448,7 +448,7 @@ const ONB_PAGES = {
         { stats },
         { section: "ON THE LIBRARY" },
         { keys: [["Y", "A game's options"], ["X", "Filter and sort"], ["View", "Search"], ["LB", "Stats"], ["Menu", "Settings"],
-          ...(/\bGuide\b/.test(S.settings.minimizeCombo || "") ? [["Guide", "The Power Wheel, anywhere"]] : [])] },
+          ...(/\bGuide\b/.test(S.settings.wheelCombo || "") ? [["Guide", "The Power Wheel, anywhere"]] : [])] },
       ],
       next: "Start playing",
     };

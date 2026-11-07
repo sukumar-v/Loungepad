@@ -83,10 +83,31 @@ function emulatorFor(g) {
   return emulatorById(g.emulatorId) || (folder ? emulatorById(folder.emulatorId) : null);
 }
 const STATUSES = ["Installed", "Not installed"];
-const MINIMIZE_COMBOS = ["LS + RS", "LB + RB", "LT + RT + LB + RB", "Guide", "View + Menu", "LS + RB", "LB + RS", "Off"];
+/* The quick picks under the Power Wheel and Loungepad buttons; any button or combo can be recorded
+   as well (recordRow). */
+const MENU_COMBOS = ["Guide", "LS + RS", "LB + RB", "LT + RT + LB + RB", "View + Menu", "LS + RB", "LB + RS"];
 /* Deliberately combos rather than single buttons: inside a game every face and shoulder button
    belongs to the game, so a one-button binding would fire in the middle of play. */
-const SCREENSHOT_COMBOS = ["Off", "View + Y", "View + X", "View + A", "View + B", "LB + RB", "LS + RS"];
+const SCREENSHOT_COMBOS = ["View + Y", "View + X", "View + A", "View + B", "LB + RB", "LS + RS"];
+const GESTURES = ["Tap", "Hold", "DoubleTap"];
+const GESTURE_LABELS = { Tap: "Tap", Hold: "Hold", DoubleTap: "Double tap" };
+
+function comboOff(c) { return !c || c === "Off"; }
+/** How a gesture is said in a sentence: "hold LS + RS". */
+function gestureVerb(g) { return g === "Hold" ? "hold" : g === "DoubleTap" ? "double-tap" : "press"; }
+/** The Loungepad button as the page says it ("hold Guide"), or null when there is none. Show only
+    counts: it is exactly the way back. */
+function comeBackPress(family) {
+  const s = S.settings || {};
+  if (comboOff(s.launcherCombo)) return null;
+  return `${gestureVerb(s.launcherGesture || "Hold")} ${comboName(s.launcherCombo, family || padFamily)}`;
+}
+/** Is every button of `part` also in `whole`, and is it smaller? A press of the bigger one is a
+    press of the smaller one too. */
+function comboWithin(part, whole) {
+  const p = comboParts(part), w = comboParts(whole);
+  return p.length > 0 && p.length < w.length && p.every(b => w.includes(b));
+}
 
 const SORTS = [
   { id: "az", label: "Installed, then A – Z" },
@@ -1404,17 +1425,18 @@ function legendItem(btn, label, kb) {
 
 const LIBRARY_LEGEND = [["A", "Launch"], ["X", "Filter"], ["Y", "Options"], ["View", "Search"], ["LB", "Stats"], ["Menu", "Settings"]];
 
-/* Minimize Loungepad, last in the library's bar: H on a keyboard, the menu combo on a pad (held in
-   tap-and-hold, tapped in double-tap; Settings → Controller). Not "Hide", which is what a game's
-   menu does to a game. Both are drawn and the CSS shows the one for what is in hand, so a family
-   change still only repaints slots. A pad has no entry while the combo is Off, or while a game
-   runs, when the same hold brings up the in-game menu instead. */
+/* Minimize Loungepad, last in the library's bar: H on a keyboard, the Loungepad button on a pad,
+   with its gesture (Settings → Controller). Not "Hide", which is what a game's menu does to a game.
+   Both are drawn and the CSS shows the one for what is in hand, so a family change still only
+   repaints slots. A pad has no entry while that button is unset or set to Show only (it cannot
+   hide), or while a game runs, when the same press brings up the in-game menu instead. */
 function minimizeLegendItem() {
   const s = S.settings || {};
-  const combo = s.minimizeCombo && s.minimizeCombo !== "Off" && !S.gameRunning ? s.minimizeCombo : null;
-  const hold = s.menuComboMode !== "DoubleTap";
+  const combo = !comboOff(s.launcherCombo) && s.launcherComboAction !== "ShowOnly" && !S.gameRunning ? s.launcherCombo : null;
+  const g = s.launcherGesture || "Hold";
+  const how = g === "Hold" ? "Hold" : g === "DoubleTap" ? "Double tap" : "";
   const pad = combo
-    ? `<span class="pad-part">${hold ? `<span class="legend-hold">Hold</span>` : ""}${comboHtml(combo)}</span>` : "";
+    ? `<span class="pad-part">${how ? `<span class="legend-hold">${how}</span>` : ""}${comboHtml(combo)}</span>` : "";
   return `<div class="legend-item${combo ? "" : " kb-only"}" data-press="Hide">` +
     `<span class="kb-part">${slot("Hide")}</span>${pad}<span>Minimize Loungepad</span></div>`;
 }
@@ -3213,14 +3235,13 @@ function storeName(g) {
    on one press of A is a surprise; and the body is the only place to say how to come back. */
 function offerInstall(g) {
   if (!canInstall(g)) { toast(`${g.title} is not installed`); return; }
-  const combo = S.settings && S.settings.minimizeCombo && S.settings.minimizeCombo !== "Off"
-    ? S.settings.minimizeCombo : null;
+  const back = comeBackPress(padFamily);
   const store = storeName(g);
   const Store = store.charAt(0).toUpperCase() + store.slice(1);
   confirmState = {
     title: `Install ${g.title}?`,
     body: `${Store} opens with ${g.title} ready to install. Loungepad steps aside while it does` +
-      (combo ? `; press ${comboName(combo, padFamily)} to come back.` : "; start Loungepad again to come back.") +
+      (back ? `; ${back} to come back.` : "; start Loungepad again to come back.") +
       " The tile turns playable once the download has finished.",
     yesLabel: `Install with ${store.replace(/^the /, "")}`,
     icon: "download", danger: false,
@@ -3877,13 +3898,30 @@ function allSettingsRows() {
   rows.push(sliderRow("Stick deadzone", () => s.deadzone, 0.05, 0.40, 0.01, v => set(() => s.deadzone = v), v => v.toFixed(2)));
   rows.push(sliderRow("Cursor sensitivity", () => s.sensitivity, 0.2, 3.0, 0.1, v => set(() => s.sensitivity = v), v => v.toFixed(1) + "×"));
   rows.push(sliderRow("Acceleration curve", () => s.accelExponent, 1.0, 3.0, 0.1, v => set(() => s.accelExponent = v), v => v.toFixed(1)));
-  rows.push(buttonRow("Speed boost button", ["RT", "LT", "LB", "RB", "LS", "RS", "Off"], () => s.boostButton, v => set(() => s.boostButton = v),
-    "Hold to move the cursor and scroll faster — crossing a 4K screen a nudge at a time gets old"));
-  if (s.boostButton !== "Off")
+  rows.push(recordRow("Speed boost button", () => s.boostButton, v => set(() => s.boostButton = v), {
+    picks: ["RT", "LT", "LB", "RB", "LS", "RS"],
+    hint: "Hold to move the cursor and scroll faster — crossing a 4K screen a nudge at a time gets old",
+    unsetWarn: "Not set: the pointer and the scroll always move at their normal speed.",
+    check: (c) => comboEq(c, "A") ? "[[A]] is the click button. Pick another." : null,
+  }));
+  if (!comboOff(s.boostButton))
     rows.push(sliderRow("Boost multiplier", () => s.boostMultiplier, 1.5, 5.0, 0.5, v => set(() => s.boostMultiplier = v), v => v.toFixed(1) + "×"));
-  rows.push(buttonRow("Left click button", ["A", "B", "X", "Y", "LB", "RB", "LS", "RS"], () => s.leftClickButton, v => set(() => s.leftClickButton = v),
-    "Sends a real mouse click when the launcher is not focused"));
-  rows.push(buttonRow("Right click button", ["A", "B", "X", "Y", "LB", "RB", "LS", "RS"], () => s.rightClickButton, v => set(() => s.rightClickButton = v)));
+  // A click is held like a mouse button, so one button, and not a trigger: the host reads clicks
+  // off the button bits, which the triggers are not.
+  const clickCheck = (other, otherName) => (c) =>
+    /^(LT|RT)$/.test(normCombo(c)) ? "A trigger cannot be a click button. Pick a button."
+    : !comboOff(other) && comboEq(c, other) ? `That is already the ${otherName} button.` : null;
+  rows.push(recordRow("Left click button", () => s.leftClickButton, v => set(() => s.leftClickButton = v), {
+    picks: ["A", "B", "X", "Y", "LB", "RB", "LS", "RS"], single: true,
+    hint: "Sends a real mouse click when the launcher is not focused",
+    unsetWarn: "Not set: the controller cannot click anything outside Loungepad. The DualSense touchpad still clicks when it is pressed.",
+    check: clickCheck(s.rightClickButton, "right click"),
+  }));
+  rows.push(recordRow("Right click button", () => s.rightClickButton, v => set(() => s.rightClickButton = v), {
+    picks: ["A", "B", "X", "Y", "LB", "RB", "LS", "RS"], single: true,
+    unsetWarn: "Not set: the controller cannot right-click outside Loungepad. A two-finger touchpad press still does.",
+    check: clickCheck(s.leftClickButton, "left click"),
+  }));
   rows.push(toggleRow("Hide pointer system-wide", "The pointer always hides inside the launcher on D-pad input; this extends it to the rest of Windows. Replaces the system cursors, so it is restored when Loungepad exits",
     () => s.hideCursorSystemWide, v => set(() => s.hideCursorSystemWide = v)));
   // A setting the host defaults to on: a settings file from before it has no key, and undefined
@@ -3918,11 +3956,11 @@ function allSettingsRows() {
   // toggle that fires over games takes the press first.
   const shareShot = s.shareButtonScreenshot !== false;
   const shareClash = shareShot && !!s.keyboardInGame && (s.keyboardToggleMode || "Press") !== "Hold"
-    && canonBtn(s.keyboardToggleButton || "Back") === "View";
+    && comboEq(s.keyboardToggleButton || "Back", "View");
   // A combo that holds View owns Create outright on a DualSense: the host leaves a button that is
   // part of the menu or screenshot combo to the combo, so a press of it alone takes no screenshot.
-  const shareInCombo = shareShot && [["menu combo", s.minimizeCombo], ["screenshot combo", s.screenshotCombo]]
-    .find(([, c]) => c && c !== "Off" && c.split("+").map(p => canonBtn(p.trim())).includes("View"));
+  const shareInCombo = shareShot && [["Power Wheel button", s.wheelCombo], ["Loungepad button", s.launcherCombo], ["screenshot combo", s.screenshotCombo]]
+    .find(([, c]) => !comboOff(c) && comboParts(c).includes("View"));
   rows.push({
     ...toggleRow("Share button takes a screenshot",
       "Create on a DualSense (Share on a DualShock 4) and Capture on a Switch Pro take one while a game is focused: " +
@@ -3935,17 +3973,22 @@ function allSettingsRows() {
       ? `[[View]] is part of the ${shareInCombo[0]}, and on a DualSense that is Create, so the combo keeps it and a press of Create alone takes no screenshot there.`
       : null,
   });
-  rows.push(buttonRow("Screenshot combo", SCREENSHOT_COMBOS, () => s.screenshotCombo, v => set(() => s.screenshotCombo = v),
-    "The same screenshot on a combo, for an Xbox pad (Windows keeps its Share button to itself and never passes it " +
-    "to applications) or a game that ignores the share button. Works while a game is focused",
-    s.screenshotCombo !== "Off" && s.screenshotCombo === s.minimizeCombo
-      ? "Same as the menu combo above, so one press does both. Pick a different one."
-      : null));
+  const shotTwin = !comboOff(s.screenshotCombo) && [["Power Wheel button", s.wheelCombo], ["Loungepad button", s.launcherCombo]]
+    .find(([, c]) => !comboOff(c) && (comboEq(c, s.screenshotCombo) || comboWithin(c, s.screenshotCombo) || comboWithin(s.screenshotCombo, c)));
+  rows.push(recordRow("Screenshot combo", () => s.screenshotCombo, v => set(() => s.screenshotCombo = v), {
+    picks: SCREENSHOT_COMBOS,
+    hint: "The same screenshot on a combo, for an Xbox pad (Windows keeps its Share button to itself and never passes it " +
+      "to applications) or a game that ignores the share button. Works while a game is focused. Best as a combo: " +
+      "inside a game every single button is the game's",
+    warn: shotTwin ? `It overlaps the ${shotTwin[0]} (${comboName(shotTwin[1], padFamily)}), so one press does both. Pick a different one.` : null,
+    unsetWarn: "Not set: no combo takes a screenshot" + (shareShot ? ". The DualSense's Create and the Switch Pro's Capture button still do." : "."),
+    check: (c) => comboEq(c, "A") || comboEq(c, "B") ? "Inside Loungepad that button is select or Back. Use a combo." : null,
+  }));
 
   rows.push({ section: "WINDOWS AND STEAM", cat: "input" });
   rows.push(...xboxButtonRows());
   // On by default on the host, so a settings file from before it (no key) reads as on.
-  rows.push(toggleRow("Let Steam drive its own games", "Big Picture, and any game Steam starts, count as a game you started here: the menu combo still works, but the stick is not a mouse and A is not a click, so Steam is the only thing driving them. Off, both read every press",
+  rows.push(toggleRow("Let Steam drive its own games", "Big Picture, and any game Steam starts, count as a game you started here: the Power Wheel and Loungepad buttons still work, but the stick is not a mouse and A is not a click, so Steam is the only thing driving them. Off, both read every press",
     () => s.steamOwnsPad !== false, v => set(() => s.steamOwnsPad = v)));
 
   rows.push({ section: "KEYBOARD", cat: "keyboard" });
@@ -3958,29 +4001,41 @@ function allSettingsRows() {
         "needs a real mouse. Both also take the foreground, so the field you were typing into can " +
         "lose its caret.",
     KEYBOARD_APP_LABELS));
-  rows.push(buttonRow("Keyboard button", ["Back", "Start", "LS", "RS", "LB", "RB"], () => s.keyboardToggleButton, v => set(() => s.keyboardToggleButton = v),
-    s.keyboardToggleButton === "Back"
-      ? "Shows and hides the keyboard from anywhere. On the library [[View]] opens search instead, which brings the keyboard up with it"
-      : "Shows and hides the keyboard from anywhere in the launcher"));
   // Press is quicker and is the default. Hold exists because it leaves the tap free, which is the
   // only way to keep a button that already does something inside the launcher. View is the one
   // exception that needs neither: the library claims it for search (publishClaims), and search
   // raises the keyboard anyway. What a Press does take outright is Menu; and a combo the toggle
   // button is part of brings the keyboard up as well, since the press fires before the combo is whole.
+  // A combo as the keyboard button fires when it is whole and leaves its buttons to everything else.
+  const kbOff = comboOff(s.keyboardToggleButton);
+  const kbCombo = !kbOff && comboParts(s.keyboardToggleButton).length > 1;
+  const kbTrigger = !kbOff && /^(LT|RT)$/.test(normCombo(s.keyboardToggleButton));
   const pressMode = (s.keyboardToggleMode || "Press") !== "Hold";
-  const toggleBtn = canonBtn(s.keyboardToggleButton || "Back");
-  const sharedCombo = [["menu combo", s.minimizeCombo], ["screenshot button", s.screenshotCombo]]
-    .find(([, c]) => c && c !== "Off" && c.includes("+") && c.split("+").map(p => canonBtn(p.trim())).includes(toggleBtn));
-  rows.push(cycleRow("Opens on", ["Press", "Hold"], () => s.keyboardToggleMode, v => set(() => s.keyboardToggleMode = v),
+  const toggleBtn = kbOff || kbCombo ? null : canonBtn(s.keyboardToggleButton || "Back");
+  const sharedCombo = [["Power Wheel button", s.wheelCombo], ["Loungepad button", s.launcherCombo], ["screenshot button", s.screenshotCombo]]
+    .find(([, c]) => !comboOff(c) && !kbOff && (kbCombo
+      ? comboEq(c, s.keyboardToggleButton) || comboWithin(c, s.keyboardToggleButton) || comboWithin(s.keyboardToggleButton, c)
+      : comboParts(c).length > 1 && comboParts(c).includes(toggleBtn)));
+  rows.push(recordRow("Keyboard button", () => s.keyboardToggleButton, v => set(() => s.keyboardToggleButton = v), {
+    picks: ["Back", "Start", "LS", "RS", "LB", "RB"],
+    hint: (comboEq(s.keyboardToggleButton || "", "View")
+      ? "Shows and hides the keyboard from anywhere. On the library [[View]] opens search instead, which brings the keyboard up with it"
+      : "Shows and hides the keyboard from anywhere in the launcher") +
+      (kbCombo || kbTrigger ? ". A combo or a trigger works here but not on UAC prompts or the sign-in screen, which take one button" : ""),
+    warn: kbCombo && sharedCombo ? `It overlaps the ${sharedCombo[0]} (${comboName(sharedCombo[1], padFamily)}), so one press does both. Pick a different one.` : null,
+    unsetWarn: "Not set: no controller button opens the keyboard. Search still brings it up on the library, clicking a text field opens it when that is on, and the Power Wheel's Keyboard spoke opens it anywhere.",
+    check: (c) => comboEq(c, "A") ? "[[A]] on its own selects in Loungepad and clicks on the desktop. Pick another button." : null,
+  }));
+  if (!kbOff) rows.push(cycleRow("Opens on", ["Press", "Hold"], () => s.keyboardToggleMode, v => set(() => s.keyboardToggleMode = v),
     pressMode
-      ? "One tap. The button does nothing else while this is set"
-      : "Hold the button down. A tap still does whatever that button normally does",
-    !pressMode ? null
+      ? (kbCombo ? "As soon as the whole combo is held" : "One tap. The button does nothing else while this is set")
+      : (kbCombo ? "Hold the whole combo down" : "Hold the button down. A tap still does whatever that button normally does"),
+    !pressMode || kbCombo ? null
       : toggleBtn === "Menu" ? "[[Menu]] opens Settings from the library, and on Press the keyboard takes it outright — pick another button, or switch to Hold."
       : sharedCombo ? `[[${toggleBtn}]] is also part of the ${sharedCombo[0]}, so on Press the keyboard comes up every time that combo is used — pick another button, or switch to Hold.`
       : null,
     { Press: "Press", Hold: "Hold" }));
-  if ((s.keyboardToggleMode || "Press") === "Hold")
+  if (!kbOff && (s.keyboardToggleMode || "Press") === "Hold")
     rows.push(sliderRow("Hold time", () => s.keyboardToggleHoldMs, 200, 2000, 100, v => set(() => s.keyboardToggleHoldMs = v), v => Math.round(v) + " ms"));
   rows.push(toggleRow("Show while a game is running",
     "Off by default: inside a game every button belongs to the game, and a keyboard arriving over one is a surprise. A keyboard already on screen can always be closed either way",
@@ -3996,6 +4051,12 @@ function allSettingsRows() {
     "Finishes the word you are typing and guesses the next one, from Windows' own dictionary. " +
     "[[RS]] takes the first suggestion. Also switched from the gear on the keyboard",
     () => s.keyboardSuggestions !== false, v => set(() => s.keyboardSuggestions = v)));
+  // On by default on the host, so a settings file from before it (no key) reads as on. Also on the
+  // keyboard's own gear page, as the five below are.
+  rows.push(toggleRow("Open on text fields",
+    "Clicking a text field with the controller outside Loungepad — a browser, Notepad, a sign-in box — brings the keyboard up, as on a phone. " +
+    "A real mouse never does, and over a game only when the keyboard is allowed there. Also switched from the gear on the keyboard",
+    () => s.keyboardOnTextFields !== false, v => set(() => s.keyboardOnTextFields = v)));
   rows.push(toggleRow("Function keys", "F1 to F12 along the top, with Print Screen, Scroll Lock and Pause over the navigation keys",
     () => !!s.keyboardFunctionKeys, v => set(() => s.keyboardFunctionKeys = v)));
   rows.push(toggleRow("Navigation keys", "Insert, Delete, Home, End, Page Up, Page Down and all four arrows, beside the letters",
@@ -4296,42 +4357,94 @@ function storeAccountRows(s, set) {
   ];
 }
 
-/* The menu combo and its gesture: Settings → Controller, and the first-run setup's Xbox button step.
-   Who else acts on the Xbox button -- Windows' Game Bar and Xbox mode, and Steam -- is read by the
-   host (see WindowsGuide and SteamGuide); their switches are xboxButtonRows, and the warning here
-   only names what is still on. `where` says where those switches are on the screen asking. */
+/* The Power Wheel and Loungepad buttons: Settings → Controller, and the first-run setup's Xbox button
+   step. Two settings since Nov 2026 (one "menu combo" did both, by gesture, until a stray hold hid
+   Loungepad and showed the desktop it is there to hide): each a button or combo, recorded or picked,
+   and a gesture, and either can be unset. By default both are Guide, a tap for the wheel and a hold
+   for Loungepad, which is what the one combo was. Who else acts on the Xbox button -- Windows' Game
+   Bar and Xbox mode, and Steam -- is read by the host (see WindowsGuide and SteamGuide); their
+   switches are xboxButtonRows, and the warning here only names what is still on. `where` says
+   where those switches are on the screen asking. */
 function menuComboRows(s, set, where = "under Windows and Steam, at the end of this list") {
-  const tapHold = s.menuComboMode !== "DoubleTap";
   const xb = S.xboxButton || {};
-  const usesGuide = /\bGuide\b/.test(s.minimizeCombo || "");
-  const takers = [];
-  if (usesGuide && xb.gameBar === true) takers.push("Xbox Game Bar");
-  if (usesGuide && tapHold && xb.xboxMode === true) takers.push("Windows' Xbox mode");
-  if (usesGuide && xb.steam === true) takers.push("Steam");
-  const listed = takers.length < 2 ? takers.join("") : takers.slice(0, -1).join(", ") + " and " + takers[takers.length - 1];
-  const comboWarn =
-    takers.length ?
-      `${listed} also ${takers.length === 1 ? "takes" : "take"} this button` +
+  const wheel = comboOff(s.wheelCombo) ? null : s.wheelCombo;
+  const home = comboOff(s.launcherCombo) ? null : s.launcherCombo;
+  const wheelG = GESTURES.includes(s.wheelGesture) ? s.wheelGesture : "Tap";
+  const homeG = GESTURES.includes(s.launcherGesture) ? s.launcherGesture : "Hold";
+  const showOnly = s.launcherComboAction === "ShowOnly";
+
+  // What else answers the same press: Windows, Steam, and the other of the two.
+  const guideWarn = (combo, gesture) => {
+    if (!/\bGuide\b/.test(combo || "")) {
+      if (combo && comboEq(combo, "View + Menu"))
+        return (xb.gameBar === true ? `Game Bar treats View + Menu as the Xbox button in apps; turn that off ${where}. ` : "") +
+          "Steam binds View + Menu (Back + Start) to open Big Picture. Disable it in Steam: Settings > " +
+          "Controller > Guide Button Chord Layout, or turn off Steam Input for this controller.";
+      return null;
+    }
+    const takers = [];
+    if (xb.gameBar === true) takers.push("Xbox Game Bar");
+    if (gesture === "Hold" && xb.xboxMode === true) takers.push("Windows' Xbox mode");
+    if (xb.steam === true) takers.push("Steam");
+    if (!takers.length) return null;
+    const listed = takers.length < 2 ? takers[0] : takers.slice(0, -1).join(", ") + " and " + takers[takers.length - 1];
+    return `${listed} also ${takers.length === 1 ? "takes" : "take"} this button` +
       (takers.includes("Windows' Xbox mode") ? ", and Xbox mode opens Task View when it is held" : "") +
-      `. Turn ${takers.length === 1 ? "it" : "them"} off ${where}.`
-    : s.minimizeCombo === "View + Menu" ?
-      (xb.gameBar === true ? `Game Bar treats View + Menu as the Xbox button in apps; turn that off ${where}. ` : "") +
-      "Steam binds View + Menu (Back + Start) to open Big Picture. Disable it in Steam: Settings > " +
-      "Controller > Guide Button Chord Layout, or turn off Steam Input for this controller. Restart " +
-      "Steam afterwards."
+      `. Turn ${takers.length === 1 ? "it" : "them"} off ${where}.`;
+  };
+  const clash = (mine, myG, other, otherG, otherName, wins) => {
+    if (!mine || !other) return null;
+    if (comboEq(mine, other) && myG === otherG)
+      return `The ${otherName} is the same button and gesture, ` +
+        (wins ? `so the press opens the Power Wheel and the ${otherName} never fires. ` : `so the ${otherName} takes the press and this never fires. `) +
+        "Change the button or the gesture of one of them.";
+    if (comboWithin(mine, other))
+      return `It is part of the ${otherName} (${comboName(other, padFamily)}), so pressing that also does this.`;
+    if (comboWithin(other, mine))
+      return `The ${otherName} (${comboName(other, padFamily)}) is part of this one, so pressing this also does that.`;
+    return null;
+  };
+  const refuse = (combo) => comboEq(combo, "A") ? "[[A]] on its own selects in Loungepad and clicks on the desktop. Pick another button, or hold another with it."
+    : comboEq(combo, "B") ? "[[B]] on its own is Back. Pick another button, or hold another with it."
     : null;
 
-  return [
-    buttonRow("Menu combo", MINIMIZE_COMBOS, () => s.minimizeCombo, v => set(() => s.minimizeCombo = v),
-      "Opens the Power Wheel and brings Loungepad back, from anywhere, a game included",
-      comboWarn),
-    cycleRow("Combo gesture", ["TapHold", "DoubleTap"], () => (s.menuComboMode === "DoubleTap" ? "DoubleTap" : "TapHold"),
-      v => set(() => s.menuComboMode = v),
-      tapHold
-        ? "A tap opens the Power Wheel, and another tap closes it. Hold for half a second to show or hide Loungepad, or for the in-game menu while a game runs"
-        : "A tap shows or hides Loungepad once it is sure no second tap is coming; a quick double tap opens the Power Wheel",
-      null, { TapHold: "Tap: Power Wheel · Hold: Loungepad", DoubleTap: "Tap: Loungepad · Double tap: Power Wheel" }),
+  const rows = [
+    recordRow("Power Wheel button", () => s.wheelCombo, v => set(() => s.wheelCombo = v), {
+      picks: MENU_COMBOS,
+      hint: "Opens the Power Wheel from anywhere, a game included, and closes it again",
+      warn: clash(wheel, wheelG, home, homeG, "Loungepad button", true) || guideWarn(wheel, wheelG),
+      unsetWarn: "Not set: nothing on the controller opens the Power Wheel, so its shortcuts, the window switcher and the keyboard spoke are out of reach from the pad.",
+      check: refuse,
+    }),
   ];
+  if (wheel) rows.push(cycleRow("Power Wheel gesture", GESTURES, () => wheelG, v => set(() => s.wheelGesture = v),
+    wheelG === "DoubleTap" ? "Two quick presses. A single press waits a moment to be sure no second one is coming"
+      : wheelG === "Hold" ? "Hold for half a second" : "One press, fired as it is let go",
+    null, GESTURE_LABELS));
+
+  rows.push(recordRow("Loungepad button", () => s.launcherCombo, v => set(() => s.launcherCombo = v), {
+    picks: MENU_COMBOS,
+    hint: showOnly
+      ? "Brings Loungepad back from the desktop, or the in-game menu while a game runs. It never hides Loungepad"
+      : "Shows or hides Loungepad from anywhere; while a game runs it opens the in-game menu instead",
+    warn: clash(home, homeG, wheel, wheelG, "Power Wheel button", false) || guideWarn(home, homeG),
+    unsetWarn: "Not set: nothing on the controller brings Loungepad back from the desktop, or opens the in-game menu over a game. " +
+      "Start Loungepad again or use its tray icon to come back — or set a button and choose Show only, which can never hide it.",
+    check: refuse,
+  }));
+  if (home) {
+    rows.push(cycleRow("Loungepad gesture", GESTURES, () => homeG, v => set(() => s.launcherGesture = v),
+      homeG === "DoubleTap" ? "Two quick presses. A single press waits a moment to be sure no second one is coming"
+        : homeG === "Hold" ? "Hold for half a second" : "One press, fired as it is let go",
+      null, GESTURE_LABELS));
+    rows.push(cycleRow("Loungepad button does", ["Toggle", "ShowOnly"], () => (showOnly ? "ShowOnly" : "Toggle"),
+      v => set(() => s.launcherComboAction = v),
+      showOnly
+        ? "Only ever brings Loungepad forward, so a stray press cannot drop you on the desktop. Minimize Loungepad on the library's hint bar still hides it"
+        : "Shows Loungepad, and hides it again when it is already in front",
+      null, { Toggle: "Show or hide", ShowOnly: "Show only" }));
+  }
+  return rows;
 }
 
 /* WINDOWS AND STEAM: the three other things that react to the Xbox button, each a switch that
@@ -4762,6 +4875,43 @@ function buttonRow(name, options, get, setV, hint, warn) {
   return row;
 }
 
+/*
+ * A button setting that takes ANY button or combo: A opens a list with "Record a button" first, a
+ * few common picks, and Unset. Recording is the actions' own capture (openCapture), with A and
+ * Guide allowed on their own and `check` deciding what this setting refuses. Unset is "Off" on the
+ * host, and an unset row always carries a warning saying so and what that costs (`unsetWarn`), as
+ * the user asked (Nov 2026): a button that quietly does nothing reads as broken.
+ *
+ * opts: { picks, hint, warn, unsetWarn, single (one button only), check(combo) -> refusal text }
+ */
+function recordRow(name, get, setV, opts) {
+  const cur = () => (comboOff(get()) ? "Off" : get());
+  const picks = opts.picks || [];
+  const listed = picks.slice();
+  if (cur() !== "Off" && !picks.some(p => comboEq(p, cur()))) listed.unshift(cur());
+  const choices = listed.map(p => ({ value: p, label: comboName(p, padFamily), html: comboHtml(p) }));
+  choices.push({ value: "Off", label: "Unset", sub: "Nothing on the controller does this" });
+  const unset = cur() === "Off";
+  const check = (combo) => {
+    if (opts.single && comboParts(combo).length > 1) return "This one takes a single button: it is held down like a mouse button. Press just one.";
+    return opts.check ? opts.check(combo) : null;
+  };
+  return {
+    name, hint: opts.hint, type: "select",
+    value: unset ? "Not set" : comboName(cur(), padFamily),
+    valueHtml: unset ? `<span class="value-unset">Not set</span>` : comboHtml(cur()),
+    warn: unset ? (opts.unsetWarn || `Not set: no button does this.`) : opts.warn || null,
+    choices,
+    current: listed.find(p => comboEq(p, cur())) || cur(),
+    pick: (v) => setV(v),
+    first: [{
+      label: opts.single ? "Record a button…" : "Record a button or combo…", icon: "controller",
+      sub: opts.single ? "Press it on the controller" : "Press it on the controller; hold several together for a combo",
+      action: () => openCapture(null, { name }, (combo) => setV(combo), check, true),
+    }],
+  };
+}
+
 /* The accent picker: the presets as a list, each with its colour beside its name, and a last row
    that asks for a hex code. A hand-typed colour is listed as well while it is the one in use, so
    the list always has the current colour ticked. */
@@ -4803,7 +4953,8 @@ function activateSettingRow(row) {
 /** Every value a row can take, as a list with the one in force ticked and highlighted. */
 function openSettingChoice(row) {
   if (!row.choices.length) { toast("Nothing to choose from"); return; }
-  const items = row.choices.map(c => ({
+  const items = (row.first || []).slice();
+  row.choices.forEach(c => items.push({
     label: c.label, html: c.html, swatch: c.swatch, sub: c.sub,
     checked: c.value === row.current, radio: true,
     action: () => row.pick(c.value),
@@ -8502,7 +8653,8 @@ function mockHandle(msg) {
         boostButton: "RT", boostMultiplier: 2.5, hideLegend: false, igdbClientId: "", igdbClientSecret: "", steamGridDbKey: "", metadataEndpoint: "",
         steamShowOwned: true, steamApiKey: "", gamePassCatalog: false, xboxClientId: "", detectEmulators: true, autoUpdate: true,
         leftClickButton: "A", rightClickButton: "B",
-        minimizeCombo: "LS + RS", menuComboMode: "TapHold", screenshotCombo: "Off", shareButtonScreenshot: true,
+        wheelCombo: "LS + RS", wheelGesture: "Tap", launcherCombo: "LS + RS", launcherGesture: "Hold",
+        launcherComboAction: "Toggle", screenshotCombo: "Off", shareButtonScreenshot: true, keyboardOnTextFields: true,
         keyboardToggleButton: "Back", keyboardToggleMode: "Press", keyboardToggleHoldMs: 600,
         keyboardApp: "Builtin", keyboardScale: 1.0, keyRepeatDelayMs: 350, keyRepeatIntervalMs: 90,
         keyboardSuggestions: true, keyboardFunctionKeys: false, keyboardNavKeys: false,
@@ -8806,7 +8958,8 @@ function mockHandle(msg) {
     mockHandle._captures.push(next);
     clearTimeout(mockHandle._captureTimer);
     mockHandle._captureTimer = setTimeout(() => {
-      if (next === "A" || next === "Guide") {
+      // A setting's recording (recordRow) takes A and Guide alone too, as the host does.
+      if ((next === "A" || next === "Guide") && !msg.anyButton) {
         handleHostMessage({ type: "actionCaptureRejected", button: next });
         mockHandle._captureTimer = setTimeout(() => handleHostMessage({ type: "actionCaptured", combo: "X" }), 1400);
       } else handleHostMessage({ type: "actionCaptured", combo: next });

@@ -598,7 +598,7 @@ internal class ActionService
 
     /// <summary>The system's own buttons, from the settings: a layout's button on one of them is
     /// left off, since it would never fire. The bridge builds it for each preview and import.</summary>
-    public sealed record ImportRules(string? MenuCombo, string? ScreenshotCombo, string? KeyboardButton, bool KeyboardHold);
+    public sealed record ImportRules(string? WheelCombo, string? LauncherCombo, string? ScreenshotCombo, string? KeyboardButton, bool KeyboardHold);
 
     /// <summary>
     /// One action as an import would leave it. <see cref="Status"/> is "new" (an action of the
@@ -735,13 +735,16 @@ internal class ActionService
 
     /// <summary>Why an imported button would not do what it says, or null. Stricter than editing
     /// by hand: an import never takes a button from anything the user set up.</summary>
+    private static bool IsOff(string? b) => string.IsNullOrWhiteSpace(b) || string.Equals(b, "Off", StringComparison.OrdinalIgnoreCase);
+
     private string? ButtonProblem(string combo, ImportRules rules, Dictionary<string, string> taken)
     {
         if (IsReservedButton(combo)) return combo == "Guide" ? "Windows keeps Guide for itself" : $"{combo} on its own is a click";
-        if (CleanButton(rules.MenuCombo) == combo) return "It is the menu combo";
+        if (!IsOff(rules.WheelCombo) && CleanButton(rules.WheelCombo) == combo) return "It opens the Power Wheel";
+        if (!IsOff(rules.LauncherCombo) && CleanButton(rules.LauncherCombo) == combo) return "It shows Loungepad";
         if (!string.Equals(rules.ScreenshotCombo, "Off", StringComparison.OrdinalIgnoreCase) && CleanButton(rules.ScreenshotCombo) == combo)
             return "It is the screenshot button";
-        if (!rules.KeyboardHold && CleanButton(rules.KeyboardButton) == combo) return "It opens the keyboard";
+        if (!rules.KeyboardHold && !IsOff(rules.KeyboardButton) && CleanButton(rules.KeyboardButton) == combo) return "It opens the keyboard";
         if (taken.TryGetValue(combo, out var who)) return $"“{who}” has it already";
         if (Find(ActionPacks.EverywhereId)?.Actions.FirstOrDefault(a => CleanButton(a.Button) == combo) is { } ev)
             return $"Everywhere's “{ev.Name}” has it";

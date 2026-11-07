@@ -1315,6 +1315,8 @@ body.overlay-mode #overlay-ingame { background: color-mix(in srgb, var(--bg) 34%
   font-size: 17px; line-height: 1.55; color: color-mix(in srgb, var(--ink) 72%, transparent);
   max-width: 1180px; white-space: normal;
 }
+/* A button setting left unset (recordRow): said in the value as well as in the warning under it. */
+.value-unset { color: color-mix(in srgb, var(--danger) 80%, var(--ink)); }
 
 /* ---- settings categories ----
    The settings screen grew past the point where one scroll was readable, so it is split into

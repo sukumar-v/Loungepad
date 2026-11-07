@@ -604,6 +604,21 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     public static extern bool GetGUIThreadInfo(uint idThread, ref GUITHREADINFO lpgui);
 
+    // ---- the clipboard, for the keyboard's paste suggestion ----
+    // Only asked what KIND of thing is there and whether it changed; the text is read through WPF.
+
+    public const int WM_CLIPBOARDUPDATE = 0x031D;
+    public const uint CF_BITMAP = 2, CF_DIB = 8, CF_UNICODETEXT = 13, CF_HDROP = 15, CF_DIBV5 = 17;
+
+    [DllImport("user32.dll")]
+    public static extern uint GetClipboardSequenceNumber();
+
+    [DllImport("user32.dll")]
+    public static extern bool IsClipboardFormatAvailable(uint format);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool AddClipboardFormatListener(IntPtr hwnd);
+
     // ---- XInput ----
 
     public const ushort XINPUT_GAMEPAD_DPAD_UP = 0x0001;

@@ -86,6 +86,17 @@ public partial class KeyboardWindow : Window
     private IReadOnlyList<string> _suggestions = Array.Empty<string>();
     private int _suggestSeq;
 
+    // ---- the paste suggestion ----
+    /// <summary>What the middle of the bar offers to paste ("“hello”", "Image"), or null. Offered
+    /// only before anything has been typed into the field, as a phone does, and only for something
+    /// on the clipboard this keyboard has not pasted already.</summary>
+    private string? _pasteOffer;
+    /// <summary>Anything sent to the app since the keyboard came up or the field changed.</summary>
+    private bool _typedAny;
+    /// <summary>The clipboard's sequence number when this keyboard last pasted; a copy since then
+    /// is something new to offer.</summary>
+    private uint _pastedSeq;
+
     // ---- where the caret is ----
     private readonly DispatcherTimer _settle = new() { Interval = TimeSpan.FromMilliseconds(250) };
     private TargetState _target;
@@ -159,6 +170,10 @@ public partial class KeyboardWindow : Window
         // WS_EX_NOACTIVATE still lets a click activate the window; this refuses that too, which is
         // what lets the pointer press keys without the app underneath losing its caret.
         HwndSource.FromHwnd(hwnd)?.AddHook(Hook);
+
+        // A copy made while the keyboard is up can be offered at once. Not on a secure desktop:
+        // there are no suggestions there, and its clipboard is not the user's.
+        if (!_secureInput) AddClipboardFormatListener(hwnd);
     }
 
     private IntPtr Hook(IntPtr h, int msg, IntPtr w, IntPtr l, ref bool handled)
@@ -171,6 +186,7 @@ public partial class KeyboardWindow : Window
         // Losing the capture (Alt-Tab, another window grabbing it) has to end the drag, or the
         // keyboard would follow the pointer around after the button was long since released.
         if (msg == WM_CAPTURECHANGED) _dragging = false;
+        if (msg == WM_CLIPBOARDUPDATE && IsVisible && !_typedAny) RefreshSuggestions();
         return IntPtr.Zero;
     }
 
@@ -322,6 +338,7 @@ public partial class KeyboardWindow : Window
             _mods.Clear();
             _text.Reset();
             _suggestions = Array.Empty<string>();
+            _typedAny = false;
         }
 
         SizeKeys();
@@ -419,7 +436,10 @@ public partial class KeyboardWindow : Window
     /// </summary>
     private bool BarInGrip => !_options.Suggestions;
 
-    private double GripHeight => Math.Max(CloseButton.Height, Math.Round(_keySize * (BarInGrip ? 0.56 : 0.44)));
+    /// <summary>The grab bar's height, and the close button's with it: a share of a key, like
+    /// everything else here. It used to be floored at the button's fixed 28px, so at the small sizes
+    /// the keys shrank and the bar over them did not.</summary>
+    private double GripHeight => Math.Max(6, Math.Round(_keySize * (BarInGrip ? 0.56 : 0.44)));
     private double GripGap => Math.Round(_keySize * 0.10);
     private double BarHeight => BarInGrip ? GripHeight : Math.Round(_keySize * 0.8);
 
@@ -445,7 +465,15 @@ public partial class KeyboardWindow : Window
         Board.Height = RowTop(_layout.Rows) - _gap;
 
         Grip.Height = GripHeight;
-        GripTitle.FontSize = Math.Round(_keySize * 0.20);
+        Grip.CornerRadius = new CornerRadius(Math.Min(10, Math.Round(_keySize * 0.16)));
+        GripTitle.FontSize = Math.Max(1, Math.Round(_keySize * 0.20));
+        GripTitle.Margin = new Thickness(Math.Round(_keySize * 0.12), 0, 0, 0);
+        // The close button is the bar's height, square, with its cross about two fifths of that.
+        double close = GripHeight;
+        CloseButton.Width = CloseButton.Height = close;
+        CloseButton.Padding = new Thickness(Math.Round(close * 0.29, 1));
+        CloseButton.Tag = new CornerRadius(Math.Round(close * 0.25, 1));
+        CloseButton.Margin = new Thickness(0, 0, Math.Round(close * 0.07, 1), 0);
         GripBar.Width = Math.Round(_keySize * 1.4);
         GripBar.Height = Math.Max(3, Math.Round(_keySize * 0.06));
         if (BarInGrip)
@@ -812,13 +840,29 @@ public partial class KeyboardWindow : Window
             {
                 case KeyAction.Suggestion:
                 {
-                    string text = key.Index < _suggestions.Count ? _text.Display(_suggestions[key.Index], _shift) : "";
+                    bool paste = IsPasteSlot(key.Index);
+                    int word = WordIndex(key.Index);
+                    string text = paste ? _pasteOffer!
+                        : word >= 0 && word < _suggestions.Count ? _text.Display(_suggestions[word], _shift) : "";
                     cell.Background = focused ? FocusFill : BarFill;
                     cell.BorderBrush = focused ? FocusEdge : Brushes.Transparent;
-                    s.Label!.Text = text;
+                    if (paste)
+                    {
+                        // The paste icon, then what would land: drawn, not the word "Paste" (the
+                        // user's ask). Fluent Icons and MDL2 Assets both have it at E77F.
+                        s.Label!.Inlines.Clear();
+                        s.Label.Inlines.Add(new System.Windows.Documents.Run("\uE77F")
+                        {
+                            FontFamily = IconFont,
+                            FontSize = Math.Round(_keySize * 0.28),
+                            BaselineAlignment = BaselineAlignment.Center,
+                        });
+                        s.Label.Inlines.Add(new System.Windows.Documents.Run("  " + text));
+                    }
+                    else s.Label!.Text = text;
                     s.Label.Foreground = focused ? FocusInk : KeyInk;
                     // RS takes the first suggestion; the badge only says so when there is one.
-                    if (s.Badge is { } b) b.Visibility = text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+                    if (s.Badge is { } b) b.Visibility = text.Length > 0 && !paste ? Visibility.Visible : Visibility.Collapsed;
                     continue;
                 }
                 case KeyAction.Option:
@@ -915,7 +959,7 @@ public partial class KeyboardWindow : Window
             case KeyAction.Layer:      ToggleLayer(); break;
             case KeyAction.Backspace:  Backspace(); break;
             // Delete only takes what is after the caret, so the word being typed is untouched.
-            case KeyAction.Delete:     TapKey(VK_DELETE, extended: true, takesShift: false, keepsWord: true); break;
+            case KeyAction.Delete:     TapKey(VK_DELETE, extended: true, takesShift: false, keepsWord: true, adds: false); break;
             case KeyAction.Space:      Space(); break;
             case KeyAction.Enter:      Commit(); break;
             case KeyAction.Tab:        TapKey(VK_TAB, extended: false, takesShift: true); break;
@@ -987,7 +1031,7 @@ public partial class KeyboardWindow : Window
     /// goes with keys that take it (Tab, the arrows, F-keys); Ctrl, Win and Alt go with anything.
     /// Everything but Delete loses track of the word: the caret has moved, or might have.
     /// </summary>
-    private void TapKey(ushort vk, bool extended, bool takesShift, bool keepsWord = false)
+    private void TapKey(ushort vk, bool extended, bool takesShift, bool keepsWord = false, bool adds = true)
     {
         bool shift = takesShift && _shift;
         bool combo = _mods.Count > 0;
@@ -998,12 +1042,19 @@ public partial class KeyboardWindow : Window
         if (shift) _shift = false;
         _mods.Clear();
         if (!keepsWord || combo) _text.Reset();
-        Typed();
+        Typed(adds);
     }
 
-    /// <summary>After anything went to the app: re-arm the caret check, ask for suggestions, repaint.</summary>
-    private void Typed()
+    /// <summary>
+    /// After anything went to the app: re-arm the caret check, ask for suggestions, repaint.
+    /// <paramref name="adds"/> is false for what only takes text away or moves the caret --
+    /// Backspace, Delete, the caret keys -- which leave the paste suggestion where it is: clearing
+    /// a field and then pasting is the usual way to replace what is in it (the user's report, Nov
+    /// 2026: Backspace took the offer away).
+    /// </summary>
+    private void Typed(bool adds = true)
     {
+        if (adds) _typedAny = true;
         if (_secureInput) { _text.Reset(); Paint(); return; }
         _settle.Stop();
         _settle.Start();
@@ -1021,7 +1072,7 @@ public partial class KeyboardWindow : Window
         Output(KeyStroke.Tap(VK_BACK, extended: false, _mods.ToArray()));
         if (combo) { _mods.Clear(); _text.Reset(); }
         else _text.Backspaced();
-        Typed();
+        Typed(adds: false);
     }
 
     public void Space()
@@ -1059,13 +1110,13 @@ public partial class KeyboardWindow : Window
     public void CaretLeft()
     {
         if (_optionsPage) return;
-        TapKey(VK_LEFT, extended: true, takesShift: true);
+        TapKey(VK_LEFT, extended: true, takesShift: true, adds: false);
     }
 
     public void CaretRight()
     {
         if (_optionsPage) return;
-        TapKey(VK_RIGHT, extended: true, takesShift: true);
+        TapKey(VK_RIGHT, extended: true, takesShift: true, adds: false);
     }
 
     /// <summary>Enter, then get out of the way -- the same thing Menu does on the Xbox keyboard.
@@ -1090,7 +1141,10 @@ public partial class KeyboardWindow : Window
     /// </summary>
     public void AcceptSuggestion(int index)
     {
-        if (_optionsPage || index >= _suggestions.Count) return;
+        if (_optionsPage) return;
+        if (IsPasteSlot(index)) { Paste(); return; }
+        index = WordIndex(index);
+        if (index < 0 || index >= _suggestions.Count) return;
         var candidate = _suggestions[index];
         CheckTarget();
         var (backspaces, insert) = _text.Replacement(candidate, _shift);
@@ -1108,15 +1162,19 @@ public partial class KeyboardWindow : Window
     /// </summary>
     private void RefreshSuggestions()
     {
-        if (_secureInput) { _suggestions = Array.Empty<string>(); return; }
+        if (_secureInput) { _suggestions = Array.Empty<string>(); _pasteOffer = null; return; }
         int seq = ++_suggestSeq;
         var word = _text.CurrentWord;
+        var offer = !_options.Suggestions || _optionsPage || _typedAny ? null : PasteOffer();
+        bool offerChanged = offer != _pasteOffer;
+        _pasteOffer = offer;
         // A word with a digit in it is a code, a time or a gamertag -- nothing to finish.
         if (!_options.Suggestions || _optionsPage || word.Any(char.IsDigit))
         {
-            if (_suggestions.Count > 0) { _suggestions = Array.Empty<string>(); Paint(); }
+            if (_suggestions.Count > 0 || offerChanged) { _suggestions = Array.Empty<string>(); Paint(); }
             return;
         }
+        if (offerChanged) Paint();
         var previous = _text.PreviousWords(3);
         int max = KeyboardLayout.SuggestionCount(KeyboardLayout.WidthFor(_options));
         Task.Run(() => _predictor.SuggestAsync(word, previous, max)).ContinueWith(t =>
@@ -1129,6 +1187,72 @@ public partial class KeyboardWindow : Window
                 Paint();
             });
         }, TaskScheduler.Default);
+    }
+
+    /// <summary>The middle of the bar: where the paste suggestion goes, as on a phone.</summary>
+    private int PasteSlot => _layout.Slots.Count(s => s.Key.Action == KeyAction.Suggestion) / 2;
+
+    private bool IsPasteSlot(int slot) => _pasteOffer is not null && slot == PasteSlot;
+
+    /// <summary>Which word a bar slot shows: the words flow around the paste suggestion, so the
+    /// first slot is still the first word and RS still takes it.</summary>
+    private int WordIndex(int slot) =>
+        _pasteOffer is null || slot < PasteSlot ? slot : slot == PasteSlot ? -1 : slot - 1;
+
+    /// <summary>
+    /// What there is to paste, as the bar should say it, or null. Text is shown as itself (its first
+    /// line, cut short) so it is clear what will land; a picture or files only by kind. Nothing the
+    /// keyboard pasted already: the clipboard's sequence number moves on every copy.
+    /// </summary>
+    private string? PasteOffer()
+    {
+        var (seq, text, kind) = ClipboardState();
+        if (seq == 0 || seq == _pastedSeq) return null;
+        if (text is not null)
+        {
+            var line = text.Split('\n').Select(l => l.Trim()).FirstOrDefault(l => l.Length > 0);
+            if (line is null) return null;
+            if (line.Length > 40) line = line[..40].TrimEnd() + "…";
+            return $"“{line}”";
+        }
+        return kind switch { "image" => "Image", "files" => "Files", _ => null };
+    }
+
+    /// <summary>The clipboard's sequence number and what is on it: its text, or "image" or "files".
+    /// Replaceable, like <see cref="Output"/>, so a harness never reads or writes the real one.</summary>
+    public static Func<(uint Seq, string? Text, string? Kind)> ClipboardState = PeekClipboard;
+
+    private static (uint, string?, string?) PeekClipboard()
+    {
+        uint seq = GetClipboardSequenceNumber();
+        try
+        {
+            if (IsClipboardFormatAvailable(CF_UNICODETEXT)) return (seq, Clipboard.GetText(TextDataFormat.UnicodeText), null);
+            if (IsClipboardFormatAvailable(CF_DIBV5) || IsClipboardFormatAvailable(CF_DIB) || IsClipboardFormatAvailable(CF_BITMAP))
+                return (seq, null, "image");
+            if (IsClipboardFormatAvailable(CF_HDROP)) return (seq, null, "files");
+        }
+        // Another program holding the clipboard open: offer nothing this time; the next key asks again.
+        catch (Exception ex) when (ex is ExternalException or InvalidOperationException) { }
+        return (seq, null, null);
+    }
+
+    /// <summary>
+    /// The paste suggestion taken: Ctrl+V into the field, which pastes whatever kind of thing it is
+    /// the way the app itself would. It counts as typing, so the bar goes back to words; and what is
+    /// on the clipboard now is not offered again until something new is copied.
+    /// </summary>
+    private void Paste()
+    {
+        CheckTarget();
+        Output(KeyStroke.Tap(0x56 /* V */, extended: false, new[] { VK_CONTROL }));
+        _pastedSeq = ClipboardState().Seq;
+        _pasteOffer = null;
+        _mods.Clear();
+        _shift = false;
+        // Whatever was pasted, the keyboard did not type it letter by letter.
+        _text.Reset();
+        Typed();
     }
 
     /// <summary>
@@ -1154,6 +1278,8 @@ public partial class KeyboardWindow : Window
     public void TargetClicked()
     {
         _text.Reset();
+        // Most likely a click into another field: nothing typed there yet, so a paste is on offer again.
+        _typedAny = false;
         RefreshSuggestions();
         Paint();
     }

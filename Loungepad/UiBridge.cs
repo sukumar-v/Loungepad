@@ -682,7 +682,9 @@ public class UiBridge
             }
 
             case "actionCapture":
-                _window.BeginActionCapture();
+                // A setting's button (the Power Wheel's, say) may be Guide or A on its own, and the page
+                // decides; an action's never.
+                _window.BeginActionCapture(msg["anyButton"]?.GetValue<bool>() == true);
                 break;
 
             case "actionCaptureCancel":
@@ -2277,7 +2279,6 @@ public class UiBridge
         t.Deadzone = Math.Clamp(s.Deadzone, 0.05, 0.40);
         t.Sensitivity = Math.Clamp(s.Sensitivity, 0.2, 3.0);
         t.AccelExponent = Math.Clamp(s.AccelExponent, 1.0, 3.0);
-        t.BoostButton = s.BoostButton;
         t.BoostMultiplier = Math.Clamp(s.BoostMultiplier, 1.5, 5.0);
         t.HideCursorSystemWide = s.HideCursorSystemWide;
         t.TouchpadMouse = s.TouchpadMouse;
@@ -2286,18 +2287,25 @@ public class UiBridge
         t.TouchpadTapDrag = s.TouchpadTapDrag;
         t.TouchpadNaturalScroll = s.TouchpadNaturalScroll;
         t.TouchpadScrollSpeed = Math.Clamp(s.TouchpadScrollSpeed, 0.25, 4.0);
-        t.LeftClickButton = s.LeftClickButton;
-        t.RightClickButton = s.RightClickButton;
-        t.MinimizeCombo = s.MinimizeCombo;
-        t.MenuComboMode = s.MenuComboMode == "DoubleTap" ? "DoubleTap" : "TapHold";
-        t.ScreenshotCombo = s.ScreenshotCombo;
+        // Every button setting can be any recorded button or combo, or Off; a name the host cannot
+        // press (a hand-edited file, a page from another build) is Off rather than a dead button.
+        t.LeftClickButton = CleanCombo(s.LeftClickButton);
+        t.RightClickButton = CleanCombo(s.RightClickButton);
+        t.BoostButton = CleanCombo(s.BoostButton);
+        t.WheelCombo = CleanCombo(s.WheelCombo);
+        t.WheelGesture = AppSettings.CleanGesture(s.WheelGesture, "Tap");
+        t.LauncherCombo = CleanCombo(s.LauncherCombo);
+        t.LauncherGesture = AppSettings.CleanGesture(s.LauncherGesture, "Hold");
+        t.LauncherComboAction = s.LauncherComboAction == "ShowOnly" ? "ShowOnly" : "Toggle";
+        t.ScreenshotCombo = CleanCombo(s.ScreenshotCombo);
         t.ShareButtonScreenshot = s.ShareButtonScreenshot;
         t.KeyRepeatDelayMs = Math.Clamp(s.KeyRepeatDelayMs, 120, 900);
         t.KeyRepeatIntervalMs = Math.Clamp(s.KeyRepeatIntervalMs, 20, 300);
-        t.KeyboardToggleButton = s.KeyboardToggleButton;
+        t.KeyboardToggleButton = CleanCombo(s.KeyboardToggleButton);
         t.KeyboardToggleMode = s.KeyboardToggleMode == "Hold" ? "Hold" : "Press";
         t.KeyboardToggleHoldMs = Math.Clamp(s.KeyboardToggleHoldMs, 200, 2000);
         t.KeyboardInGame = s.KeyboardInGame;
+        t.KeyboardOnTextFields = s.KeyboardOnTextFields;
         t.KeyboardApp = s.KeyboardApp;
         t.KeyboardScale = Math.Clamp(s.KeyboardScale, KeyboardWindow.ScaleMin, KeyboardWindow.ScaleMax);
         t.KeyboardSuggestions = s.KeyboardSuggestions;
@@ -3438,10 +3446,23 @@ public class UiBridge
         catch (Exception ex) { PushToast($"Could not save it: {ex.Message}"); }
     }
 
+    /// <summary>A button or combo in the launcher's fixed order ("LB + Y"), or "Off".</summary>
+    private static string CleanCombo(string? combo)
+    {
+        uint mask = GamepadService.ChordMask(combo);
+        if (mask == 0) return "Off";
+        // Keep the names the rest of the app stores (Back and Start for a lone View or Menu, which
+        // is what the keyboard button always held); anything longer in ComboName's order.
+        var parts = combo!.Split('+', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length == 1) return parts[0];
+        return GamepadService.ComboName((ushort)(mask & 0xFFFF), (mask & GamepadService.LeftTriggerBit) != 0,
+            (mask & GamepadService.RightTriggerBit) != 0);
+    }
+
     private ActionService.ImportRules ImportRulesNow()
     {
         var s = _settings.Settings;
-        return new ActionService.ImportRules(s.MinimizeCombo, s.ScreenshotCombo, s.KeyboardToggleButton,
+        return new ActionService.ImportRules(s.WheelCombo, s.LauncherCombo, s.ScreenshotCombo, s.KeyboardToggleButton,
             string.Equals(s.KeyboardToggleMode, "Hold", StringComparison.OrdinalIgnoreCase));
     }
 
@@ -4096,7 +4117,7 @@ public class UiBridge
     public void PushKeyboardDismissed() => Push(new { type = "keyboardDismissed" });
 
     /// <summary>
-    /// The keyboard's own options page changed one of its switches or its size. Only those six
+    /// The keyboard's own options page changed one of its switches or its size. Only those seven
     /// fields go, and the page merges them into its copy rather than taking a whole settings object:
     /// a full copy would overwrite a change the page had made and not yet saved.
     /// </summary>
@@ -4113,6 +4134,7 @@ public class UiBridge
                 keyboardNavKeys = s.KeyboardNavKeys,
                 keyboardNumpad = s.KeyboardNumpad,
                 keyboardModifiers = s.KeyboardModifiers,
+                keyboardOnTextFields = s.KeyboardOnTextFields,
                 keyboardScale = s.KeyboardScale,
             },
         });

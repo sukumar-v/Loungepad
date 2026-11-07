@@ -143,23 +143,27 @@ function bindingIssues(app, action, combo) {
     issues.push({ level: "block", text: `${say(single)} on its own is a click button and cannot be an action. Hold another button with it, or pick a different one.` });
   if (single === "Guide")
     issues.push({ level: "block", text: `Windows keeps ${say("Guide")} for itself; it never reaches an action.` });
-  if (comboEq(combo, s.minimizeCombo))
-    issues.push({ level: "block", text: `That is the menu combo, which always wins. Pick another button.` });
+  if (!comboOff(s.wheelCombo) && comboEq(combo, s.wheelCombo))
+    issues.push({ level: "block", text: `That is the Power Wheel button, which always wins. Pick another button.` });
+  if (!comboOff(s.launcherCombo) && comboEq(combo, s.launcherCombo))
+    issues.push({ level: "block", text: `That is the Loungepad button, which always wins. Pick another button.` });
   if (s.screenshotCombo && s.screenshotCombo !== "Off" && comboEq(combo, s.screenshotCombo))
     issues.push({ level: "block", text: `That is the screenshot button, which always wins. Pick another button.` });
 
-  const toggle = canonBtn(s.keyboardToggleButton || "Back");
+  const sayAll = (c) => comboParts(c).map(say).join(" + ");
+  const toggle = comboOff(s.keyboardToggleButton) ? null : (s.keyboardToggleButton || "Back");
   const hold = (s.keyboardToggleMode || "Press") === "Hold";
-  if (single === toggle && !hold)
-    issues.push({ level: "warn", text: `${say(toggle)} opens the keyboard on a press, so it wins over this. Change the keyboard button under Keyboard, set it to Hold, or pick another button.` });
-  else if (single === toggle && hold)
-    issues.push({ level: "note", text: `A tap fires this; holding ${say(toggle)} still opens the keyboard.` });
+  if (toggle && comboEq(combo, toggle) && !hold)
+    issues.push({ level: "warn", text: `${sayAll(toggle)} opens the keyboard on a press, so it wins over this. Change the keyboard button under Keyboard, set it to Hold, or pick another button.` });
+  else if (toggle && comboEq(combo, toggle) && hold)
+    issues.push({ level: "note", text: `A tap fires this; holding ${sayAll(toggle)} still opens the keyboard.` });
 
-  const boost = canonBtn(s.boostButton || "");
-  if (boost && boost !== "Off" && parts.includes(boost))
-    issues.push({ level: "note", text: `${say(boost)} is also the speed boost while it is held.` });
+  const boost = comboOff(s.boostButton) ? [] : comboParts(s.boostButton);
+  if (boost.length && boost.every(b => parts.includes(b)))
+    issues.push({ level: "note", text: `${sayAll(s.boostButton)} is also the speed boost while it is held.` });
 
-  const left = canonBtn(s.leftClickButton || "A"), right = canonBtn(s.rightClickButton || "B");
+  const left = comboOff(s.leftClickButton) ? null : canonBtn(s.leftClickButton || "A");
+  const right = comboOff(s.rightClickButton) ? null : canonBtn(s.rightClickButton || "B");
   if (single && (single === left || single === right) && !(single === "A" || single === "B"))
     issues.push({ level: "warn", text: `${say(single)} is the ${single === left ? "left" : "right"} click button. ${app ? `In ${app.name} it` : "It"} fires this instead of clicking.` });
 
@@ -1236,11 +1240,11 @@ const CAPTURE_TIMEOUT_MS = 15000;
 
 /* `check` is what refuses a combo, when the caller has its own rules (a Power Wheel shortcut's
    button, shortcuts.js); the default is the action's own bindingBlock. */
-function openCapture(app, action, onDone, check) {
-  captureState = { app, action, onDone, check: check || null, timer: null, note: null };
+function openCapture(app, action, onDone, check, anyButton) {
+  captureState = { app, action, onDone, check: check || null, timer: null, note: null, anyButton: !!anyButton };
   renderCapture();
   showOverlay("overlay-capture");
-  send({ cmd: "actionCapture" });
+  send({ cmd: "actionCapture", anyButton: !!anyButton });
   armCaptureTimeout();
 }
 
@@ -1254,9 +1258,10 @@ function renderCapture() {
   if (!captureState) return;
   $("captureIcon").innerHTML = iconSvg("controller");
   $("captureTitle").textContent = `Press a button for “${captureState.action.name}”`;
-  $("captureBody").innerHTML =
-    `Hold two or more for a combination, then let go. ${slot("B", true)} on its own cancels; ` +
-    `${slot("A", true)} on its own is the click button and cannot be used alone.`;
+  $("captureBody").innerHTML = captureState.anyButton
+    ? `Hold two or more for a combination, then let go. ${slot("B", true)} on its own cancels.`
+    : `Hold two or more for a combination, then let go. ${slot("B", true)} on its own cancels; ` +
+      `${slot("A", true)} on its own is the click button and cannot be used alone.`;
   const note = $("captureNote");
   note.hidden = !captureState.note;
   note.innerHTML = captureState.note ? hintHtml(captureState.note) : "";
@@ -1280,7 +1285,7 @@ function onActionCaptured(combo) {
   if (block) {
     captureState.note = block;
     renderCapture();
-    send({ cmd: "actionCapture" });
+    send({ cmd: "actionCapture", anyButton: captureState.anyButton });
     armCaptureTimeout();
     return;
   }

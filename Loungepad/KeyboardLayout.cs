@@ -22,13 +22,18 @@ internal enum KeyAction
     SizeDown, SizeUp,
 }
 
-public enum KeyboardOption { Suggestions, FunctionKeys, NavKeys, Numpad, Modifiers }
+public enum KeyboardOption { Suggestions, FunctionKeys, NavKeys, Numpad, Modifiers, TextFields }
 
-/// <summary>The switches that decide what the keyboard is made of. Kept in AppSettings.</summary>
-public readonly record struct KeyboardOptions(bool Suggestions, bool FunctionKeys, bool NavKeys, bool Numpad, bool Modifiers)
+/// <summary>The switches that decide what the keyboard is made of. Kept in AppSettings.
+/// <see cref="TextFields"/> does not change the keys: it is AppSettings.KeyboardOnTextFields, the
+/// keyboard opening by itself on a text field, switched from the same page because that is where a
+/// person who has just watched it pop up goes looking.</summary>
+public readonly record struct KeyboardOptions(bool Suggestions, bool FunctionKeys, bool NavKeys, bool Numpad, bool Modifiers,
+    bool TextFields = true)
 {
     public static KeyboardOptions From(AppSettings s) =>
-        new(s.KeyboardSuggestions, s.KeyboardFunctionKeys, s.KeyboardNavKeys, s.KeyboardNumpad, s.KeyboardModifiers);
+        new(s.KeyboardSuggestions, s.KeyboardFunctionKeys, s.KeyboardNavKeys, s.KeyboardNumpad, s.KeyboardModifiers,
+            s.KeyboardOnTextFields);
 
     public void WriteTo(AppSettings s)
     {
@@ -37,6 +42,7 @@ public readonly record struct KeyboardOptions(bool Suggestions, bool FunctionKey
         s.KeyboardNavKeys = NavKeys;
         s.KeyboardNumpad = Numpad;
         s.KeyboardModifiers = Modifiers;
+        s.KeyboardOnTextFields = TextFields;
     }
 
     public bool this[KeyboardOption o] => o switch
@@ -45,6 +51,7 @@ public readonly record struct KeyboardOptions(bool Suggestions, bool FunctionKey
         KeyboardOption.FunctionKeys => FunctionKeys,
         KeyboardOption.NavKeys => NavKeys,
         KeyboardOption.Numpad => Numpad,
+        KeyboardOption.TextFields => TextFields,
         _ => Modifiers,
     };
 
@@ -54,6 +61,7 @@ public readonly record struct KeyboardOptions(bool Suggestions, bool FunctionKey
         KeyboardOption.FunctionKeys => this with { FunctionKeys = on },
         KeyboardOption.NavKeys => this with { NavKeys = on },
         KeyboardOption.Numpad => this with { Numpad = on },
+        KeyboardOption.TextFields => this with { TextFields = on },
         _ => this with { Modifiers = on },
     };
 }
@@ -288,6 +296,7 @@ internal sealed class KeyboardLayout
         (KeyboardOption.NavKeys, "Navigation keys", "Insert, Delete, Home, End, Page Up and Down, arrows"),
         (KeyboardOption.Numpad, "Number pad", "The number pad of a full-size keyboard"),
         (KeyboardOption.Modifiers, "Ctrl, Win and Alt", "Each holds for the next key, like Shift"),
+        (KeyboardOption.TextFields, "Open on text fields", "Comes up when the controller clicks a text box"),
     };
 
     /// <summary>
@@ -304,10 +313,17 @@ internal sealed class KeyboardLayout
         l.Slots.Add(new Slot(SizeDown, 0, SizeDownX(l.Width)));
         l.Slots.Add(new Slot(SizeUp, 0, SizeUpX(l.Width)));
         l.Slots.Add(new Slot(Gear, 0, l.Width - 1));
-        double w = Math.Min(l.Width, MainWidth), x = (l.Width - w) / 2;
-        int row = 1;
-        foreach (var (option, name, detail) in OptionRows)
-            l.Slots.Add(new Slot(new KeyDef(name, Action: KeyAction.Option, Units: w) { Option = option, Detail = detail }, row++, x));
+        // One switch a row while they fit in the keys' height; six switches against the five rows
+        // of the plain keyboard go in two columns, so opening the page never changes its height.
+        int cols = (OptionRows.Length + l.BodyRows - 1) / l.BodyRows;
+        int perCol = (OptionRows.Length + cols - 1) / cols;
+        double w = cols == 1 ? Math.Min(l.Width, MainWidth) : l.Width / cols, x0 = cols == 1 ? (l.Width - w) / 2 : 0;
+        for (int i = 0; i < OptionRows.Length; i++)
+        {
+            var (option, name, detail) = OptionRows[i];
+            l.Slots.Add(new Slot(new KeyDef(name, Action: KeyAction.Option, Units: w) { Option = option, Detail = detail },
+                1 + i % perCol, x0 + (i / perCol) * w));
+        }
         return l;
     }
 
