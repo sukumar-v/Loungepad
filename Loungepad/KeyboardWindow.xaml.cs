@@ -121,9 +121,14 @@ public partial class KeyboardWindow : Window
         Root.MouseMove += OnRootMouseMove;
         Root.MouseLeave += (_, _) => SetPointerOnKey(false);
         Grip.MouseEnter += (_, _) => SetPointerOnKey(false);
-        Grip.MouseLeftButtonDown += (_, _) => BeginDrag();
+        Grip.MouseLeftButtonDown += (_, e) =>
+        {
+            // The close button sits inside the draggable header; keep its click from starting a drag.
+            if (!IsWithin(e.OriginalSource as DependencyObject, CloseButton)) BeginDrag();
+        };
         Grip.MouseMove += (_, _) => { if (_dragging) DragToCursor(); };
         Grip.MouseLeftButtonUp += (_, _) => EndDrag();
+        CloseButton.Click += (_, _) => CloseRequested?.Invoke();
 
         // Once typing has paused, note where the caret settled. If it is somewhere else at the next
         // key, something other than the keyboard moved it.
@@ -239,6 +244,16 @@ public partial class KeyboardWindow : Window
             d = d is Visual ? VisualTreeHelper.GetParent(d) : LogicalTreeHelper.GetParent(d);
         }
         return null;
+    }
+
+    private static bool IsWithin(DependencyObject? child, DependencyObject ancestor)
+    {
+        while (child is not null)
+        {
+            if (ReferenceEquals(child, ancestor)) return true;
+            child = child is Visual ? VisualTreeHelper.GetParent(child) : LogicalTreeHelper.GetParent(child);
+        }
+        return false;
     }
 
     // ---- moving the window ----
@@ -404,7 +419,7 @@ public partial class KeyboardWindow : Window
     /// </summary>
     private bool BarInGrip => !_options.Suggestions;
 
-    private double GripHeight => Math.Round(_keySize * (BarInGrip ? 0.56 : 0.44));
+    private double GripHeight => Math.Max(CloseButton.Height, Math.Round(_keySize * (BarInGrip ? 0.56 : 0.44)));
     private double GripGap => Math.Round(_keySize * 0.10);
     private double BarHeight => BarInGrip ? GripHeight : Math.Round(_keySize * 0.8);
 
